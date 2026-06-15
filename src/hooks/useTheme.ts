@@ -7,9 +7,15 @@ export function useTheme() {
 
   useEffect(() => {
     const stored = localStorage.getItem('ampli-theme')
-    if (stored === 'dark') {
-      setDark(true)
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    const isDark = stored === 'dark' || (!stored && prefersDark)
+    setDark(isDark)
+    if (isDark) {
       document.documentElement.classList.add('dark')
+      document.body.style.backgroundColor = '#09090b'
+    } else {
+      document.documentElement.classList.remove('dark')
+      document.body.style.backgroundColor = '#f9fafb'
     }
   }, [])
 
@@ -18,9 +24,11 @@ export function useTheme() {
     setDark(next)
     if (next) {
       document.documentElement.classList.add('dark')
+      document.body.style.backgroundColor = '#09090b'
       localStorage.setItem('ampli-theme', 'dark')
     } else {
       document.documentElement.classList.remove('dark')
+      document.body.style.backgroundColor = '#f9fafb'
       localStorage.setItem('ampli-theme', 'light')
     }
   }

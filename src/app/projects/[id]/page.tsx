@@ -6,22 +6,10 @@ import { useUser } from '@clerk/nextjs'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts'
+import { useBrand } from '@/hooks/useBrand'
+import ChartRenderer from '@/components/ChartRenderer'
+import PDFExportModal from '@/components/PDFExportModal'
+import TagInput from '@/components/TagInput'
 import {
   ArrowLeft,
   TrendingUp,
@@ -32,40 +20,29 @@ import {
   Sparkles,
   RotateCcw,
   FileText,
-  Save,
   CheckCircle,
-  X,
   ChevronRight,
-  Palette,
+  Presentation,
+  Download,
 } from 'lucide-react'
-import { useBrand } from '@/hooks/useBrand'
-
-const { brand } = useBrand()
-const BRAND_COLORS = [
-  brand.primaryColor,
-  brand.secondaryColor,
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#06b6d4',
-]
+import Link from 'next/link'
 
 export default function ProjectViewPage() {
   const { id } = useParams()
   const { user } = useUser()
   const { dark } = useTheme()
+  const { brand } = useBrand()
   const router = useRouter()
 
   const [project, setProject] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'narrative' | 'visuals' | 'data'>('narrative')
-
-  // Regenerate
+  const [tab, setTab] = useState<'narrative' | 'visuals' | 'data' | 'notes'>('narrative')
+  const [tags, setTags] = useState<string[]>([])
+  const [allTags, setAllTags] = useState<string[]>([])
+  const [showPDFExport, setShowPDFExport] = useState(false)
   const [showRegenerate, setShowRegenerate] = useState(false)
   const [regenPrompt, setRegenPrompt] = useState('')
   const [regenerating, setRegenerating] = useState(false)
-
-  // CRM Notes
   const [notes, setNotes] = useState('')
   const [notesSaved, setNotesSaved] = useState(false)
   const notesTimer = useRef<any>(null)
@@ -80,11 +57,27 @@ export default function ProjectViewPage() {
       .then(({ data }) => {
         setProject(data)
         setNotes(data?.crm_notes || '')
+        setTags(data?.tags || [])
         setLoading(false)
       })
+    // Load all tags across user's projects for autocomplete
+    if (user) {
+      supabase
+        .from('projects')
+        .select('tags')
+        .eq('user_id', user.id)
+        .then(({ data }) => {
+          const t = [...new Set((data || []).flatMap((p: any) => p.tags || []))] as string[]
+          setAllTags(t)
+        })
+    }
   }, [id])
 
-  // Auto-save notes with debounce
+  const handleTagsChange = async (newTags: string[]) => {
+    setTags(newTags)
+    await supabase.from('projects').update({ tags: newTags }).eq('id', id)
+  }
+
   const handleNotesChange = (val: string) => {
     setNotes(val)
     setNotesSaved(false)
@@ -125,6 +118,15 @@ export default function ProjectViewPage() {
     setRegenerating(false)
   }
 
+  const BRAND_COLORS = [
+    brand.primaryColor,
+    brand.secondaryColor,
+    '#10b981',
+    '#f59e0b',
+    '#ef4444',
+    '#06b6d4',
+  ]
+
   const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
   const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
   const input = dark
@@ -133,101 +135,6 @@ export default function ProjectViewPage() {
   const tabBase = 'px-4 py-2 text-sm font-medium rounded-xl transition-colors'
   const tabActive = dark ? 'bg-zinc-700 text-white' : 'bg-zinc-900 text-white'
   const tabInactive = dark ? 'text-zinc-400 hover:text-white' : 'text-zinc-500 hover:text-zinc-900'
-
-  const renderChart = (chart: any, i: number) => {
-    const color = BRAND_COLORS[i % BRAND_COLORS.length]
-    const chartProps = { data: chart.data, margin: { top: 5, right: 10, left: -20, bottom: 5 } }
-
-    return (
-      <div key={i} className={`p-5 rounded-2xl border ${card}`}>
-        <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
-        <p className={`text-xs mb-4 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-          {chart.description}
-        </p>
-        <ResponsiveContainer width="100%" height={200}>
-          {chart.type === 'bar' ? (
-            <BarChart {...chartProps}>
-              <CartesianGrid strokeDasharray="3 3" stroke={dark ? '#27272a' : '#f4f4f5'} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <YAxis tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <Tooltip
-                contentStyle={{
-                  background: dark ? '#18181b' : '#fff',
-                  border: 'none',
-                  borderRadius: 8,
-                }}
-              />
-              <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          ) : chart.type === 'line' ? (
-            <LineChart {...chartProps}>
-              <CartesianGrid strokeDasharray="3 3" stroke={dark ? '#27272a' : '#f4f4f5'} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <YAxis tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <Tooltip
-                contentStyle={{
-                  background: dark ? '#18181b' : '#fff',
-                  border: 'none',
-                  borderRadius: 8,
-                }}
-              />
-              <Line dataKey="value" stroke={color} strokeWidth={2} dot={false} />
-            </LineChart>
-          ) : chart.type === 'area' ? (
-            <AreaChart {...chartProps}>
-              <CartesianGrid strokeDasharray="3 3" stroke={dark ? '#27272a' : '#f4f4f5'} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <YAxis tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <Tooltip
-                contentStyle={{
-                  background: dark ? '#18181b' : '#fff',
-                  border: 'none',
-                  borderRadius: 8,
-                }}
-              />
-              <Area dataKey="value" stroke={color} fill={`${color}33`} strokeWidth={2} />
-            </AreaChart>
-          ) : chart.type === 'pie' ? (
-            <PieChart>
-              <Pie
-                data={chart.data}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-              >
-                {chart.data.map((_: any, idx: number) => (
-                  <Cell key={idx} fill={BRAND_COLORS[idx % BRAND_COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{
-                  background: dark ? '#18181b' : '#fff',
-                  border: 'none',
-                  borderRadius: 8,
-                }}
-              />
-            </PieChart>
-          ) : (
-            <BarChart {...chartProps}>
-              <CartesianGrid strokeDasharray="3 3" stroke={dark ? '#27272a' : '#f4f4f5'} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <YAxis tick={{ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' }} />
-              <Tooltip
-                contentStyle={{
-                  background: dark ? '#18181b' : '#fff',
-                  border: 'none',
-                  borderRadius: 8,
-                }}
-              />
-              <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          )}
-        </ResponsiveContainer>
-      </div>
-    )
-  }
 
   if (loading)
     return (
@@ -248,6 +155,10 @@ export default function ProjectViewPage() {
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
+      {showPDFExport && (
+        <PDFExportModal project={project} onClose={() => setShowPDFExport(false)} />
+      )}
+
       <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4 mt-4">
@@ -263,7 +174,19 @@ export default function ProjectViewPage() {
               {project.file_name} · {new Date(project.created_at).toLocaleDateString()}
             </p>
           </div>
-          {/* Regenerate button */}
+          <button
+            onClick={() => setShowPDFExport(true)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium transition-colors
+              ${dark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
+          >
+            <Download size={14} /> Export PDF
+          </button>
+          <Link
+            href={`/projects/${id}/pitch`}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors bg-blue-500 text-white hover:bg-blue-600"
+          >
+            <Presentation size={14} /> Pitch Mode
+          </Link>
           <button
             onClick={() => setShowRegenerate(!showRegenerate)}
             className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium transition-colors
@@ -275,12 +198,21 @@ export default function ProjectViewPage() {
                     : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'
               }`}
           >
-            <RotateCcw size={14} />
-            Regenerate
+            <RotateCcw size={14} /> Regenerate
           </button>
         </div>
 
-        {/* Context Banner — target company + audience */}
+        {/* Tags */}
+        <div className="mb-4">
+          <TagInput
+            tags={tags}
+            onChange={handleTagsChange}
+            existingTags={allTags}
+            placeholder="Add tags (client, campaign, industry...)"
+          />
+        </div>
+
+        {/* Context Banner */}
         {(project.target_company || project.target_audience) && (
           <div
             className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-4 ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}
@@ -375,7 +307,7 @@ export default function ProjectViewPage() {
           {(['narrative', 'visuals', 'data', 'notes'] as const).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t as any)}
+              onClick={() => setTab(t)}
               className={`${tabBase} ${tab === t ? tabActive : tabInactive}`}
             >
               {t === 'notes' ? 'CRM Notes' : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -424,7 +356,15 @@ export default function ProjectViewPage() {
         {/* Visuals Tab */}
         {tab === 'visuals' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {project.charts?.map((chart: any, i: number) => renderChart(chart, i))}
+            {project.charts?.map((chart: any, i: number) => (
+              <div key={i} className={`p-5 rounded-2xl border ${card}`}>
+                <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
+                <p className={`text-xs mb-4 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                  {chart.description}
+                </p>
+                <ChartRenderer chart={chart} colors={BRAND_COLORS} height={200} dark={dark} />
+              </div>
+            ))}
           </div>
         )}
 

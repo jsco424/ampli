@@ -1,6 +1,24 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    transition:
+      background-color 0.2s,
+      color 0.2s;
+  }
+  html {
+    @apply font-sans;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+}
 
 @custom-variant dark (&:is(.dark *));
 
