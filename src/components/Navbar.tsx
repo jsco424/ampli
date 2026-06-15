@@ -2,7 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs'
 import { useTheme } from '@/hooks/useTheme'
-import { Moon, Sun, Menu, X, UploadCloud, FolderOpen, BarChart2, Globe } from 'lucide-react'
+import { Moon, Sun, Menu, X, UploadCloud, Palette } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
@@ -75,6 +75,16 @@ export default function Navbar() {
           >
             <UploadCloud size={13} />
             New Project
+          </Link>
+
+          {/* Brand settings */}
+          <Link
+            href="/settings/brand"
+            className={`p-2 rounded-full transition-colors
+              ${dark ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-100 text-zinc-500'}`}
+            title="Brand Settings"
+          >
+            <Palette size={16} />
           </Link>
 
           {/* Dark mode toggle */}

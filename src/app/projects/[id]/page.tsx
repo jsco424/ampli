@@ -36,9 +36,19 @@ import {
   CheckCircle,
   X,
   ChevronRight,
+  Palette,
 } from 'lucide-react'
+import { useBrand } from '@/hooks/useBrand'
 
-const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4']
+const { brand } = useBrand()
+const BRAND_COLORS = [
+  brand.primaryColor,
+  brand.secondaryColor,
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#06b6d4',
+]
 
 export default function ProjectViewPage() {
   const { id } = useParams()
@@ -48,7 +58,7 @@ export default function ProjectViewPage() {
 
   const [project, setProject] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'narrative' | 'visuals' | 'data' | 'notes'>('narrative')
+  const [tab, setTab] = useState<'narrative' | 'visuals' | 'data'>('narrative')
 
   // Regenerate
   const [showRegenerate, setShowRegenerate] = useState(false)
@@ -125,7 +135,7 @@ export default function ProjectViewPage() {
   const tabInactive = dark ? 'text-zinc-400 hover:text-white' : 'text-zinc-500 hover:text-zinc-900'
 
   const renderChart = (chart: any, i: number) => {
-    const color = COLORS[i % COLORS.length]
+    const color = BRAND_COLORS[i % BRAND_COLORS.length]
     const chartProps = { data: chart.data, margin: { top: 5, right: 10, left: -20, bottom: 5 } }
 
     return (
@@ -188,7 +198,7 @@ export default function ProjectViewPage() {
                 outerRadius={80}
               >
                 {chart.data.map((_: any, idx: number) => (
-                  <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                  <Cell key={idx} fill={BRAND_COLORS[idx % BRAND_COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip
