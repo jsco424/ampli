@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import {
   UploadCloud,
   FolderOpen,
@@ -26,6 +25,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import WelcomeState from '@/components/WelcomeState'
+import OnboardingModal from '@/components/OnboardingModal'
 
 const TIER_COLORS: Record<string, string> = {
   executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -39,6 +39,7 @@ export default function Home() {
   const { dark } = useTheme()
   const router = useRouter()
 
+  const [showOnboarding, setShowOnboarding] = useState(false)
   const [projects, setProjects] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -53,6 +54,31 @@ export default function Home() {
   useEffect(() => {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
+
+  // Check if user needs onboarding
+  useEffect(() => {
+    if (!user) return
+    supabase
+      .from('user_settings')
+      .select('onboarding_complete')
+      .eq('user_id', user.id)
+      .single()
+      .then(({ data }) => {
+        if (!data || !data.onboarding_complete) setShowOnboarding(true)
+      })
+  }, [user])
+
+  const completeOnboarding = async () => {
+    if (!user) return
+    setShowOnboarding(false)
+    await supabase.from('user_settings').upsert(
+      {
+        user_id: user.id,
+        onboarding_complete: true,
+      },
+      { onConflict: 'user_id' }
+    )
+  }
 
   const loadProjects = () => {
     if (!user) return
@@ -94,7 +120,6 @@ export default function Home() {
       setResearch(data)
       setExpandedSection('news')
 
-      // Save to Supabase
       await supabase.from('company_research').insert({
         user_id: user.id,
         url,
@@ -105,7 +130,6 @@ export default function Home() {
         audiences: data.audiences,
       })
 
-      // Fetch news in parallel
       fetch('/api/news', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -146,6 +170,8 @@ export default function Home() {
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
+      {showOnboarding && <OnboardingModal onComplete={completeOnboarding} />}
+
       <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
         {/* Welcome */}
         <div className="mt-6 mb-8">
@@ -176,144 +202,123 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Welcome state for new users */}
-        {projects.length === 0 && !loading ? (
-          <WelcomeState firstName={user?.firstName || undefined} />
-        ) : (
-          <>
-            {/* Recent Projects */}
-            <div className="mb-10">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-semibold text-lg">Recent Projects</h2>
-                <div className="flex items-center gap-3">
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search projects..."
-                    className={`px-3 py-1.5 rounded-xl border text-sm outline-none w-48 ${input}`}
-                  />
-                  <Link
-                    href="/projects"
-                    className="text-sm text-blue-500 flex items-center gap-1 hover:underline"
-                  >
-                    View All <ArrowRight size={14} />
-                  </Link>
-                </div>
-              </div>
+        {/* Recent Projects */}
+        <div className="mb-10">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-lg">Recent Projects</h2>
+            <div className="flex items-center gap-3">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search projects..."
+                className={`px-3 py-1.5 rounded-xl border text-sm outline-none w-48 ${input}`}
+              />
+              <Link
+                href="/projects"
+                className="text-sm text-blue-500 flex items-center gap-1 hover:underline"
+              >
+                View All <ArrowRight size={14} />
+              </Link>
+            </div>
+          </div>
 
-              {filtered.length === 0 ? (
-                <div className={`p-10 rounded-2xl border text-center ${card}`}>
-                  <UploadCloud
-                    size={32}
-                    className={`mx-auto mb-3 ${dark ? 'text-zinc-600' : 'text-zinc-400'}`}
-                  />
-                  <p className={`text-sm ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                    No projects yet. Create your first one!
-                  </p>
-                  <Link
-                    href="/projects/new"
-                    className="mt-4 inline-block px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+          {projects.length === 0 && !loading ? (
+            <WelcomeState firstName={user?.firstName || undefined} />
+          ) : (
+            <div className="space-y-6">
+              {/* Processing */}
+              {processing.length > 0 && (
+                <div>
+                  <h3
+                    className={`text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
                   >
-                    New Project
-                  </Link>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {/* Processing */}
-                  {processing.length > 0 && (
-                    <div>
-                      <h3
-                        className={`text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                      >
-                        <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                        In Progress
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {processing.map((p) => (
-                          <div key={p.id} className={`p-4 rounded-2xl border opacity-75 ${card}`}>
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="p-2 rounded-xl bg-amber-500/10">
-                                <BarChart2 size={16} className="text-amber-500" />
-                              </div>
-                              <span className="flex items-center gap-1.5 text-xs text-amber-400">
-                                <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                                Processing
-                              </span>
-                            </div>
-                            <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                            <p
-                              className={`text-xs truncate mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                            >
-                              {p.file_name}
-                            </p>
-                            <p className={`text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                              Your insights are being generated...
-                            </p>
+                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    In Progress
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {processing.map((p) => (
+                      <div key={p.id} className={`p-4 rounded-2xl border opacity-75 ${card}`}>
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="p-2 rounded-xl bg-amber-500/10">
+                            <BarChart2 size={16} className="text-amber-500" />
                           </div>
-                        ))}
+                          <span className="flex items-center gap-1.5 text-xs text-amber-400">
+                            <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                            Processing
+                          </span>
+                        </div>
+                        <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
+                        <p
+                          className={`text-xs truncate mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                        >
+                          {p.file_name}
+                        </p>
+                        <p className={`text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                          Your insights are being generated...
+                        </p>
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
+                </div>
+              )}
 
-                  {/* Completed */}
-                  {completed.length > 0 && (
-                    <div>
-                      <h3
-                        className={`text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
+              {/* Completed */}
+              {completed.length > 0 && (
+                <div>
+                  <h3
+                    className={`text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
+                  >
+                    <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                    Completed
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {completed.map((p) => (
+                      <Link
+                        key={p.id}
+                        href={`/projects/${p.id}`}
+                        className={`group p-4 rounded-2xl border transition-all hover:border-blue-500 hover:shadow-md ${card}`}
                       >
-                        <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                        Completed
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {completed.map((p) => (
-                          <Link
-                            key={p.id}
-                            href={`/projects/${p.id}`}
-                            className={`group p-4 rounded-2xl border transition-all hover:border-blue-500 hover:shadow-md ${card}`}
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="p-2 rounded-xl bg-blue-500/10">
-                                <BarChart2 size={16} className="text-blue-500" />
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="flex items-center gap-1 text-xs text-emerald-500">
-                                  <CheckCircle size={12} /> Completed
-                                </span>
-                                <button
-                                  onClick={(e) => deleteProject(p.id, e)}
-                                  className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400 ${dark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}`}
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-                            </div>
-                            <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                            <p
-                              className={`text-xs truncate mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="p-2 rounded-xl bg-blue-500/10">
+                            <BarChart2 size={16} className="text-blue-500" />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="flex items-center gap-1 text-xs text-emerald-500">
+                              <CheckCircle size={12} /> Completed
+                            </span>
+                            <button
+                              onClick={(e) => deleteProject(p.id, e)}
+                              className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400 ${dark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}`}
                             >
-                              {p.file_name}
-                            </p>
-                            <div
-                              className={`flex items-center gap-1 text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                            >
-                              <Clock size={11} />
-                              {new Date(p.created_at).toLocaleDateString()}
-                            </div>
-                            <div
-                              className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-blue-500 ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
-                            >
-                              View Results <ArrowRight size={12} />
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                        <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
+                        <p
+                          className={`text-xs truncate mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                        >
+                          {p.file_name}
+                        </p>
+                        <div
+                          className={`flex items-center gap-1 text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                        >
+                          <Clock size={11} />
+                          {new Date(p.created_at).toLocaleDateString()}
+                        </div>
+                        <div
+                          className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-blue-500 ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
+                        >
+                          View Results <ArrowRight size={12} />
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
-          </>
-        )}
+          )}
+        </div>
 
         {/* Company Research */}
         <div id="research">
