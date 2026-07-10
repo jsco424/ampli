@@ -13,7 +13,7 @@ export default function SignUpPage() {
         </div>
         <p className="text-zinc-400 text-xs tracking-wide">stories, not spreadsheets</p>
       </div>
-      <SignUp fallbackRedirectUrl="/" />
+      <SignUp fallbackRedirectUrl="/dashboard" />
     </div>
   )
 }

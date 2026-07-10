@@ -1,107 +1,599 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+import type {
+  AnalysisOutput,
+  KeyFinding,
+  FormulaType,
+  VerificationStatus,
+  BenchmarkContext,
+} from '@/lib/analysisTypes'
+import type { DataSummary } from '@/lib/dataSummary'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
-export async function POST(req: Request) {
-  const { data, prompt, projectName, targetCompany, targetAudience, optIn, projectId } =
-    await req.json()
+// ── System prompt ──────────────────────────────────────────────────────────
+// Rewritten to be data-type-first, not formula-first.
+// The old prompt listed specific formulas (lift, T vs C, ROI) as things
+// to look for — this biased Claude toward those frames even when the data
+// didn't support them. The new prompt says: recognize the data structure
+// first, apply the right analytical frame for what's actually there.
 
-  const systemPrompt = `You are a data analyst and storyteller. Analyze the raw data and return ONLY a valid JSON object with exactly these fields:
+const SYSTEM_PROMPT = `You are a senior marketing data analyst reviewing a business dataset. Your job is to tell the most accurate and impactful story the data actually supports — not to apply a predetermined analytical framework.
+
+STEP 1 — IDENTIFY WHAT KIND OF DATA THIS IS
+Before doing any analysis, determine the dataset type from the column structure, values, and patterns:
+
+- EXPERIMENTAL: Has explicit treatment/control groups, exposed/unexposed segments, A/B test flags, or before/after splits. → Apply lift analysis, statistical comparison, incremental value.
+- TIME SERIES PERFORMANCE: Metrics tracked over time periods. → Apply trend analysis, period-over-period change, inflection point identification.
+- CROSS-SECTIONAL SNAPSHOT: A single point-in-time view across segments, channels, or accounts. → Apply segment comparison, share analysis, outlier detection.
+- FUNNEL / CONVERSION: Sequential stages from awareness to purchase. → Apply funnel drop-off, conversion rate by stage, bottleneck identification.
+- MULTI-ENTITY BENCHMARK: Multiple companies, clients, campaigns, or accounts in one file. → Apply relative performance ranking, outlier flagging, cluster identification.
+- MIXED: Multiple of the above in one file. → Identify each sub-structure and apply the right frame to each.
+
+State the detected data type in your executiveSummary. If you're uncertain, say so and explain what additional context would clarify it.
+
+STEP 2 — APPLY THE RIGHT ANALYTICAL FRAME
+Only compute metrics that the data structure actually supports:
+
+FOR EXPERIMENTAL DATA:
+- Lift: (treatment_avg - control_avg) / |control_avg| × 100
+- Incremental value: (treatment_avg - control_avg) × treatment_count
+- ROI: incremental_value / cost
+- Statistical note: flag if control group < 15% of treatment (underpowered)
+
+FOR TIME SERIES:
+- Period-over-period: (current - prior) / |prior| × 100
+- Trend direction and inflection points
+- Seasonality flags if period spans multiple years
+
+FOR CROSS-SECTIONAL:
+- Share: category / total × 100
+- Index: (category_share_of_metric / category_share_of_rows) × 100
+- Outlier identification: segments > 2x or < 0.5x the average
+
+FOR FUNNEL:
+- Stage conversion rate: next_stage / current_stage × 100
+- Biggest drop-off identification
+- Comparison to prior periods if available
+
+FOR MULTI-ENTITY:
+- Relative ranking
+- Outlier flagging
+- Common patterns vs. exceptions
+
+STEP 3 — FIND WHAT MATTERS
+Rank findings by business impact — what would most change a budget, strategy, or operational decision. Do not rank by what is easiest to describe or what has the largest absolute number.
+
+STEP 4 — FLAG QUALITY ISSUES
+- Underpowered groups (experimental data)
+- Missing periods that break trends
+- Contradictory metrics
+- Ambiguous data structures that could be misread
+
+STEP 5 — SUGGEST FRAME-REDIRECTING FOLLOW-UPS
+If the data could support additional analytical frames the user might not have considered, suggest them explicitly. Examples:
+- "If this data has a treatment/control split, ask me to reframe as an exposed vs. unexposed analysis"
+- "If you have pre-campaign baseline data, I can run a pre/post comparison"
+- "Ask me to break this out by [detected segment column] for a more granular view"
+
+CRITICAL OUTPUT RULES:
+- The "value" field must be a SHORT PUNCHY METRIC ONLY — a single number, percentage, multiplier, or dollar amount. Examples: "+9.2%", "$4,137", "0.25x", "811%". NEVER put a sentence or comparison in value. Full context goes in interpretation.
+- Confidence: "high" = n > 1000, "medium" = n 100–1000, "low" = n < 100
+- Executive summary: 2–3 sentences MAX. Lead with the data type detected, then the most important finding.
+- Key findings: max 6 (not 8), ranked by business impact. Keep each interpretation to 1 sentence.
+- Insight tables: max 2 tables. Max 6 rows each. Keep cell values short.
+- Anomalies: max 3. One sentence each.
+- Suggested follow-ups: exactly 3. One sentence each.
+- Be concise throughout — the goal is signal density, not completeness.
+
+Return JSON matching this exact schema. Do not wrap in markdown. Start with { and end with }.
 
 {
-  "pitch_title": "Short punchy presentation title (4-6 words max). Never mention target company or audience.",
-  "narrative": "A compelling 3-4 paragraph business story. Plain text only.",
-  "insights": [
-    { "title": "Metric Name", "value": "123K", "description": "One sentence", "trend": "up" }
-  ],
-  "charts": [
+  "executiveSummary": "string",
+  "detectedDataType": "experimental|time_series|cross_sectional|funnel|multi_entity|mixed|unknown",
+  "insightTables": [
     {
-      "type": "bar",
-      "title": "Chart Title",
-      "description": "One sentence",
-      "data": [{ "name": "Label", "value": 100 }],
-      "hero_stat": "48%",
-      "takeaway": "One punchy sentence explaining the hero stat in business terms",
-      "layout": "split-right"
+      "title": "string",
+      "description": "string",
+      "headers": ["string"],
+      "rows": [[{ "display": "string", "raw": number|null, "formulaType": "average|lift_pct|share_pct|incremental_value|roi|weighted_average|period_over_period|sum|count|ratio|raw", "inputs": { "named_input": number } }]],
+      "footnote": "string (optional)"
     }
   ],
-  "recommendations": [
+  "keyFindings": [
     {
-      "number": "01",
-      "title": "Recommendation headline (4-6 words)",
-      "description": "2-3 sentences explaining why this matters and what to do",
-      "stat": "57%",
-      "stat_label": "short label explaining the stat"
+      "label": "string",
+      "value": "string",
+      "raw": number|null,
+      "direction": "positive|negative|neutral|warning",
+      "interpretation": "string",
+      "confidence": "high|medium|low",
+      "sampleSize": number,
+      "formulaType": "string (optional)",
+      "inputs": { "named_input": number }
     }
-  ]
+  ],
+  "anomalies": [
+    {
+      "description": "string",
+      "severity": "info|warning|critical",
+      "affectedMetric": "string (optional)",
+      "affectedDimension": "string (optional)",
+      "suggestedAction": "string (optional)"
+    }
+  ],
+  "suggestedFollowUps": ["string"]
+}`
+
+// ── Formula verifier ───────────────────────────────────────────────────────
+
+const TOLERANCE_RELATIVE = 0.005
+const TOLERANCE_ABSOLUTE = 0.01
+
+function withinTolerance(a: number, b: number): boolean {
+  if (a === b) return true
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1)
+  return Math.abs(a - b) / scale <= TOLERANCE_RELATIVE || Math.abs(a - b) <= TOLERANCE_ABSOLUTE
 }
 
-Rules:
-- pitch_title: short, punchy, no audience/company references
-- insights: 4-6 items, trend must be "up", "down", or "neutral"
-- charts: 4-6 items, type must be one of: bar, line, area, pie
-- chart data must have "name" and "value" keys only, value must be a NUMBER
-- chart data: if comparing TWO series (e.g. new vs returning, before vs after), use TWO numeric keys per object: [{ "name": "Jan", "new_customers": 700, "returning_customers": 1600 }]. If single series use "value" key: [{ "name": "Jan", "value": 100 }]
-- hero_stat: single most impactful number from this chart
-- takeaway: one punchy business sentence
-- layout: choose the BEST layout for this specific chart:
-  "split-right" = chart left 65%, hero panel right 35% (best for bar charts showing comparison)
-  "split-left" = hero panel left 35%, chart right 65% (best for line/trend charts)
-  "full-bleed" = chart takes 80% width, hero stat overlaid as floating card (best for dramatic single metrics)
-  "top-bottom" = chart top 60%, hero stat full width bottom (best for pie/distribution charts)
-  "stat-focus" = 3 mini stats across top, chart below (best for multi-metric overview charts)
-- recommendations: exactly 4 items, each with a specific actionable stat
-- Return ONLY the JSON object, no explanation, no markdown fences
+function verifyFormula(
+  formulaType: FormulaType,
+  inputs: Record<string, number> | undefined,
+  claimedRaw: number | null
+): { status: VerificationStatus; serverValue: number | null } {
+  if (formulaType === 'raw') return { status: 'not_applicable', serverValue: claimedRaw }
+  if (!inputs || claimedRaw === null) return { status: 'unverified', serverValue: null }
 
-${prompt ? `User focus: ${prompt}` : ''}
-${targetCompany ? `Target company: ${targetCompany}` : ''}
-${targetAudience ? `Target audience: ${targetAudience.role} (${targetAudience.seniority}). They care about: ${targetAudience.cares_about?.join(', ')}. Style: ${targetAudience.narrative_style}. Avoid: ${targetAudience.avoid}` : ''}`
-
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: `Project: ${projectName}\n\nData:\n${data}` }],
-  })
-
-  const raw = message.content[0].type === 'text' ? message.content[0].text : ''
-  const cleaned = raw.replace(/```json|```/g, '').trim()
-
-  let parsed: any
+  let serverValue: number | null = null
   try {
-    parsed = JSON.parse(cleaned)
+    switch (formulaType) {
+      case 'average': {
+        const { sum, count } = inputs
+        if (count === undefined || sum === undefined || count === 0) break
+        serverValue = sum / count
+        break
+      }
+      case 'lift_pct': {
+        const { treatment_avg, control_avg } = inputs
+        if (treatment_avg === undefined || control_avg === undefined || control_avg === 0) break
+        serverValue = ((treatment_avg - control_avg) / Math.abs(control_avg)) * 100
+        break
+      }
+      case 'share_pct': {
+        const { category_value, total_value } = inputs
+        if (category_value === undefined || total_value === undefined || total_value === 0) break
+        serverValue = (category_value / total_value) * 100
+        break
+      }
+      case 'incremental_value': {
+        const { treatment_avg, control_avg, treatment_count } = inputs
+        if (
+          treatment_avg === undefined ||
+          control_avg === undefined ||
+          treatment_count === undefined
+        )
+          break
+        serverValue = (treatment_avg - control_avg) * treatment_count
+        break
+      }
+      case 'roi': {
+        const { incremental_value, cost_awarded } = inputs
+        if (incremental_value === undefined || cost_awarded === undefined || cost_awarded === 0)
+          break
+        serverValue = incremental_value / cost_awarded
+        break
+      }
+      case 'weighted_average': {
+        const { weighted_sum, total_weight } = inputs
+        if (weighted_sum === undefined || total_weight === undefined || total_weight === 0) break
+        serverValue = weighted_sum / total_weight
+        break
+      }
+      case 'period_over_period': {
+        const { current_value, prior_value } = inputs
+        if (current_value === undefined || prior_value === undefined || prior_value === 0) break
+        serverValue = ((current_value - prior_value) / Math.abs(prior_value)) * 100
+        break
+      }
+      case 'sum': {
+        if ('total' in inputs) {
+          serverValue = inputs.total
+          break
+        }
+        serverValue = Object.values(inputs).reduce((a, b) => a + b, 0)
+        break
+      }
+      case 'count': {
+        if ('count' in inputs) {
+          serverValue = inputs.count
+          break
+        }
+        serverValue = Object.keys(inputs).length
+        break
+      }
+      case 'ratio': {
+        const { numerator, denominator } = inputs
+        if (numerator === undefined || denominator === undefined || denominator === 0) break
+        serverValue = numerator / denominator
+        break
+      }
+    }
   } catch {
-    return NextResponse.json({
-      narrative: cleaned,
-      insights: [],
-      charts: [],
-      pitch_title: projectName,
-      recommendations: [],
+    return { status: 'unverified', serverValue: null }
+  }
+
+  if (serverValue === null) return { status: 'unverified', serverValue: null }
+  return {
+    status: withinTolerance(serverValue, claimedRaw) ? 'verified' : 'mismatch',
+    serverValue,
+  }
+}
+
+function runVerificationPass(output: AnalysisOutput): void {
+  for (const table of output.insightTables) {
+    table.verificationGrid = table.rows.map((row) =>
+      row.map((cell) => verifyFormula(cell.formulaType, cell.inputs, cell.raw).status)
+    )
+  }
+  for (const finding of output.keyFindings) {
+    if (finding.formulaType) {
+      const { status } = verifyFormula(
+        finding.formulaType as FormulaType,
+        finding.inputs,
+        finding.raw
+      )
+      finding.verificationStatus = status
+    } else {
+      finding.verificationStatus = 'not_applicable'
+    }
+  }
+  output.verificationComplete = true
+}
+
+// ── Benchmark injection ────────────────────────────────────────────────────
+// Runs after Claude's analysis pass. Queries the crowd pool for the
+// project's industry and injects benchmark context directly into each
+// finding where a matching metric exists. This is always real pooled data —
+// never estimated or hallucinated by Claude.
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+function resolveBenchmarkValue(pooledMetric: any): number | null {
+  if (!pooledMetric) return null
+  if (pooledMetric.mode === 'rate') {
+    const { sumOfMetricInCategory, sumOfRowCountInCategory } = pooledMetric
+    if (!sumOfRowCountInCategory) return null
+    return round2(sumOfMetricInCategory / sumOfRowCountInCategory)
+  }
+  if (pooledMetric.mode === 'index') {
+    const {
+      sumOfMetricInCategory,
+      sumOfMetricGrandTotal,
+      sumOfRowCountInCategory,
+      sumOfTotalRowCount,
+    } = pooledMetric
+    if (!sumOfMetricGrandTotal || !sumOfTotalRowCount || !sumOfRowCountInCategory) return null
+    const shareOfMetric = sumOfMetricInCategory / sumOfMetricGrandTotal
+    const shareOfRows = sumOfRowCountInCategory / sumOfTotalRowCount
+    if (shareOfRows === 0) return null
+    return Math.round((shareOfMetric / shareOfRows) * 100)
+  }
+  return null
+}
+
+// Tries to find a crowd pool metric that matches a finding's label/formulaType.
+// Deliberately conservative — only injects a benchmark when the match is
+// high-confidence, since a wrong benchmark is worse than no benchmark.
+function matchFindingToBenchmark(
+  finding: KeyFinding,
+  crowdMetrics: Record<string, any>
+): {
+  metricKey: string
+  pooledValue: number
+  contributionCount: number
+  sampleRowCount: number
+} | null {
+  const label = (finding.label || '').toLowerCase()
+  const ft = finding.formulaType || ''
+
+  // Exact and fuzzy metric key matching
+  const candidates = Object.entries(crowdMetrics)
+  for (const [key, metric] of candidates) {
+    const k = key.toLowerCase()
+    // Match by formula type and label keywords
+    if (
+      (ft === 'lift_pct' && (k.includes('lift') || k.includes('conversion'))) ||
+      (ft === 'roi' && (k.includes('roi') || k.includes('roas'))) ||
+      (ft === 'share_pct' && label.includes(k)) ||
+      (ft === 'period_over_period' && k.includes('growth')) ||
+      label.includes(k) ||
+      k.includes(label.split(' ')[0]) // first word of label
+    ) {
+      const pooledValue = resolveBenchmarkValue(metric)
+      if (pooledValue === null) continue
+      return {
+        metricKey: key,
+        pooledValue,
+        contributionCount: metric.contributionCount || 0,
+        sampleRowCount: metric.sumOfRowCountInCategory || 0,
+      }
+    }
+  }
+  return null
+}
+
+async function injectBenchmarkContext(
+  output: AnalysisOutput,
+  industry: string | null
+): Promise<void> {
+  if (!industry) return
+
+  const { data: crowdRow } = await supabase
+    .from('crowd_insights')
+    .select('metrics')
+    .eq('industry', industry)
+    .single()
+
+  if (!crowdRow?.metrics) return
+
+  const extendedMetrics = crowdRow.metrics.extendedMetrics || {}
+  const fixedMetrics = {
+    conversion_rate: {
+      mode: 'rate',
+      avg: crowdRow.metrics.avg_conversion_rate,
+      n: crowdRow.metrics.avg_conversion_rate_n,
+    },
+    revenue_growth: {
+      mode: 'rate',
+      avg: crowdRow.metrics.avg_revenue_growth,
+      n: crowdRow.metrics.avg_revenue_growth_n,
+    },
+    customer_growth: {
+      mode: 'rate',
+      avg: crowdRow.metrics.avg_customer_growth,
+      n: crowdRow.metrics.avg_customer_growth_n,
+    },
+  }
+  const allMetrics = { ...fixedMetrics, ...extendedMetrics }
+
+  for (const finding of output.keyFindings) {
+    if (finding.raw === null) continue
+
+    const match = matchFindingToBenchmark(finding, allMetrics)
+    if (!match) continue
+
+    const { pooledValue, contributionCount, sampleRowCount } = match
+    if (contributionCount < 2) continue // don't show benchmarks with only 1 contributor
+
+    const diff = finding.raw - pooledValue
+    const pctDiff = pooledValue !== 0 ? Math.abs(diff / pooledValue) * 100 : 0
+    const vsIndustry: BenchmarkContext['vsIndustry'] =
+      pctDiff < 5 ? 'in-line' : diff > 0 ? 'above' : 'below'
+
+    const pctDiffDisplay = `${Math.round(pctDiff)}%`
+    const vsDisplay =
+      vsIndustry === 'in-line'
+        ? `in line with the ${industry} industry average`
+        : `${pctDiffDisplay} ${vsIndustry} the ${industry} industry average`
+
+    // Format industry avg to match the finding's value format
+    const isPercent = finding.value.includes('%')
+    const isDollar = finding.value.includes('$')
+    const industryAvgDisplay = isPercent
+      ? `${pooledValue > 0 ? '+' : ''}${round2(pooledValue)}%`
+      : isDollar
+        ? `$${pooledValue.toLocaleString()}`
+        : String(round2(pooledValue))
+
+    finding.benchmarkContext = {
+      metricLabel: match.metricKey.replace(/_/g, ' '),
+      industryAvg: pooledValue,
+      industryAvgDisplay,
+      contributionCount,
+      sampleRowCount,
+      vsIndustry,
+      vsIndustryDisplay: vsDisplay,
+    }
+  }
+}
+
+// ── Row sampler ────────────────────────────────────────────────────────────
+
+function sampleRows(rows: Record<string, any>[], maxRows = 200): Record<string, any>[] {
+  if (rows.length <= maxRows) return rows
+  const step = rows.length / maxRows
+  return Array.from({ length: maxRows }, (_, i) => rows[Math.floor(i * step)])
+}
+
+// ── Route handler ──────────────────────────────────────────────────────────
+
+export async function POST(req: Request) {
+  const {
+    dataSummaryJson,
+    rawRowsJson,
+    conversationHistory,
+    prompt,
+    tone,
+    industry, // passed from project.industry for benchmark injection
+  } = await req.json()
+
+  let summary: DataSummary | null = null
+  let rawRows: Record<string, any>[] = []
+
+  try {
+    summary = JSON.parse(dataSummaryJson)
+  } catch {
+    return NextResponse.json({ error: 'Invalid dataSummaryJson' }, { status: 400 })
+  }
+  try {
+    rawRows = rawRowsJson ? JSON.parse(rawRowsJson) : []
+  } catch {
+    rawRows = []
+  }
+  if (!summary) {
+    return NextResponse.json({ error: 'Missing data summary' }, { status: 400 })
+  }
+
+  const dateColumns = summary.columns.filter((c) => c.role === 'date').map((c) => c.name)
+  const metricColumns = summary.columns.filter((c) => c.role === 'metric').map((c) => c.name)
+  const dimensionColumns = summary.columns.filter((c) => c.role === 'dimension').map((c) => c.name)
+  const sampledRows = sampleRows(rawRows)
+
+  // ── Format group comparisons as a verified data table ─────────────────
+  // These are computed from ALL rows in dataSummary.ts — server-verified,
+  // not estimated from the sample. Claude reads these directly and builds
+  // its comparison stories from them rather than computing from sample rows.
+  const groupComparisonText =
+    summary.groupComparisons.length > 0
+      ? [
+          '## Verified Group Comparisons (computed from ALL rows — use these numbers directly)',
+          ...summary.groupComparisons.slice(0, 4).map((gc) => {
+            const metricCols = Object.keys(gc.groups[0]?.metrics || {})
+            const header = ['Group', 'Rows', 'Share %', ...metricCols].join(' | ')
+            const divider = ['---', '---', '---', ...metricCols.map(() => '---')].join(' | ')
+            const rows = gc.groups.map((g) =>
+              [
+                g.groupName,
+                g.rowCount.toLocaleString(),
+                `${g.shareOfTotal}%`,
+                ...metricCols.map((m) => g.metrics[m]?.formatted || '—'),
+              ].join(' | ')
+            )
+            return [
+              `### ${gc.dimensionName} (${gc.groups.length} groups, ${gc.totalRows.toLocaleString()} total rows)${gc.hasStrongDivergence ? ' ⚡ Strong divergence detected' : ''}`,
+              header,
+              divider,
+              ...rows,
+            ].join('\n')
+          }),
+          '',
+          'These numbers are server-verified from the complete dataset. Do not recompute them from the sample rows. Build your comparison story from these verified figures.',
+        ].join('\n')
+      : ''
+
+  const userMessage = [
+    '## Dataset Summary',
+    '```json',
+    JSON.stringify(
+      {
+        rowCount: summary.rowCount,
+        dateRange: summary.dateRange,
+        warnings: summary.warnings,
+        metrics: Object.fromEntries(
+          Object.entries(summary.metrics).map(([k, v]) => [
+            k,
+            {
+              total: v.total,
+              average: v.average,
+              trend: v.trend,
+              changeFirstToLastPct: v.changeFirstToLastPct,
+              monthlyPeriods: v.monthly.length,
+            },
+          ])
+        ),
+        dimensions: Object.fromEntries(
+          Object.entries(summary.dimensions).map(([k, v]) => [
+            k,
+            { topCategories: v.top.slice(0, 8) },
+          ])
+        ),
+        scatterPairs: summary.scatterPairs?.map((p) => ({
+          xMetric: p.xMetric,
+          yMetric: p.yMetric,
+          correlation: p.correlation,
+        })),
+      },
+      null,
+      2
+    ),
+    '```',
+    '',
+    groupComparisonText,
+    '',
+    '## Column Classifications',
+    `Date columns: ${dateColumns.join(', ') || 'none detected'}`,
+    `Metric columns: ${metricColumns.join(', ') || 'none detected'}`,
+    `Dimension columns: ${dimensionColumns.join(', ') || 'none detected'}`,
+    prompt ? `\n## User Focus\n${prompt}` : '',
+    tone ? `\n## Tone\n${tone}` : '',
+    '',
+    `## Raw Rows Sample (${sampledRows.length} of ${summary.rowCount} rows — for pattern recognition only, not arithmetic)`,
+    '```json',
+    JSON.stringify(sampledRows, null, 0),
+    '```',
+    '',
+    'Identify the data type, apply the right analytical frame, and find what matters. Use the verified group comparisons above for any numerical claims about segment differences.',
+  ].join('\n')
+
+  const isFollowUp = Array.isArray(conversationHistory) && conversationHistory.length > 0
+  const messages: { role: 'user' | 'assistant'; content: string }[] = isFollowUp
+    ? [{ role: 'user', content: userMessage }, ...conversationHistory]
+    : [{ role: 'user', content: userMessage }]
+
+  let rawText = ''
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 10000,
+      system: SYSTEM_PROMPT,
+      messages,
     })
+    rawText = response.content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+  } catch (err) {
+    console.error('Analysis API error:', err)
+    return NextResponse.json({ error: 'Analysis generation failed' }, { status: 500 })
   }
 
-  const result = {
-    pitch_title: parsed.pitch_title || projectName,
-    narrative:
-      typeof parsed.narrative === 'string' ? parsed.narrative : JSON.stringify(parsed.narrative),
-    insights: parsed.insights || [],
-    charts: parsed.charts || [],
-    recommendations: parsed.recommendations || [],
+  let analysisOutput: AnalysisOutput
+  try {
+    const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/)
+    const jsonCandidate = fenceMatch ? fenceMatch[1].trim() : rawText.trim()
+    const start = jsonCandidate.indexOf('{')
+    const end = jsonCandidate.lastIndexOf('}')
+    if (start === -1 || end === -1 || end <= start) throw new Error('No JSON object found')
+    analysisOutput = JSON.parse(jsonCandidate.slice(start, end + 1))
+  } catch (parseErr) {
+    const wasTruncated = rawText.length > 0 && !rawText.trimEnd().endsWith('}')
+    console.error(
+      wasTruncated
+        ? `Analysis truncated — response length: ${rawText.length}`
+        : `Failed to parse analysis output: ${parseErr}`,
+      '\nPreview:',
+      rawText.slice(0, 300)
+    )
+    return NextResponse.json(
+      {
+        error: wasTruncated
+          ? 'Analysis response was too long — try a smaller file or fewer metrics.'
+          : 'Failed to parse analysis output',
+      },
+      { status: 500 }
+    )
   }
 
-  if (optIn && projectId) {
-    fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/crowd`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        rawData: data,
-        insights: result.insights,
-        narrative: result.narrative,
-      }),
-    }).catch(console.error)
+  // Pass 2 — deterministic formula verification (<100ms)
+  runVerificationPass(analysisOutput)
+
+  // Pass 3 — crowd pool benchmark injection
+  // Runs async after verification — queries Supabase for the project's
+  // industry and injects inline benchmark context into matching findings.
+  // Only injects when the crowd pool has ≥2 contributions for that industry.
+  if (industry) {
+    await injectBenchmarkContext(analysisOutput, industry)
   }
 
-  return NextResponse.json(result)
+  return NextResponse.json({
+    analysis: analysisOutput,
+    assistantTurn: { role: 'assistant', content: rawText },
+  })
 }

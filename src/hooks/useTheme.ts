@@ -12,10 +12,10 @@ export function useTheme() {
     setDark(isDark)
     if (isDark) {
       document.documentElement.classList.add('dark')
-      document.body.style.backgroundColor = '#09090b'
+      document.body.style.backgroundColor = '#0a0a0f'
     } else {
       document.documentElement.classList.remove('dark')
-      document.body.style.backgroundColor = '#f9fafb'
+      document.body.style.backgroundColor = '#f8f8fa'
     }
   }, [])
 
@@ -24,11 +24,11 @@ export function useTheme() {
     setDark(next)
     if (next) {
       document.documentElement.classList.add('dark')
-      document.body.style.backgroundColor = '#09090b'
+      document.body.style.backgroundColor = '#0a0a0f'
       localStorage.setItem('ampli-theme', 'dark')
     } else {
       document.documentElement.classList.remove('dark')
-      document.body.style.backgroundColor = '#f9fafb'
+      document.body.style.backgroundColor = '#f8f8fa'
       localStorage.setItem('ampli-theme', 'light')
     }
   }

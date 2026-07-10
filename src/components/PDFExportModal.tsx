@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useTheme } from '@/hooks/useTheme'
 import { useBrand } from '@/hooks/useBrand'
 import ChartRenderer from '@/components/ChartRenderer'
@@ -11,10 +11,90 @@ interface Props {
   onClose: () => void
 }
 
-// Scale factor for thumbnails
 const SCALE = 0.22
 const SLIDE_W = 1200
 const SLIDE_H = 675
+
+type Box = { x: number; y: number; w: number; h: number }
+type LayoutPreset = 'split-right' | 'split-left' | 'full-bleed' | 'top-bottom'
+
+function boxesForLayout(
+  layout: LayoutPreset,
+  width: number,
+  height: number
+): { chart: Box; hero: Box } {
+  const padX = 48,
+    padY = 96,
+    gap = 20,
+    heroW = 256,
+    takeawayStripH = 130
+  switch (layout) {
+    case 'split-left':
+      return {
+        hero: { x: padX, y: padY, w: heroW, h: height - padY - 24 },
+        chart: {
+          x: padX + heroW + gap,
+          y: padY,
+          w: width - padX * 2 - heroW - gap,
+          h: height - padY - 24,
+        },
+      }
+    case 'full-bleed': {
+      // Mirrors the same fix in pitch/page.tsx — the chart used to render at
+      // full height right up to the hero card's bottom edge, guaranteeing the
+      // last x-axis label(s) collided with it. Shrinking chart height so it
+      // ends above the hero's vertical range fixes that.
+      const fbHeroW = 280,
+        fbHeroH = 160,
+        fbGap = 20
+      return {
+        chart: { x: padX, y: padY, w: width - padX * 2, h: height - padY - 24 - fbHeroH - fbGap },
+        hero: { x: width - padX - fbHeroW, y: height - 24 - fbHeroH, w: fbHeroW, h: fbHeroH },
+      }
+    }
+    case 'top-bottom':
+      return {
+        chart: {
+          x: padX,
+          y: padY,
+          w: width - padX * 2,
+          h: height - padY - takeawayStripH - gap - 16,
+        },
+        hero: { x: padX, y: height - takeawayStripH - 16, w: width - padX * 2, h: takeawayStripH },
+      }
+    case 'split-right':
+    default:
+      return {
+        chart: { x: padX, y: padY, w: width - padX * 2 - heroW - gap, h: height - padY - 24 },
+        hero: { x: width - padX - heroW, y: padY, w: heroW, h: height - padY - 24 },
+      }
+  }
+}
+
+function applyTextStyle(base: React.CSSProperties, ts?: any): React.CSSProperties {
+  if (!ts) return base
+  return {
+    ...base,
+    ...(ts.bold && { fontWeight: 900 }),
+    ...(ts.italic && { fontStyle: 'italic' }),
+    ...(ts.sizePx && { fontSize: `${ts.sizePx}px` }),
+    ...(ts.color && { color: ts.color }),
+  }
+}
+
+function logoStyle(position?: string): React.CSSProperties {
+  const base: React.CSSProperties = { position: 'absolute', height: '28px', objectFit: 'contain' }
+  switch (position) {
+    case 'bottom-left':
+      return { ...base, bottom: 20, left: 24 }
+    case 'top-right':
+      return { ...base, top: 20, right: 24 }
+    case 'top-left':
+      return { ...base, top: 20, left: 24 }
+    default:
+      return { ...base, bottom: 20, right: 24 }
+  }
+}
 
 export default function PDFExportModal({ project, onClose }: Props) {
   const { dark } = useTheme()
@@ -29,6 +109,425 @@ export default function PDFExportModal({ project, onClose }: Props) {
     '#06b6d4',
   ]
 
+  // ── Slide theme tokens (mirrors page.tsx T object) ────────────────────────
+  const S = {
+    bg: dark
+      ? 'linear-gradient(135deg, #09090b 0%, #18181b 100%)'
+      : 'linear-gradient(135deg, #f8f8fa 0%, #f0f0f5 100%)',
+    textColor: dark ? '#ffffff' : '#0a0a0b',
+    dimColor: dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.45)',
+    dimColor2: dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)',
+    cardBg: dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    cardBorder: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+    divider: dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+    heroBg: (p: string) =>
+      dark ? `linear-gradient(135deg, ${p}22, ${p}44)` : `linear-gradient(135deg, ${p}18, ${p}30)`,
+    heroBorder: (p: string) => `${p}44`,
+    heroText: dark ? '#ffffff' : '#0a0a0b',
+    noDataBorder: dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)',
+  }
+
+  const SLIDE_BASE: React.CSSProperties = {
+    width: SLIDE_W,
+    height: SLIDE_H,
+    background: S.bg,
+    color: S.textColor,
+    fontFamily: 'Inter, sans-serif',
+    position: 'relative',
+    overflow: 'hidden',
+  }
+
+  const ACCENT_BAR: React.CSSProperties = {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '3px',
+    background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
+  }
+
+  // ── Slide renderers ───────────────────────────────────────────────────────
+
+  const TitleSlide = () => (
+    <div
+      style={{
+        ...SLIDE_BASE,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+        padding: '80px',
+      }}
+    >
+      <div style={ACCENT_BAR} />
+      {brand.logoUrl && (
+        <img
+          src={brand.logoUrl}
+          alt="Logo"
+          style={{ height: '56px', objectFit: 'contain', marginBottom: '40px' }}
+        />
+      )}
+      <div
+        style={{
+          fontSize: '12px',
+          letterSpacing: '4px',
+          textTransform: 'uppercase',
+          color: S.dimColor,
+          marginBottom: '20px',
+        }}
+      >
+        {new Date(project.created_at).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })}
+      </div>
+      <h1
+        style={applyTextStyle(
+          {
+            fontSize: '56px',
+            fontWeight: 900,
+            color: brand.primaryColor,
+            lineHeight: 1.1,
+            marginBottom: '24px',
+          },
+          project.title_text_style
+        )}
+      >
+        {project.pitch_title || project.name}
+      </h1>
+      <div
+        style={{
+          width: '80px',
+          height: '4px',
+          borderRadius: '4px',
+          background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
+        }}
+      />
+    </div>
+  )
+
+  const InsightsSlide = () => (
+    <div style={{ ...SLIDE_BASE, padding: '60px' }}>
+      <div style={ACCENT_BAR} />
+      {brand.logoUrl && (
+        <img src={brand.logoUrl} alt="Logo" style={logoStyle(brand.logoPosition)} />
+      )}
+      <h2 style={{ fontSize: '32px', fontWeight: 700, marginBottom: '32px', color: S.textColor }}>
+        Key Insights
+      </h2>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+        {(project.insights || []).slice(0, 6).map((insight: any, i: number) => (
+          <div
+            key={i}
+            style={{
+              padding: '24px',
+              borderRadius: '16px',
+              background: `${brand.primaryColor}15`,
+              border: `1px solid ${brand.primaryColor}30`,
+            }}
+          >
+            <div
+              style={applyTextStyle(
+                {
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '2px',
+                  color: S.dimColor,
+                  marginBottom: '8px',
+                },
+                insight.title_text_style
+              )}
+            >
+              {insight.title}
+            </div>
+            <div
+              style={applyTextStyle(
+                {
+                  fontSize: '36px',
+                  fontWeight: 900,
+                  color: brand.primaryColor,
+                  marginBottom: '8px',
+                },
+                insight.value_text_style
+              )}
+            >
+              {insight.value}
+            </div>
+            <div
+              style={applyTextStyle(
+                { fontSize: '13px', color: S.dimColor2, lineHeight: 1.5 },
+                insight.description_text_style
+              )}
+            >
+              {insight.description}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+
+  const ChartSlide = ({ chart }: { chart: any }) => {
+    const layout: LayoutPreset = chart.layout || 'split-right'
+    // Use saved drag positions if valid — matches what the user sees in pitch mode.
+    // Falls back to layout-preset computation only when no valid boxes are stored.
+    const isValidBox = (b: any): b is Box =>
+      b && typeof b.w === 'number' && typeof b.h === 'number' && b.w > 20 && b.h > 20
+    const defaults = boxesForLayout(layout, SLIDE_W, SLIDE_H)
+    const cb = isValidBox(chart.chart_box) ? chart.chart_box : defaults.chart
+    const hb = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
+    const hasHero = chart.hero_stat || chart.takeaway
+    const hasData = Array.isArray(chart?.data) && chart.data.length > 0
+
+    return (
+      <div style={{ ...SLIDE_BASE }}>
+        <div style={ACCENT_BAR} />
+        {brand.logoUrl && (
+          <img src={brand.logoUrl} alt="Logo" style={logoStyle(brand.logoPosition)} />
+        )}
+
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            padding: '28px 48px 0',
+            width: SLIDE_W - 96,
+          }}
+        >
+          <div
+            style={applyTextStyle(
+              { fontSize: '22px', fontWeight: 700, marginBottom: '6px', color: S.textColor },
+              chart.title_text_style
+            )}
+          >
+            {chart.title}
+          </div>
+          <div
+            style={applyTextStyle(
+              { fontSize: '13px', color: S.dimColor },
+              chart.description_text_style
+            )}
+          >
+            {chart.description}
+          </div>
+        </div>
+
+        <div style={{ position: 'absolute', left: cb.x, top: cb.y, width: cb.w, height: cb.h }}>
+          {hasData ? (
+            <ChartRenderer chart={chart} colors={COLORS} height={cb.h} dark={dark} />
+          ) : (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: S.dimColor,
+                fontSize: '14px',
+                border: `1px dashed ${S.noDataBorder}`,
+                borderRadius: '16px',
+              }}
+            >
+              No data for this chart
+            </div>
+          )}
+        </div>
+
+        {hasHero && (
+          <div
+            style={{
+              position: 'absolute',
+              left: hb.x,
+              top: hb.y,
+              width: hb.w,
+              height: hb.h,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '16px',
+              padding: '28px',
+              background: S.heroBg(brand.primaryColor),
+            }}
+          >
+            {chart.hero_stat && (
+              <div
+                style={applyTextStyle(
+                  {
+                    fontSize: '64px',
+                    fontWeight: 900,
+                    color: brand.primaryColor,
+                    lineHeight: 1,
+                    textAlign: 'center',
+                    marginBottom: '16px',
+                  },
+                  chart.hero_text_style
+                )}
+              >
+                {chart.hero_stat}
+              </div>
+            )}
+            {chart.takeaway && (
+              <p
+                style={applyTextStyle(
+                  { fontSize: '16px', textAlign: 'center', lineHeight: 1.5, color: S.heroText },
+                  chart.takeaway_text_style
+                )}
+              >
+                {chart.takeaway}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const RecommendationsSlide = () => {
+    const recs = (project.recommendations || []).slice(0, 3)
+    return (
+      <div
+        style={{
+          ...SLIDE_BASE,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '56px 64px 40px',
+        }}
+      >
+        <div style={ACCENT_BAR} />
+        {brand.logoUrl && (
+          <img src={brand.logoUrl} alt="Logo" style={logoStyle(brand.logoPosition)} />
+        )}
+        <div style={{ textAlign: 'center', marginBottom: '36px' }}>
+          <h2
+            style={{ fontSize: '38px', fontWeight: 900, marginBottom: '10px', color: S.textColor }}
+          >
+            Key <span style={{ color: brand.primaryColor }}>Recommendations</span>
+          </h2>
+          {project.narrative && (
+            <p
+              style={applyTextStyle(
+                {
+                  fontSize: '14px',
+                  color: S.dimColor,
+                  maxWidth: '640px',
+                  margin: '0 auto',
+                  lineHeight: 1.5,
+                },
+                project.narrative_text_style
+              )}
+            >
+              {project.narrative.slice(0, 140)}
+            </p>
+          )}
+        </div>
+        <div
+          style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}
+        >
+          {recs.map((rec: any, i: number) => (
+            <div
+              key={i}
+              style={{
+                padding: '24px',
+                borderRadius: '20px',
+                background: S.cardBg,
+                border: `1px solid ${S.cardBorder}`,
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: brand.primaryColor,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '11px',
+                  fontWeight: 900,
+                  color: '#ffffff',
+                  marginBottom: '14px',
+                }}
+              >
+                {rec.number || String(i + 1).padStart(2, '0')}
+              </div>
+              <div
+                style={applyTextStyle(
+                  {
+                    fontSize: '15px',
+                    fontWeight: 700,
+                    lineHeight: 1.3,
+                    marginBottom: '10px',
+                    color: S.textColor,
+                  },
+                  rec.title_text_style
+                )}
+              >
+                {rec.title}
+              </div>
+              <p
+                style={applyTextStyle(
+                  { fontSize: '12px', color: S.dimColor2, lineHeight: 1.6, flex: 1 },
+                  rec.description_text_style
+                )}
+              >
+                {rec.description}
+              </p>
+              {(rec.stat || rec.stat_label) && (
+                <div
+                  style={{
+                    marginTop: '16px',
+                    paddingTop: '14px',
+                    borderTop: `1px solid ${S.divider}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <span
+                    style={applyTextStyle(
+                      { fontSize: '26px', fontWeight: 900, color: brand.primaryColor },
+                      rec.stat_text_style
+                    )}
+                  >
+                    {rec.stat}
+                  </span>
+                  <span
+                    style={applyTextStyle(
+                      { fontSize: '11px', color: S.dimColor },
+                      rec.stat_label_text_style
+                    )}
+                  >
+                    {rec.stat_label}
+                  </span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const SlideContent = ({ slideId }: { slideId: string }) => {
+    if (slideId === 'title') return <TitleSlide />
+    if (slideId === 'insights') return <InsightsSlide />
+    if (slideId === 'recommendations') return <RecommendationsSlide />
+    if (slideId.startsWith('chart-')) {
+      const idx = parseInt(slideId.replace('chart-', ''))
+      const chart = project.charts?.[idx]
+      return chart ? <ChartSlide chart={chart} /> : null
+    }
+    return null
+  }
+
+  // ── Slide list ────────────────────────────────────────────────────────────
   const allSlides = [
     { id: 'title', label: 'Cover' },
     { id: 'insights', label: 'Key Insights' },
@@ -43,433 +542,18 @@ export default function PDFExportModal({ project, onClose }: Props) {
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState('')
 
-  const toggle = (id: string) => {
+  const toggle = (id: string) =>
     setSelected((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
+      const n = new Set(prev)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
     })
-  }
+  const toggleAll = () =>
+    selected.size === allSlides.length
+      ? setSelected(new Set())
+      : setSelected(new Set(allSlides.map((s) => s.id)))
 
-  const toggleAll = () => {
-    if (selected.size === allSlides.length) setSelected(new Set())
-    else setSelected(new Set(allSlides.map((s) => s.id)))
-  }
-
-  // Render actual slide content for thumbnails and export
-  const SlideContent = ({ slideId }: { slideId: string }) => {
-    if (slideId === 'title')
-      return (
-        <div
-          style={{
-            width: SLIDE_W,
-            height: SLIDE_H,
-            background: 'linear-gradient(135deg, #09090b 0%, #18181b 100%)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'white',
-            textAlign: 'center',
-            padding: '80px',
-            position: 'relative',
-            fontFamily: 'Inter, sans-serif',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-          {brand.logoUrl && (
-            <img
-              src={brand.logoUrl}
-              alt="Logo"
-              style={{ height: '56px', objectFit: 'contain', marginBottom: '40px' }}
-            />
-          )}
-          <div
-            style={{
-              fontSize: '12px',
-              letterSpacing: '4px',
-              textTransform: 'uppercase',
-              opacity: 0.3,
-              marginBottom: '20px',
-            }}
-          >
-            {new Date(project.created_at).toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}
-          </div>
-          <h1
-            style={{
-              fontSize: '56px',
-              fontWeight: 900,
-              color: brand.primaryColor,
-              lineHeight: 1.1,
-              marginBottom: '24px',
-            }}
-          >
-            {project.pitch_title || project.name}
-          </h1>
-          <div
-            style={{
-              width: '80px',
-              height: '4px',
-              borderRadius: '4px',
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-        </div>
-      )
-
-    if (slideId === 'insights')
-      return (
-        <div
-          style={{
-            width: SLIDE_W,
-            height: SLIDE_H,
-            background: 'linear-gradient(135deg, #09090b 0%, #18181b 100%)',
-            color: 'white',
-            padding: '60px',
-            fontFamily: 'Inter, sans-serif',
-            position: 'relative',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-          {brand.logoUrl && (
-            <img
-              src={brand.logoUrl}
-              alt="Logo"
-              style={{
-                position: 'absolute',
-                height: '28px',
-                objectFit: 'contain',
-                ...(brand.logoPosition === 'bottom-right'
-                  ? { bottom: '20px', right: '24px' }
-                  : brand.logoPosition === 'bottom-left'
-                    ? { bottom: '20px', left: '24px' }
-                    : brand.logoPosition === 'top-right'
-                      ? { top: '20px', right: '24px' }
-                      : { top: '20px', left: '24px' }),
-              }}
-            />
-          )}
-          <h2 style={{ fontSize: '32px', fontWeight: 700, marginBottom: '32px' }}>Key Insights</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-            {(project.insights || []).slice(0, 6).map((insight: any, i: number) => (
-              <div
-                key={i}
-                style={{
-                  padding: '24px',
-                  borderRadius: '16px',
-                  background: `${COLORS[i % COLORS.length]}15`,
-                  border: `1px solid ${COLORS[i % COLORS.length]}30`,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: '11px',
-                    textTransform: 'uppercase',
-                    letterSpacing: '2px',
-                    opacity: 0.4,
-                    marginBottom: '8px',
-                  }}
-                >
-                  {insight.title}
-                </div>
-                <div
-                  style={{
-                    fontSize: '36px',
-                    fontWeight: 900,
-                    color: COLORS[i % COLORS.length],
-                    marginBottom: '8px',
-                  }}
-                >
-                  {insight.value}
-                </div>
-                <div style={{ fontSize: '13px', opacity: 0.6, lineHeight: 1.5 }}>
-                  {insight.description}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )
-
-    if (slideId.startsWith('chart-')) {
-      const idx = parseInt(slideId.replace('chart-', ''))
-      const chart = project.charts?.[idx]
-      if (!chart) return null
-      return (
-        <div
-          style={{
-            width: SLIDE_W,
-            height: SLIDE_H,
-            background: 'linear-gradient(135deg, #09090b 0%, #18181b 100%)',
-            color: 'white',
-            padding: '50px',
-            fontFamily: 'Inter, sans-serif',
-            display: 'flex',
-            gap: '40px',
-            position: 'relative',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-          {brand.logoUrl && (
-            <img
-              src={brand.logoUrl}
-              alt="Logo"
-              style={{
-                position: 'absolute',
-                height: '28px',
-                objectFit: 'contain',
-                ...(brand.logoPosition === 'bottom-right'
-                  ? { bottom: '20px', right: '24px' }
-                  : brand.logoPosition === 'bottom-left'
-                    ? { bottom: '20px', left: '24px' }
-                    : brand.logoPosition === 'top-right'
-                      ? { top: '20px', right: '24px' }
-                      : { top: '20px', left: '24px' }),
-              }}
-            />
-          )}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '6px' }}>
-              {chart.title}
-            </h2>
-            <p style={{ fontSize: '13px', opacity: 0.4, marginBottom: '20px' }}>
-              {chart.description}
-            </p>
-            <div style={{ flex: 1 }}>
-              <ChartRenderer chart={chart} colors={COLORS} height={430} dark={true} />
-            </div>
-          </div>
-          {(chart.hero_stat || chart.takeaway) && (
-            <div
-              style={{
-                width: '280px',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '16px',
-                padding: '32px',
-                background: `linear-gradient(135deg, ${brand.primaryColor}22, ${brand.primaryColor}44)`,
-                border: `1px solid ${brand.primaryColor}44`,
-              }}
-            >
-              {chart.hero_stat && (
-                <div
-                  style={{
-                    fontSize: '64px',
-                    fontWeight: 900,
-                    color: brand.primaryColor,
-                    lineHeight: 1,
-                    textAlign: 'center',
-                    marginBottom: '16px',
-                  }}
-                >
-                  {chart.hero_stat}
-                </div>
-              )}
-              {chart.takeaway && (
-                <p
-                  style={{
-                    fontSize: '16px',
-                    textAlign: 'center',
-                    opacity: 0.9,
-                    lineHeight: 1.5,
-                    color: chart.takeaway_color || '#ffffff',
-                  }}
-                >
-                  {chart.takeaway}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )
-    }
-
-    if (slideId === 'recommendations') {
-      const recs = project.recommendations || []
-      const heroRec = recs[0]
-      return (
-        <div
-          style={{
-            width: SLIDE_W,
-            height: SLIDE_H,
-            background: 'linear-gradient(135deg, #09090b 0%, #18181b 100%)',
-            color: 'white',
-            display: 'flex',
-            fontFamily: 'Inter, sans-serif',
-            position: 'relative',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-          <div
-            style={{
-              width: '280px',
-              padding: '48px 32px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              background: 'linear-gradient(180deg, #0f0f12 0%, #1a1a1f 100%)',
-              borderRight: `3px solid ${brand.primaryColor}`,
-            }}
-          >
-            <div>
-              <h2
-                style={{ fontSize: '32px', fontWeight: 900, lineHeight: 1.2, marginBottom: '24px' }}
-              >
-                Key
-                <br />
-                <span style={{ color: brand.primaryColor }}>Recommendations</span>
-              </h2>
-              <p style={{ fontSize: '12px', opacity: 0.4, lineHeight: 1.6 }}>
-                {(project.narrative || '').slice(0, 160)}...
-              </p>
-            </div>
-            {heroRec && (
-              <div
-                style={{
-                  padding: '16px',
-                  borderRadius: '12px',
-                  background: `${brand.primaryColor}22`,
-                  border: `1px solid ${brand.primaryColor}33`,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: '36px',
-                    fontWeight: 900,
-                    color: brand.primaryColor,
-                    marginBottom: '4px',
-                  }}
-                >
-                  {heroRec.stat}
-                </div>
-                <div style={{ fontSize: '11px', opacity: 0.6 }}>{heroRec.stat_label}</div>
-              </div>
-            )}
-          </div>
-          <div
-            style={{
-              flex: 1,
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '16px',
-              padding: '32px',
-            }}
-          >
-            {recs.slice(0, 4).map((rec: any, i: number) => (
-              <div
-                key={i}
-                style={{
-                  padding: '20px',
-                  borderRadius: '16px',
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      marginBottom: '12px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '8px',
-                        background: brand.primaryColor,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '11px',
-                        fontWeight: 900,
-                        color: 'white',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {rec.number || String(i + 1).padStart(2, '0')}
-                    </div>
-                    <h3 style={{ fontSize: '13px', fontWeight: 700, lineHeight: 1.3 }}>
-                      {rec.title}
-                    </h3>
-                  </div>
-                  <p style={{ fontSize: '11px', opacity: 0.5, lineHeight: 1.5 }}>
-                    {rec.description}
-                  </p>
-                </div>
-                {rec.stat && (
-                  <div
-                    style={{
-                      marginTop: '12px',
-                      paddingTop: '12px',
-                      borderTop: '1px solid rgba(255,255,255,0.1)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                  >
-                    <span style={{ fontSize: '22px', fontWeight: 900, color: brand.primaryColor }}>
-                      {rec.stat}
-                    </span>
-                    <span style={{ fontSize: '11px', opacity: 0.4 }}>{rec.stat_label}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )
-    }
-    return null
-  }
-
+  // ── Export ────────────────────────────────────────────────────────────────
   const handleExport = async () => {
     setExporting(true)
     try {
@@ -497,7 +581,7 @@ export default function PDFExportModal({ project, onClose }: Props) {
           width: SLIDE_W,
           height: SLIDE_H,
           quality: 1.0,
-          bgcolor: '#09090b',
+          bgcolor: dark ? '#09090b' : '#f8f8fa',
         })
 
         if (!first) pdf.addPage()
@@ -517,15 +601,15 @@ export default function PDFExportModal({ project, onClose }: Props) {
     }
   }
 
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  // ── Modal chrome ──────────────────────────────────────────────────────────
+  const card = dark
+    ? 'bg-zinc-900 border-zinc-800 text-white'
+    : 'bg-white border-zinc-200 text-zinc-900'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div
-        className={`relative w-full max-w-3xl rounded-2xl border shadow-2xl ${card} ${dark ? 'text-white' : 'text-zinc-900'}`}
-      >
-        {/* Header */}
+      <div className={`relative w-full max-w-3xl rounded-2xl border shadow-2xl ${card}`}>
         <div
           className={`flex items-center justify-between px-6 py-4 border-b ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
         >
@@ -546,7 +630,6 @@ export default function PDFExportModal({ project, onClose }: Props) {
           </div>
         </div>
 
-        {/* Thumbnail grid */}
         <div className="p-6 grid grid-cols-3 gap-4 max-h-[60vh] overflow-y-auto">
           {allSlides.map((slide) => {
             const isSelected = selected.has(slide.id)
@@ -557,7 +640,6 @@ export default function PDFExportModal({ project, onClose }: Props) {
                 className={`relative rounded-xl overflow-hidden border-2 transition-all group
                   ${isSelected ? 'border-blue-500' : dark ? 'border-zinc-700 hover:border-zinc-500' : 'border-zinc-200 hover:border-zinc-400'}`}
               >
-                {/* Slide thumbnail */}
                 <div
                   style={{
                     width: '100%',
@@ -581,18 +663,13 @@ export default function PDFExportModal({ project, onClose }: Props) {
                     <SlideContent slideId={slide.id} />
                   </div>
                 </div>
-
-                {/* Selection overlay */}
                 {isSelected && (
                   <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center shadow-lg">
                     <Check size={12} className="text-white" />
                   </div>
                 )}
-
-                {/* Label */}
                 <div
-                  className={`px-3 py-2 text-xs font-medium text-left border-t
-                  ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-100 bg-zinc-50'}`}
+                  className={`px-3 py-2 text-xs font-medium text-left border-t ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-100 bg-zinc-50'}`}
                 >
                   {slide.label}
                 </div>
@@ -601,7 +678,6 @@ export default function PDFExportModal({ project, onClose }: Props) {
           })}
         </div>
 
-        {/* Footer */}
         <div className={`px-6 py-4 border-t ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}>
           {exporting && (
             <p className={`text-xs mb-3 text-center ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>

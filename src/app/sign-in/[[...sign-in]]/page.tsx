@@ -13,7 +13,7 @@ export default function SignInPage() {
         </div>
         <p className="text-zinc-400 text-xs tracking-wide">stories, not spreadsheets</p>
       </div>
-      <SignIn fallbackRedirectUrl="/" />
+      <SignIn fallbackRedirectUrl="/dashboard" />
     </div>
   )
 }

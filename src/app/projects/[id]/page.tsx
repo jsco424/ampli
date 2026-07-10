@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import Navbar from '@/components/Navbar'
@@ -10,22 +10,33 @@ import { useBrand } from '@/hooks/useBrand'
 import ChartRenderer from '@/components/ChartRenderer'
 import PDFExportModal from '@/components/PDFExportModal'
 import TagInput from '@/components/TagInput'
+import AnalysisView from '@/components/AnalysisView'
+import SlideSelector from '@/components/SlideSelector'
+import type { AnalysisOutput, AnalysisHandoff } from '@/lib/analysisTypes'
+import type { SelectedFinding } from '@/components/SlideSelector'
 import {
   ArrowLeft,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Target,
   Users,
   Sparkles,
-  RotateCcw,
   FileText,
   CheckCircle,
   ChevronRight,
   Presentation,
   Download,
+  Briefcase,
+  Microscope,
+  Newspaper,
 } from 'lucide-react'
 import Link from 'next/link'
+
+const TONE_META: Record<string, { label: string; icon: any; color: string }> = {
+  executive: { label: 'Executive & Concise', icon: Briefcase, color: 'text-blue-400' },
+  analytical: { label: 'Analytical & Detailed', icon: Microscope, color: 'text-purple-400' },
+  educational: { label: 'Educational & Informative', icon: Newspaper, color: 'text-emerald-400' },
+}
+
+type Tab = 'analysis' | 'visuals' | 'data' | 'notes'
 
 export default function ProjectViewPage() {
   const { id } = useParams()
@@ -34,33 +45,93 @@ export default function ProjectViewPage() {
   const { brand } = useBrand()
   const router = useRouter()
 
+  // Project data
   const [project, setProject] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'narrative' | 'visuals' | 'data' | 'notes'>('narrative')
+  const [tab, setTab] = useState<Tab>('analysis')
   const [tags, setTags] = useState<string[]>([])
   const [allTags, setAllTags] = useState<string[]>([])
   const [showPDFExport, setShowPDFExport] = useState(false)
-  const [showRegenerate, setShowRegenerate] = useState(false)
-  const [regenPrompt, setRegenPrompt] = useState('')
-  const [regenerating, setRegenerating] = useState(false)
   const [notes, setNotes] = useState('')
   const [notesSaved, setNotesSaved] = useState(false)
   const notesTimer = useRef<any>(null)
 
+  // Analysis state
+  const [analysisOutput, setAnalysisOutput] = useState<AnalysisOutput | null>(null)
+  const [conversationHistory, setConversationHistory] = useState<
+    { role: 'user' | 'assistant'; content: string }[]
+  >([])
+  const [conversationEntries, setConversationEntries] = useState<
+    { question: string; analysis: AnalysisOutput }[]
+  >([])
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [showSlideSelector, setShowSlideSelector] = useState(false)
+
+  const analysisTriggered = useRef(false)
+
   useEffect(() => {
     if (!id) return
+
     supabase
       .from('projects')
       .select('*')
       .eq('id', id)
       .single()
       .then(({ data }) => {
+        if (!data) {
+          setLoading(false)
+          return
+        }
         setProject(data)
-        setNotes(data?.crm_notes || '')
-        setTags(data?.tags || [])
+        setNotes(data.crm_notes || '')
+        setTags(data.tags || [])
         setLoading(false)
+
+        if (data.analysis) {
+          setAnalysisOutput(data.analysis as AnalysisOutput)
+          return
+        }
+
+        if (!data.raw_data && !data.sampled_rows) return
+        if (analysisTriggered.current) return
+        analysisTriggered.current = true
+
+        setAnalysisLoading(true)
+        setAnalysisError(null)
+
+        fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dataSummaryJson: data.raw_data || null,
+            rawRowsJson: data.sampled_rows ? JSON.stringify(data.sampled_rows) : null,
+            conversationHistory: [],
+            prompt: data.prompt || null,
+            tone: data.tone || 'executive',
+            industry: data.industry || null,
+          }),
+        })
+          .then((res) => {
+            if (!res.ok) throw new Error(`Analysis failed: ${res.status}`)
+            return res.json()
+          })
+          .then(({ analysis, assistantTurn }) => {
+            setAnalysisOutput(analysis)
+            setConversationHistory([assistantTurn])
+            supabase
+              .from('projects')
+              .update({ analysis, status: 'complete' })
+              .eq('id', id)
+              .then(() => {})
+          })
+          .catch((err) => {
+            console.error(err)
+            setAnalysisError('Analysis failed — please try again.')
+          })
+          .finally(() => setAnalysisLoading(false))
       })
-    // Load all tags across user's projects for autocomplete
+
     if (user) {
       supabase
         .from('projects')
@@ -72,6 +143,77 @@ export default function ProjectViewPage() {
         })
     }
   }, [id])
+
+  // Follow-up turns only — initial analysis fires in the useEffect above
+  const runAnalysis = useCallback(
+    async (followUpQuestion: string) => {
+      if (!project) return
+      setAnalysisLoading(true)
+      setAnalysisError(null)
+
+      const historyToSend = [
+        ...conversationHistory,
+        { role: 'user' as const, content: followUpQuestion },
+      ]
+
+      try {
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dataSummaryJson: project.raw_data || null,
+            rawRowsJson: project.sampled_rows ? JSON.stringify(project.sampled_rows) : null,
+            conversationHistory: historyToSend,
+            prompt: project.prompt || null,
+            tone: project.tone || 'executive',
+            industry: project.industry || null,
+          }),
+        })
+
+        if (!res.ok) throw new Error(`Analysis failed: ${res.status}`)
+        const { analysis, assistantTurn } = await res.json()
+
+        // Append to conversation thread — initial analysis stays as anchor
+        setConversationEntries((prev) => [...prev, { question: followUpQuestion, analysis }])
+        setConversationHistory([...historyToSend, assistantTurn])
+      } catch (err: any) {
+        console.error(err)
+        setAnalysisError('Follow-up failed — please try again.')
+      } finally {
+        setAnalysisLoading(false)
+      }
+    },
+    [project, conversationHistory]
+  )
+
+  const handleFollowUp = useCallback(
+    (question: string) => {
+      if (question.trim()) runAnalysis(question)
+    },
+    [runAnalysis]
+  )
+
+  const handleRequestSlides = useCallback(() => {
+    setShowSlideSelector(true)
+    setTab('analysis')
+  }, [])
+
+  const handleBuildSlides = useCallback(
+    async (selections: SelectedFinding[]) => {
+      if (!analysisOutput || !project) return
+
+      const handoff: AnalysisHandoff = {
+        dataSummaryJson: project.raw_data || '',
+        conversationHistory,
+        confirmedAnalysis: analysisOutput,
+        selectedFindings: selections,
+      }
+
+      await supabase.from('projects').update({ analysis_handoff: handoff }).eq('id', id)
+      router.push(`/projects/${id}/pitch`)
+    },
+    [analysisOutput, project, conversationHistory, id, router]
+  )
 
   const handleTagsChange = async (newTags: string[]) => {
     setTags(newTags)
@@ -89,35 +231,6 @@ export default function ProjectViewPage() {
     }, 1000)
   }
 
-  const handleRegenerate = async () => {
-    if (!regenPrompt.trim() || !project) return
-    setRegenerating(true)
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data: project.raw_data,
-          prompt: regenPrompt,
-          projectName: project.name,
-          targetCompany: project.target_company,
-          targetAudience: project.target_audience ? { role: project.target_audience } : null,
-        }),
-      })
-      const { narrative, insights, charts } = await res.json()
-      await supabase
-        .from('projects')
-        .update({ narrative, insights, charts, prompt: regenPrompt })
-        .eq('id', id)
-      setProject((p: any) => ({ ...p, narrative, insights, charts, prompt: regenPrompt }))
-      setShowRegenerate(false)
-      setRegenPrompt('')
-    } catch (err) {
-      console.error(err)
-    }
-    setRegenerating(false)
-  }
-
   const BRAND_COLORS = [
     brand.primaryColor,
     brand.secondaryColor,
@@ -127,30 +240,35 @@ export default function ProjectViewPage() {
     '#06b6d4',
   ]
 
-  const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const input = dark
-    ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500'
+    ? 'bg-white/[0.04] border-white/[0.08] text-white placeholder-white/25'
     : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'
-  const tabBase = 'px-4 py-2 text-sm font-medium rounded-xl transition-colors'
-  const tabActive = dark ? 'bg-zinc-700 text-white' : 'bg-zinc-900 text-white'
-  const tabInactive = dark ? 'text-zinc-400 hover:text-white' : 'text-zinc-500 hover:text-zinc-900'
+  const muted = dark ? 'text-white/40' : 'text-zinc-500'
+  const tabBase = 'px-4 py-2 text-sm font-medium rounded-lg transition-colors'
+  const tabActive = dark ? 'bg-white/10 text-white' : 'bg-zinc-900 text-white'
+  const tabInactive = dark
+    ? 'text-white/35 hover:text-white/70'
+    : 'text-zinc-500 hover:text-zinc-900'
 
-  if (loading)
+  if (loading) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${base}`}>
         <Navbar />
-        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
       </div>
     )
+  }
 
-  if (!project)
+  if (!project) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${base}`}>
         <Navbar />
         <p>Project not found.</p>
       </div>
     )
+  }
 
   return (
     <div className={`min-h-screen ${base}`}>
@@ -161,45 +279,31 @@ export default function ProjectViewPage() {
 
       <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-4 mt-4">
+        <div className="flex items-center gap-3 mb-4 mt-6">
           <button
             onClick={() => router.push('/')}
-            className={`p-2 rounded-xl transition-colors ${dark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}`}
+            className={`p-2 rounded-lg transition-colors ${dark ? 'hover:bg-white/[0.05] text-white/40' : 'hover:bg-zinc-100 text-zinc-500'}`}
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={17} />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold truncate">{project.name}</h1>
-            <p className={`text-xs ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+            <h1 className="text-2xl font-bold truncate tracking-tight">{project.name}</h1>
+            <p className={`text-xs ${muted}`}>
               {project.file_name} · {new Date(project.created_at).toLocaleDateString()}
             </p>
           </div>
           <button
             onClick={() => setShowPDFExport(true)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium transition-colors
-              ${dark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${dark ? 'border-white/[0.08] text-white/40 hover:bg-white/[0.04]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
           >
-            <Download size={14} /> Export PDF
+            <Download size={13} /> Export PDF
           </button>
           <Link
             href={`/projects/${id}/pitch`}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-colors bg-blue-500 text-white hover:bg-blue-600"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-500 text-white hover:bg-blue-400 transition-colors"
           >
-            <Presentation size={14} /> Pitch Mode
+            <Presentation size={13} /> Pitch Mode
           </Link>
-          <button
-            onClick={() => setShowRegenerate(!showRegenerate)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium transition-colors
-              ${
-                showRegenerate
-                  ? 'border-blue-500 bg-blue-500/10 text-blue-500'
-                  : dark
-                    ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'
-                    : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'
-              }`}
-          >
-            <RotateCcw size={14} /> Regenerate
-          </button>
         </div>
 
         {/* Tags */}
@@ -212,14 +316,28 @@ export default function ProjectViewPage() {
           />
         </div>
 
-        {/* Context Banner */}
-        {(project.target_company || project.target_audience) && (
+        {/* Context banner */}
+        {(project.target_company || project.target_audience || project.tone) && (
           <div
-            className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-4 ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg border mb-4 flex-wrap ${dark ? 'bg-white/[0.02] border-white/[0.06]' : 'bg-zinc-50 border-zinc-200'}`}
           >
+            {project.tone && TONE_META[project.tone] && (
+              <div className="flex items-center gap-1.5">
+                {(() => {
+                  const Icon = TONE_META[project.tone].icon
+                  return <Icon size={12} className={TONE_META[project.tone].color} />
+                })()}
+                <span className={`text-xs font-medium ${TONE_META[project.tone].color}`}>
+                  {TONE_META[project.tone].label}
+                </span>
+              </div>
+            )}
+            {project.tone && (project.target_company || project.target_audience) && (
+              <ChevronRight size={11} className={muted} />
+            )}
             {project.target_company && (
               <div className="flex items-center gap-1.5">
-                <Target size={13} className="text-emerald-500" />
+                <Target size={12} className="text-emerald-500" />
                 <span
                   className={`text-xs font-medium ${dark ? 'text-emerald-400' : 'text-emerald-600'}`}
                 >
@@ -228,11 +346,11 @@ export default function ProjectViewPage() {
               </div>
             )}
             {project.target_company && project.target_audience && (
-              <ChevronRight size={12} className={dark ? 'text-zinc-600' : 'text-zinc-300'} />
+              <ChevronRight size={11} className={muted} />
             )}
             {project.target_audience && (
               <div className="flex items-center gap-1.5">
-                <Users size={13} className="text-purple-500" />
+                <Users size={12} className="text-purple-500" />
                 <span
                   className={`text-xs font-medium ${dark ? 'text-purple-400' : 'text-purple-600'}`}
                 >
@@ -242,69 +360,18 @@ export default function ProjectViewPage() {
             )}
             {project.prompt && (
               <>
-                <ChevronRight size={12} className={dark ? 'text-zinc-600' : 'text-zinc-300'} />
-                <p className={`text-xs truncate ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                  "{project.prompt}"
-                </p>
+                <ChevronRight size={11} className={muted} />
+                <p className={`text-xs truncate ${muted}`}>"{project.prompt}"</p>
               </>
             )}
           </div>
         )}
 
-        {/* Regenerate Panel */}
-        {showRegenerate && (
-          <div
-            className={`p-4 rounded-2xl border mb-4 ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}
-          >
-            <p className="text-sm font-semibold mb-1 flex items-center gap-2">
-              <Sparkles size={14} className="text-blue-500" />
-              Regenerate with a new prompt
-            </p>
-            <p className={`text-xs mb-3 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              The same data will be used — only the focus and framing will change.
-            </p>
-            <textarea
-              value={regenPrompt}
-              onChange={(e) => setRegenPrompt(e.target.value)}
-              placeholder={`e.g. "Focus on year-over-year growth" or "Frame this for a CFO audience"`}
-              rows={2}
-              className={`w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none mb-3 ${input}`}
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setShowRegenerate(false)
-                  setRegenPrompt('')
-                }}
-                className={`px-4 py-2 rounded-xl border text-sm font-medium ${dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'}`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRegenerate}
-                disabled={!regenPrompt.trim() || regenerating}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40"
-              >
-                {regenerating ? (
-                  <>
-                    <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />{' '}
-                    Regenerating...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={13} /> Regenerate
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Tabs */}
         <div
-          className={`flex gap-2 mb-6 p-1 rounded-2xl w-fit ${dark ? 'bg-zinc-900' : 'bg-zinc-100'}`}
+          className={`flex gap-1 mb-6 p-1 rounded-xl w-fit ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
         >
-          {(['narrative', 'visuals', 'data', 'notes'] as const).map((t) => (
+          {(['analysis', 'visuals', 'data', 'notes'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -315,112 +382,166 @@ export default function ProjectViewPage() {
           ))}
         </div>
 
-        {/* Narrative Tab */}
-        {tab === 'narrative' && (
-          <div className="space-y-6">
-            {project.insights?.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {project.insights.map((insight: any, i: number) => (
-                  <div key={i} className={`p-4 rounded-2xl border ${card}`}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={`text-xs ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                        {insight.title}
-                      </span>
-                      {insight.trend === 'up' ? (
-                        <TrendingUp size={14} className="text-emerald-500" />
-                      ) : insight.trend === 'down' ? (
-                        <TrendingDown size={14} className="text-red-400" />
-                      ) : (
-                        <Minus size={14} className="text-zinc-400" />
-                      )}
-                    </div>
-                    <div className="text-xl font-bold mb-1">{insight.value}</div>
-                    <p className={`text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                      {insight.description}
-                    </p>
+        {/* ── Analysis Tab ───────────────────────────────────────────────── */}
+        {tab === 'analysis' && (
+          <div>
+            {/* Loading skeleton */}
+            {analysisLoading && !analysisOutput && (
+              <div className="space-y-4">
+                <div className={`p-5 rounded-2xl border ${card}`}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                    <p className="text-sm font-medium">Analyzing your data...</p>
                   </div>
-                ))}
+                  <div className="space-y-2">
+                    {[
+                      'Identifying data type and structure',
+                      'Computing derived metrics',
+                      'Running formula verification',
+                      'Flagging anomalies',
+                    ].map((step, i) => (
+                      <div key={i} className={`flex items-center gap-2 text-xs ${muted}`}>
+                        <div
+                          className={`w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-blue-500 animate-pulse' : dark ? 'bg-zinc-700' : 'bg-zinc-300'}`}
+                        />
+                        {step}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
-            <div className={`p-6 rounded-2xl border ${card}`}>
-              <h2 className="font-semibold mb-4">Narrative</h2>
+
+            {/* Error state */}
+            {analysisError && (
               <div
-                className={`text-sm leading-relaxed whitespace-pre-wrap ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
+                className={`p-5 rounded-2xl border mb-4 ${dark ? 'bg-red-950/20 border-red-900/30' : 'bg-red-50 border-red-200'}`}
               >
-                {project.narrative}
+                <p className="text-sm text-red-400 mb-3">{analysisError}</p>
+                <button
+                  onClick={() => {
+                    analysisTriggered.current = false
+                    window.location.reload()
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                >
+                  Try again
+                </button>
               </div>
-            </div>
+            )}
+
+            {/* Slide selector */}
+            {showSlideSelector && analysisOutput && (
+              <SlideSelector
+                analysis={analysisOutput}
+                dark={dark}
+                onConfirm={handleBuildSlides}
+                onCancel={() => setShowSlideSelector(false)}
+              />
+            )}
+
+            {/* Analysis view */}
+            {!showSlideSelector && analysisOutput && (
+              <AnalysisView
+                analysis={analysisOutput}
+                dark={dark}
+                onFollowUp={handleFollowUp}
+                onBuildSlides={handleRequestSlides}
+                isLoading={analysisLoading}
+                conversationEntries={conversationEntries}
+              />
+            )}
           </div>
         )}
 
-        {/* Visuals Tab */}
+        {/* ── Visuals Tab ────────────────────────────────────────────────── */}
         {tab === 'visuals' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {project.charts?.map((chart: any, i: number) => (
-              <div key={i} className={`p-5 rounded-2xl border ${card}`}>
-                <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
-                <p className={`text-xs mb-4 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                  {chart.description}
+            {project.charts?.length > 0 ? (
+              project.charts.map((chart: any, i: number) => (
+                <div key={i} className={`p-5 rounded-xl border ${card}`}>
+                  <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
+                  <p className={`text-xs mb-4 ${muted}`}>{chart.description}</p>
+                  <ChartRenderer chart={chart} colors={BRAND_COLORS} height={200} dark={dark} />
+                </div>
+              ))
+            ) : (
+              <div className={`col-span-2 p-10 rounded-xl border text-center ${card}`}>
+                <p className={`text-sm ${muted}`}>
+                  Charts appear here once you build slides from your analysis.
                 </p>
-                <ChartRenderer chart={chart} colors={BRAND_COLORS} height={200} dark={dark} />
+                {analysisOutput && (
+                  <button
+                    onClick={handleRequestSlides}
+                    className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
+                  >
+                    <Sparkles size={13} /> Build Slides
+                  </button>
+                )}
               </div>
-            ))}
+            )}
           </div>
         )}
 
-        {/* Data Tab */}
+        {/* ── Data Tab ──────────────────────────────────────────────────── */}
         {tab === 'data' && (
-          <div className={`rounded-2xl border overflow-auto ${card}`}>
-            <div className="p-4 border-b flex items-center justify-between">
-              <span className="text-sm font-medium">Raw Data</span>
+          <div className={`rounded-xl border overflow-auto ${card}`}>
+            <div
+              className={`p-4 border-b flex items-center justify-between ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+            >
+              <span className="text-sm font-medium">Raw Data Summary</span>
               <button
                 onClick={() => {
-                  const blob = new Blob([project.raw_data], { type: 'text/csv' })
+                  const blob = new Blob([project.raw_data || ''], { type: 'application/json' })
                   const url = URL.createObjectURL(blob)
                   const a = document.createElement('a')
                   a.href = url
-                  a.download = project.file_name
+                  a.download = `${project.file_name}_summary.json`
                   a.click()
                 }}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors"
               >
-                Download CSV
+                Download JSON
               </button>
             </div>
             <pre
-              className={`p-4 text-xs overflow-auto max-h-96 ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
+              className={`p-4 text-xs overflow-auto max-h-96 ${dark ? 'text-white/50' : 'text-zinc-600'}`}
             >
-              {project.raw_data}
+              {project.raw_data
+                ? JSON.stringify(JSON.parse(project.raw_data), null, 2)
+                : 'No data summary available.'}
             </pre>
           </div>
         )}
 
-        {/* CRM Notes Tab */}
+        {/* ── CRM Notes Tab ──────────────────────────────────────────────── */}
         {tab === 'notes' && (
-          <div className={`rounded-2xl border ${card}`}>
-            <div className="p-4 border-b flex items-center justify-between">
+          <div className={`rounded-xl border ${card}`}>
+            <div
+              className={`p-4 border-b flex items-center justify-between ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+            >
               <div className="flex items-center gap-2">
-                <FileText size={15} className={dark ? 'text-zinc-400' : 'text-zinc-500'} />
+                <FileText size={14} className={muted} />
                 <span className="text-sm font-medium">CRM Notes</span>
               </div>
               <div
                 className={`flex items-center gap-1.5 text-xs transition-opacity ${notesSaved ? 'opacity-100' : 'opacity-0'}`}
               >
-                <CheckCircle size={12} className="text-emerald-400" />
-                <span className={dark ? 'text-zinc-400' : 'text-zinc-500'}>Saved</span>
+                <CheckCircle size={11} className="text-emerald-400" />
+                <span className={muted}>Saved</span>
               </div>
             </div>
             <div className="p-4">
-              <p className={`text-xs mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+              <p className={`text-xs mb-3 ${muted}`}>
                 Log pitch notes, feedback, next steps, and follow-up context. Auto-saves as you
                 type.
               </p>
               <textarea
                 value={notes}
                 onChange={(e) => handleNotesChange(e.target.value)}
-                placeholder={`e.g. "Spoke with Sarah (VP Marketing) on June 10 — she responded well to the conversion rate slide. Follow up with Q3 benchmarks. Next call June 24."`}
+                placeholder={`e.g. "Spoke with Sarah on June 10 — responded well to conversion rate slide."`}
                 rows={12}
-                className={`w-full px-4 py-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none ${input}`}
+                className={`w-full px-4 py-3 rounded-lg border text-sm outline-none focus:border-blue-500/50 resize-none ${input}`}
               />
             </div>
           </div>

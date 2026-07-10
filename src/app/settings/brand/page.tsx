@@ -1,460 +1,488 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
-import { Palette, Upload, X, Check, Image, Save, RefreshCw } from 'lucide-react'
+import {
+  CheckCircle,
+  Palette,
+  Building2,
+  Info,
+  Sparkles,
+  RefreshCw,
+  CheckCircle2,
+  Image,
+} from 'lucide-react'
 
-const DEFAULT_PRESETS = [
+interface BrandSettings {
+  brand_name: string
+  brand_primary_color: string
+  brand_logo_url: string
+  gamma_theme_id: string
+}
+
+interface GammaTheme {
+  id: string
+  name: string
+  type: 'standard' | 'custom'
+  colorKeywords: string[]
+  toneKeywords: string[]
+}
+
+const DEFAULT_SETTINGS: BrandSettings = {
+  brand_name: '',
+  brand_primary_color: '#3b82f6',
+  brand_logo_url: '',
+  gamma_theme_id: '',
+}
+
+const COLOR_PRESETS = [
   '#3b82f6',
   '#8b5cf6',
   '#10b981',
   '#f59e0b',
   '#ef4444',
   '#06b6d4',
+  '#f97316',
   '#ec4899',
-  '#84cc16',
+  '#6366f1',
+  '#14b8a6',
+  '#0f172a',
+  '#1a1a1a',
 ]
 
-const LOGO_POSITIONS = [
-  { key: 'top-left', label: 'Top Left' },
-  { key: 'top-right', label: 'Top Right' },
-  { key: 'bottom-left', label: 'Bottom Left' },
-  { key: 'bottom-right', label: 'Bottom Right' },
-]
+// Map colorKeywords to a rough preview color for the theme swatch.
+// Not exact — just a visual hint so users can scan quickly.
+function swatchColorFromKeywords(keywords: string[]): string {
+  const k = keywords.map((w) => w.toLowerCase())
+  if (k.some((w) => ['dark', 'black', 'carbon', 'onyx', 'night'].includes(w))) return '#1a1a2e'
+  if (k.some((w) => ['navy', 'indigo', 'blue', 'royal blue'].includes(w))) return '#1e3a5f'
+  if (k.some((w) => ['purple', 'violet', 'lavender'].includes(w))) return '#4c1d95'
+  if (k.some((w) => ['green', 'emerald', 'lime'].includes(w))) return '#064e3b'
+  if (k.some((w) => ['gold', 'champagne', 'amber', 'yellow'].includes(w))) return '#78350f'
+  if (k.some((w) => ['pink', 'fuchsia', 'rose'].includes(w))) return '#831843'
+  if (k.some((w) => ['orange', 'coral', 'peach'].includes(w))) return '#7c2d12'
+  if (k.some((w) => ['white', 'light', 'cream', 'ivory', 'snow'].includes(w))) return '#e2e8f0'
+  if (k.some((w) => ['gray', 'grey', 'slate', 'ash'].includes(w))) return '#334155'
+  return '#3b82f6'
+}
 
-type ActiveColor = 'primary' | 'secondary'
+function swatchTextColor(bg: string): string {
+  // Light backgrounds need dark text
+  const lightBgs = ['#e2e8f0']
+  return lightBgs.includes(bg) ? '#1a1a1a' : '#ffffff'
+}
 
 export default function BrandSettingsPage() {
-  const { user, isLoaded } = useUser()
+  const { user } = useUser()
   const { dark } = useTheme()
-  const router = useRouter()
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const [primary, setPrimary] = useState('#3b82f6')
-  const [secondary, setSecondary] = useState('#8b5cf6')
-  const [active, setActive] = useState<ActiveColor>('primary')
-  const [presets, setPresets] = useState<string[]>(DEFAULT_PRESETS)
-  const [logoUrl, setLogoUrl] = useState<string | null>(null)
-  const [logoPreview, setLogoPreview] = useState<string | null>(null)
-  const [logoPosition, setLogoPosition] = useState('bottom-right')
+  const [settings, setSettings] = useState<BrandSettings>(DEFAULT_SETTINGS)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [settingsId, setSettingsId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (isLoaded && !user) router.push('/sign-in')
-  }, [isLoaded, user, router])
+  const [logoPreviewError, setLogoPreviewError] = useState(false)
+  const [themes, setThemes] = useState<GammaTheme[]>([])
+  const [themesLoading, setThemesLoading] = useState(false)
+  const [themesError, setThemesError] = useState<string | null>(null)
+  const [themeSearch, setThemeSearch] = useState('')
+  const [themeFilter, setThemeFilter] = useState<'all' | 'standard' | 'custom'>('all')
 
   useEffect(() => {
     if (!user) return
     supabase
-      .from('brand_settings')
-      .select('*')
+      .from('user_settings')
+      .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
       .eq('user_id', user.id)
       .single()
       .then(({ data }) => {
         if (data) {
-          setSettingsId(data.id)
-          setPrimary(data.primary_color || '#3b82f6')
-          setSecondary(data.secondary_color || '#8b5cf6')
-          setPresets(data.presets?.length ? data.presets : DEFAULT_PRESETS)
-          setLogoUrl(data.logo_url || null)
-          setLogoPosition(data.logo_position || 'bottom-right')
+          setSettings({
+            brand_name: data.brand_name || '',
+            brand_primary_color: data.brand_primary_color || DEFAULT_SETTINGS.brand_primary_color,
+            brand_logo_url: data.brand_logo_url || '',
+            gamma_theme_id: data.gamma_theme_id || '',
+          })
         }
       })
   }, [user])
 
-  const applyColor = (color: string) => {
-    if (active === 'primary') setPrimary(color)
-    else setSecondary(color)
+  const fetchThemes = async () => {
+    setThemesLoading(true)
+    setThemesError(null)
+    try {
+      const res = await fetch('/api/gamma-themes')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to load themes')
+      setThemes(data.themes || [])
+    } catch (err: any) {
+      setThemesError(err.message || 'Failed to load themes')
+    } finally {
+      setThemesLoading(false)
+    }
   }
 
-  const activeColor = active === 'primary' ? primary : secondary
+  useEffect(() => {
+    fetchThemes()
+  }, [])
 
   const handleSave = async () => {
     if (!user) return
     setSaving(true)
-    const payload = {
-      user_id: user.id,
-      primary_color: primary,
-      secondary_color: secondary,
-      presets,
-      logo_url: logoUrl,
-      logo_position: logoPosition,
-      updated_at: new Date().toISOString(),
-    }
-    if (settingsId) {
-      await supabase.from('brand_settings').update(payload).eq('id', settingsId)
-    } else {
-      const { data } = await supabase.from('brand_settings').insert(payload).select().single()
-      if (data) setSettingsId(data.id)
-    }
+    const { error } = await supabase.from('user_settings').upsert(
+      {
+        user_id: user.id,
+        brand_name: settings.brand_name.trim(),
+        brand_primary_color: settings.brand_primary_color,
+        brand_logo_url: settings.brand_logo_url.trim(),
+        gamma_theme_id: settings.gamma_theme_id.trim(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    )
     setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
-
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !user) return
-    const localUrl = URL.createObjectURL(file)
-    setLogoPreview(localUrl)
-    setUploading(true)
-    const ext = file.name.split('.').pop()
-    const path = `${user.id}/logo.${ext}`
-    const { error } = await supabase.storage
-      .from('brand-assets')
-      .upload(path, file, { upsert: true })
-    console.log('Upload error:', error)
-    console.log('Upload path:', path)
     if (!error) {
-      const { data } = supabase.storage.from('brand-assets').getPublicUrl(path)
-      setLogoUrl(data.publicUrl)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
     }
-    setLogoPreview(null)
-    setUploading(false)
   }
 
-  const displayLogo = logoPreview || logoUrl
+  const selectedTheme = themes.find((t) => t.id === settings.gamma_theme_id)
+
+  const filteredThemes = themes.filter((t) => {
+    const matchesSearch =
+      !themeSearch ||
+      t.name.toLowerCase().includes(themeSearch.toLowerCase()) ||
+      t.toneKeywords.some((k) => k.toLowerCase().includes(themeSearch.toLowerCase())) ||
+      t.colorKeywords.some((k) => k.toLowerCase().includes(themeSearch.toLowerCase()))
+    const matchesFilter = themeFilter === 'all' || t.type === themeFilter
+    return matchesSearch && matchesFilter
+  })
 
   const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
   const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
-  const inputCls = dark
-    ? 'bg-zinc-800 border-zinc-700 text-white'
-    : 'bg-white border-zinc-300 text-zinc-900'
-  const lbl = dark ? 'text-zinc-400' : 'text-zinc-500'
+  const input = dark
+    ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500 focus:border-blue-500'
+    : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400 focus:border-blue-400'
+  const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
+  const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
+  const section = dark ? 'bg-zinc-800/50 border-zinc-700' : 'bg-zinc-50 border-zinc-200'
 
-  if (!isLoaded || !user) return null
+  const logoIsPublic =
+    settings.brand_logo_url.startsWith('https://') && !settings.brand_logo_url.includes('localhost')
 
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
-      <main className="pt-20 px-6 max-w-3xl mx-auto pb-20">
-        {/* Header */}
-        <div className="mt-6 mb-8 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold mb-1">Brand Settings</h1>
-            <p className={`text-sm ${lbl}`}>
-              Set your brand colors and logo — applied across all visuals and pitch deck mode
-            </p>
-          </div>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40"
-          >
-            {saved ? (
-              <>
-                <Check size={14} /> Saved
-              </>
-            ) : saving ? (
-              <>
-                <RefreshCw size={14} className="animate-spin" /> Saving...
-              </>
-            ) : (
-              <>
-                <Save size={14} /> Save Brand
-              </>
-            )}
-          </button>
+      <main className="pt-24 px-6 max-w-2xl mx-auto pb-20">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold tracking-tight mb-1">Brand Settings</h1>
+          <p className={`text-sm ${subtle}`}>
+            These appear on every presentation exported from ampli. Gamma handles layout and design
+            — you control the identity.
+          </p>
         </div>
 
-        {/* Live Preview */}
-        <div className={`p-6 rounded-2xl border mb-6 ${card}`}>
-          <p className={`text-xs font-semibold uppercase tracking-wider mb-4 ${lbl}`}>
-            Live Preview
-          </p>
-          <div className="grid grid-cols-3 gap-3">
-            <div className={`p-4 rounded-xl ${dark ? 'bg-zinc-800' : 'bg-zinc-50'}`}>
-              <p className={`text-xs mb-3 ${lbl}`}>Bar Chart</p>
-              <div className="flex items-end gap-1.5 h-16">
-                {[60, 85, 45, 95, 70].map((h, i) => (
-                  <div
-                    key={i}
-                    className="flex-1 rounded-t-sm transition-all duration-300"
-                    style={{ height: `${h}%`, background: i % 2 === 0 ? primary : secondary }}
-                  />
+        <div className="space-y-4">
+          {/* Brand Name */}
+          <div className={`p-5 rounded-2xl border ${card}`}>
+            <div className="flex items-center gap-2 mb-4">
+              <Building2 size={15} className="text-blue-400" />
+              <p className="font-semibold text-sm">Brand Name</p>
+            </div>
+            <input
+              value={settings.brand_name}
+              onChange={(e) => setSettings({ ...settings, brand_name: e.target.value })}
+              placeholder="Acme Corp"
+              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${input}`}
+            />
+            <p className={`text-xs mt-2 ${subtler}`}>
+              Used to personalize slide titles and context in exported decks.
+            </p>
+          </div>
+
+          {/* Primary Color */}
+          <div className={`p-5 rounded-2xl border ${card}`}>
+            <div className="flex items-center gap-2 mb-4">
+              <Palette size={15} className="text-blue-400" />
+              <p className="font-semibold text-sm">Primary Color</p>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {COLOR_PRESETS.map((color) => (
+                <button
+                  key={color}
+                  onClick={() => setSettings({ ...settings, brand_primary_color: color })}
+                  className="w-8 h-8 rounded-lg transition-transform hover:scale-110 border-2"
+                  style={{
+                    background: color,
+                    borderColor: settings.brand_primary_color === color ? 'white' : 'transparent',
+                    boxShadow:
+                      settings.brand_primary_color === color ? `0 0 0 2px ${color}` : 'none',
+                  }}
+                  title={color}
+                />
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={settings.brand_primary_color}
+                onChange={(e) => setSettings({ ...settings, brand_primary_color: e.target.value })}
+                className="w-10 h-10 rounded-lg border-0 cursor-pointer bg-transparent p-0"
+              />
+              <input
+                value={settings.brand_primary_color}
+                onChange={(e) => setSettings({ ...settings, brand_primary_color: e.target.value })}
+                onBlur={(e) => {
+                  if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                    setSettings({
+                      ...settings,
+                      brand_primary_color: DEFAULT_SETTINGS.brand_primary_color,
+                    })
+                  }
+                }}
+                placeholder="#3b82f6"
+                maxLength={7}
+                className={`flex-1 px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
+              />
+              <div
+                className="w-10 h-10 rounded-xl shrink-0"
+                style={{ background: settings.brand_primary_color }}
+              />
+            </div>
+            <p className={`text-xs mt-3 ${subtler}`}>
+              Used as a color hint when no custom Gamma theme is set.
+            </p>
+          </div>
+
+          {/* Logo URL */}
+          <div className={`p-5 rounded-2xl border ${card}`}>
+            <div className="flex items-center gap-2 mb-4">
+              <Image size={15} className="text-blue-400" />
+              <p className="font-semibold text-sm">Logo URL</p>
+            </div>
+            <input
+              value={settings.brand_logo_url}
+              onChange={(e) => {
+                setSettings({ ...settings, brand_logo_url: e.target.value })
+                setLogoPreviewError(false)
+              }}
+              placeholder="https://yourcompany.com/logo.png"
+              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${input}`}
+            />
+            {settings.brand_logo_url && !logoIsPublic && (
+              <div
+                className={`flex items-start gap-2 mt-3 p-3 rounded-xl border ${dark ? 'bg-amber-950/20 border-amber-900/30' : 'bg-amber-50 border-amber-200'}`}
+              >
+                <Info size={13} className="text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-400">
+                  Must be a public <strong>https://</strong> URL. Gamma's servers fetch this
+                  directly.
+                </p>
+              </div>
+            )}
+            {settings.brand_logo_url && logoIsPublic && !logoPreviewError && (
+              <div
+                className={`mt-3 p-4 rounded-xl border flex items-center justify-center ${section}`}
+              >
+                <img
+                  src={settings.brand_logo_url}
+                  alt="Logo preview"
+                  className="max-h-12 max-w-[200px] object-contain"
+                  onError={() => setLogoPreviewError(true)}
+                />
+              </div>
+            )}
+            {logoPreviewError && (
+              <p className="text-xs text-red-400 mt-2">
+                Couldn't load logo — check it's publicly accessible.
+              </p>
+            )}
+            <p className={`text-xs mt-3 ${subtler}`}>
+              PNG or SVG with transparent background works best. Appears in the header of every
+              exported slide.
+            </p>
+          </div>
+
+          {/* Gamma Theme Picker */}
+          <div className={`p-5 rounded-2xl border ${card}`}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <Sparkles size={15} className="text-blue-400" />
+                <p className="font-semibold text-sm">Presentation Theme</p>
+              </div>
+              <button
+                onClick={fetchThemes}
+                disabled={themesLoading}
+                className={`p-1.5 rounded-lg transition-colors ${dark ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-100 text-zinc-500'}`}
+                title="Refresh themes"
+              >
+                <RefreshCw size={13} className={themesLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+            <p className={`text-xs mb-4 ${subtler}`}>
+              Pick a Gamma theme for your exported decks. Create a custom theme in Gamma with your
+              brand colors for best results.
+            </p>
+
+            {/* Selected theme indicator */}
+            {selectedTheme && (
+              <div
+                className={`flex items-center gap-3 p-3 rounded-xl border mb-4 ${dark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'}`}
+              >
+                <div
+                  className="w-8 h-8 rounded-lg shrink-0"
+                  style={{ background: swatchColorFromKeywords(selectedTheme.colorKeywords) }}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold">{selectedTheme.name}</p>
+                  <p className={`text-[11px] truncate ${subtler}`}>
+                    {selectedTheme.toneKeywords.slice(0, 4).join(', ')}
+                  </p>
+                </div>
+                <CheckCircle2 size={15} className="text-blue-500 shrink-0" />
+              </div>
+            )}
+
+            {/* Search + filter */}
+            <div className="flex gap-2 mb-3">
+              <input
+                value={themeSearch}
+                onChange={(e) => setThemeSearch(e.target.value)}
+                placeholder="Search themes…"
+                className={`flex-1 px-3 py-2 rounded-xl border text-xs outline-none transition-colors ${input}`}
+              />
+              <div
+                className={`flex items-center rounded-xl border p-0.5 text-xs shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+              >
+                {(['all', 'standard', 'custom'] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setThemeFilter(f)}
+                    className={`px-2.5 py-1 rounded-lg transition-colors capitalize ${themeFilter === f ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                  >
+                    {f}
+                  </button>
                 ))}
               </div>
             </div>
-            <div
-              className="p-4 rounded-xl border-2 transition-all duration-300"
-              style={{ borderColor: primary, background: `${primary}15` }}
-            >
-              <p className={`text-xs mb-1 ${lbl}`}>Key Metric</p>
-              <p
-                className="text-2xl font-bold transition-all duration-300"
-                style={{ color: primary }}
-              >
-                +24%
-              </p>
-              <p className={`text-xs ${lbl}`}>Revenue growth</p>
-            </div>
-            <div className="p-4 rounded-xl flex flex-col gap-2">
+
+            {/* Theme grid */}
+            {themesLoading ? (
+              <div className="flex items-center justify-center py-8 gap-2">
+                <RefreshCw size={14} className={`animate-spin ${subtle}`} />
+                <span className={`text-xs ${subtle}`}>Loading themes from Gamma…</span>
+              </div>
+            ) : themesError ? (
               <div
-                className="px-3 py-2 rounded-lg text-white text-xs font-medium text-center transition-all duration-300"
-                style={{ background: primary }}
+                className={`p-4 rounded-xl text-xs text-center ${dark ? 'bg-red-950/20 text-red-400' : 'bg-red-50 text-red-500'}`}
               >
-                Primary
-              </div>
-              <div
-                className="px-3 py-2 rounded-lg text-white text-xs font-medium text-center transition-all duration-300"
-                style={{ background: secondary }}
-              >
-                Secondary
-              </div>
-            </div>
-          </div>
-
-          {displayLogo && (
-            <div className={`mt-4 pt-4 border-t ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}>
-              <p className={`text-xs mb-2 ${lbl}`}>Logo — {logoPosition.replace('-', ' ')}</p>
-              <div className={`relative h-24 rounded-xl ${dark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
-                <img
-                  src={displayLogo}
-                  alt="Brand logo"
-                  className={`absolute w-16 h-8 object-contain
-                    ${
-                      logoPosition === 'bottom-right'
-                        ? 'bottom-2 right-2'
-                        : logoPosition === 'bottom-left'
-                          ? 'bottom-2 left-2'
-                          : logoPosition === 'top-right'
-                            ? 'top-2 right-2'
-                            : 'top-2 left-2'
-                    }`}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Colors */}
-        <div className={`p-6 rounded-2xl border mb-6 ${card}`}>
-          <div className="flex items-center gap-2 mb-5">
-            <Palette size={16} className="text-blue-500" />
-            <h2 className="font-semibold">Brand Colors</h2>
-          </div>
-
-          {/* Step 1 */}
-          <p className={`text-xs font-medium mb-3 ${lbl}`}>Step 1 — Select which color to edit</p>
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            {(['primary', 'secondary'] as ActiveColor[]).map((type) => {
-              const color = type === 'primary' ? primary : secondary
-              const isActive = active === type
-              return (
-                <button
-                  key={type}
-                  onClick={() => setActive(type)}
-                  className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left
-                    ${
-                      isActive
-                        ? 'border-blue-500'
-                        : dark
-                          ? 'border-zinc-700 hover:border-zinc-600'
-                          : 'border-zinc-200 hover:border-zinc-300'
-                    }`}
-                >
-                  <div
-                    className="w-8 h-8 rounded-lg shrink-0"
-                    style={{
-                      background: color,
-                      boxShadow: isActive ? `0 0 0 2px white, 0 0 0 4px ${color}` : 'none',
-                    }}
-                  />
-                  <div>
-                    <p className="text-sm font-medium capitalize">{type}</p>
-                    <p className={`text-xs font-mono ${lbl}`}>{color}</p>
-                  </div>
-                  {isActive && <div className="ml-auto w-2 h-2 rounded-full bg-blue-500" />}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Step 2 */}
-          <p className={`text-xs font-medium mb-3 ${lbl}`}>
-            Step 2 — Choose color for{' '}
-            <span className="font-semibold capitalize text-blue-500">{active}</span>
-          </p>
-          <div className="flex items-center gap-4 mb-5">
-            <input
-              type="color"
-              value={activeColor}
-              onChange={(e) => applyColor(e.target.value)}
-              className="w-12 h-12 rounded-xl cursor-pointer border-0 p-0.5 bg-transparent"
-            />
-            <div
-              className={`flex items-center gap-2 flex-1 px-3 py-2.5 rounded-xl border ${inputCls}`}
-            >
-              <span className={`text-sm ${lbl}`}>#</span>
-              <input
-                value={activeColor.replace('#', '')}
-                onChange={(e) => {
-                  const val = e.target.value
-                  if (/^[0-9A-Fa-f]{0,6}$/.test(val)) applyColor(`#${val}`)
-                }}
-                className="flex-1 bg-transparent outline-none text-sm font-mono"
-                maxLength={6}
-                placeholder="3b82f6"
-              />
-              <div className="w-6 h-6 rounded-md" style={{ background: activeColor }} />
-            </div>
-          </div>
-
-          {/* Presets */}
-          <p className={`text-xs font-medium mb-2 ${lbl}`}>Or pick a preset</p>
-          <div className="flex items-center gap-2 flex-wrap mb-3">
-            {presets.map((color, i) => (
-              <div key={i} className="relative group">
-                <button
-                  onClick={() => applyColor(color)}
-                  className={`w-9 h-9 rounded-xl transition-all border-2
-                    ${activeColor === color ? 'scale-110 border-white' : 'border-transparent hover:scale-105'}`}
-                  style={{ background: color }}
-                  title={color}
-                />
-                <button
-                  onClick={() => setPresets((p) => p.filter((_, idx) => idx !== i))}
-                  className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white hidden group-hover:flex items-center justify-center z-10"
-                >
-                  <X size={8} />
+                {themesError}
+                <button onClick={fetchThemes} className="block mx-auto mt-2 underline">
+                  Try again
                 </button>
               </div>
-            ))}
-          </div>
-          {!presets.includes(activeColor) && (
-            <button
-              onClick={() =>
-                setPresets((p) =>
-                  p.length >= 8 ? [...p.slice(1), activeColor] : [...p, activeColor]
-                )
-              }
-              className={`text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-colors
-                ${dark ? 'border-zinc-700 hover:bg-zinc-800 text-zinc-400' : 'border-zinc-200 hover:bg-zinc-50 text-zinc-500'}`}
-            >
-              <div className="w-3 h-3 rounded-sm" style={{ background: activeColor }} />
-              Save <span className="font-mono">{activeColor}</span> as preset
-            </button>
-          )}
-        </div>
-
-        {/* Logo */}
-        <div className={`p-6 rounded-2xl border mb-6 ${card}`}>
-          <div className="flex items-center gap-2 mb-5">
-            <Image size={16} className="text-blue-500" />
-            <h2 className="font-semibold">Brand Logo</h2>
-          </div>
-
-          {displayLogo ? (
-            <div className="flex items-start gap-4 mb-5">
-              <div className="relative">
-                <img src={displayLogo} alt="Logo" className="h-12 object-contain rounded-lg" />
-                {uploading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg">
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-80 overflow-y-auto pr-1">
+                {filteredThemes.map((theme) => {
+                  const isSelected = settings.gamma_theme_id === theme.id
+                  const swatchBg = swatchColorFromKeywords(theme.colorKeywords)
+                  const swatchText = swatchTextColor(swatchBg)
+                  return (
+                    <button
+                      key={theme.id}
+                      onClick={() => setSettings({ ...settings, gamma_theme_id: theme.id })}
+                      className={`text-left rounded-xl border overflow-hidden transition-all hover:scale-[1.02] ${
+                        isSelected
+                          ? 'border-blue-500 ring-1 ring-blue-500'
+                          : dark
+                            ? 'border-zinc-700 hover:border-zinc-600'
+                            : 'border-zinc-200 hover:border-zinc-300'
+                      }`}
+                    >
+                      {/* Color swatch */}
+                      <div
+                        className="h-10 w-full flex items-center justify-between px-2.5 relative"
+                        style={{ background: swatchBg }}
+                      >
+                        <span
+                          className="text-[10px] font-bold tracking-wide"
+                          style={{ color: swatchText }}
+                        >
+                          Aa
+                        </span>
+                        {isSelected && <CheckCircle2 size={13} className="text-blue-400" />}
+                        {theme.type === 'custom' && (
+                          <span className="absolute top-1 right-1 text-[8px] px-1 py-0.5 rounded bg-black/30 text-white font-medium">
+                            custom
+                          </span>
+                        )}
+                      </div>
+                      {/* Theme info */}
+                      <div className={`px-2.5 py-2 ${dark ? 'bg-zinc-800' : 'bg-white'}`}>
+                        <p className="text-xs font-semibold truncate">{theme.name}</p>
+                        <p className={`text-[10px] truncate mt-0.5 ${subtler}`}>
+                          {theme.toneKeywords.slice(0, 3).join(', ')}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+                {filteredThemes.length === 0 && (
+                  <div className={`col-span-3 text-center py-6 text-xs ${subtle}`}>
+                    No themes match "{themeSearch}"
                   </div>
                 )}
               </div>
-              <div>
-                <p className="text-sm font-medium mb-1">Logo uploaded</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors
-                      ${dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'}`}
-                  >
-                    Replace
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLogoUrl(null)
-                      setLogoPreview(null)
-                    }}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div
-              onClick={() => fileRef.current?.click()}
-              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer mb-5 transition-colors
-                ${dark ? 'border-zinc-700 hover:border-zinc-600' : 'border-zinc-300 hover:border-zinc-400'}`}
-            >
-              {uploading ? (
-                <div className="flex items-center justify-center gap-2">
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm">Uploading...</span>
-                </div>
-              ) : (
-                <>
-                  <Upload size={24} className={`mx-auto mb-2 ${lbl}`} />
-                  <p className="text-sm font-medium mb-1">Upload your logo</p>
-                  <p className={`text-xs ${lbl}`}>PNG, JPG or SVG — recommended 200×80px</p>
-                </>
-              )}
-            </div>
-          )}
+            )}
 
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".png,.jpg,.jpeg,.svg"
-            onChange={handleLogoUpload}
-            className="hidden"
-          />
+            {!settings.gamma_theme_id && !themesLoading && (
+              <p className={`text-xs mt-3 ${subtler}`}>
+                No theme selected — exports will use the default for your chosen tone.
+              </p>
+            )}
+          </div>
 
-          <div>
-            <p className={`text-xs font-medium mb-2 ${lbl}`}>Logo Position</p>
-            <div className="grid grid-cols-2 gap-2 max-w-xs">
-              {LOGO_POSITIONS.map((pos) => (
-                <button
-                  key={pos.key}
-                  onClick={() => setLogoPosition(pos.key)}
-                  className={`px-3 py-2.5 rounded-xl border text-xs font-medium transition-all
-                    ${
-                      logoPosition === pos.key
-                        ? 'border-blue-500 bg-blue-500/10 text-blue-500'
-                        : dark
-                          ? 'border-zinc-700 hover:border-zinc-600'
-                          : 'border-zinc-200 hover:border-zinc-300'
-                    }`}
-                >
-                  {pos.label}
-                </button>
+          {/* What flows to deck */}
+          <div className={`p-4 rounded-2xl border ${section}`}>
+            <p className={`text-xs font-semibold mb-2 ${subtle}`}>
+              What flows to your exported deck
+            </p>
+            <div className="space-y-1.5">
+              {[
+                { field: 'Logo', usage: 'Header of every slide' },
+                { field: 'Theme', usage: 'Colors, fonts, and visual style' },
+                { field: 'Brand name', usage: 'Title slide and contextual references' },
+              ].map(({ field, usage }) => (
+                <div key={field} className="flex items-center gap-2 text-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                  <span className={`font-medium w-24 shrink-0 ${subtle}`}>{field}</span>
+                  <span className={subtler}>{usage}</span>
+                </div>
               ))}
             </div>
           </div>
-        </div>
 
-        {/* Save */}
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full py-3.5 rounded-2xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-600 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
-        >
-          {saved ? (
-            <>
-              <Check size={15} /> Brand Settings Saved
-            </>
-          ) : saving ? (
-            <>
-              <RefreshCw size={15} className="animate-spin" /> Saving...
-            </>
-          ) : (
-            <>
-              <Save size={15} /> Save Brand Settings
-            </>
-          )}
-        </button>
+          {/* Save */}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-400 transition-colors disabled:opacity-50"
+          >
+            {saved ? (
+              <>
+                <CheckCircle size={15} /> Saved
+              </>
+            ) : saving ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{' '}
+                Saving…
+              </>
+            ) : (
+              'Save Brand Settings'
+            )}
+          </button>
+        </div>
       </main>
     </div>
   )

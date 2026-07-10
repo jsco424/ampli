@@ -83,7 +83,6 @@ export default function ProjectsPage() {
     return () => clearInterval(interval)
   }, [projects])
 
-  // Close tag dropdown on outside click
   useEffect(() => {
     const h = (e: MouseEvent) => {
       if (!tagFilterRef.current?.contains(e.target as Node)) setShowTagFilter(false)
@@ -101,19 +100,18 @@ export default function ProjectsPage() {
     e.preventDefault()
     e.stopPropagation()
     setSelectedIds((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
+      const n = new Set(prev)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
     })
   }
 
   const requestDelete = (ids: string[], e?: React.MouseEvent) => {
     e?.preventDefault()
     e?.stopPropagation()
-    const toDelete = projects
-      .filter((p) => ids.includes(p.id))
-      .map((p) => ({ id: p.id, name: p.name }))
-    setDeleteModal(toDelete)
+    setDeleteModal(
+      projects.filter((p) => ids.includes(p.id)).map((p) => ({ id: p.id, name: p.name }))
+    )
   }
 
   const handleDeleteConfirm = (ids: string[]) => {
@@ -130,9 +128,7 @@ export default function ProjectsPage() {
 
   const confirmDelete = async () => {
     if (!pendingDelete) return
-    for (const id of pendingDelete.ids) {
-      await supabase.from('projects').delete().eq('id', id)
-    }
+    for (const id of pendingDelete.ids) await supabase.from('projects').delete().eq('id', id)
     setPendingDelete(null)
   }
 
@@ -169,11 +165,14 @@ export default function ProjectsPage() {
     return 0
   })
 
-  const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  // ── Token-based styles ──────────────────────────────────────────────────────
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const input = dark
-    ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500'
+    ? 'bg-white/[0.04] border-white/[0.08] text-white placeholder-white/25'
     : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'
+  const muted = dark ? 'text-white/40' : 'text-zinc-500'
+  const dropdown = dark ? 'bg-[#111118] border-white/[0.08]' : 'bg-white border-zinc-200'
 
   if (!isLoaded || !user) return null
 
@@ -198,10 +197,10 @@ export default function ProjectsPage() {
 
       <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
         {/* Header */}
-        <div className="mt-6 mb-6 flex items-center justify-between">
+        <div className="mt-8 mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold mb-1">My Projects</h1>
-            <p className={`text-sm ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+            <h1 className="text-2xl font-bold mb-1 tracking-tight">My Projects</h1>
+            <p className={`text-sm ${muted}`}>
               {projects.length} project{projects.length !== 1 ? 's' : ''} total
             </p>
           </div>
@@ -211,12 +210,12 @@ export default function ProjectsPage() {
                 setSelectMode(!selectMode)
                 setSelectedIds(new Set())
               }}
-              className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors
+              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors
                 ${
                   selectMode
-                    ? 'border-blue-500 bg-blue-500/10 text-blue-500'
+                    ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
                     : dark
-                      ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'
+                      ? 'border-white/[0.08] text-white/40 hover:bg-white/[0.04]'
                       : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'
                 }`}
             >
@@ -225,74 +224,62 @@ export default function ProjectsPage() {
             {selectMode && selectedIds.size > 0 && (
               <button
                 onClick={() => requestDelete([...selectedIds])}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-400 transition-colors"
               >
                 <Trash2 size={13} /> Delete ({selectedIds.size})
               </button>
             )}
             <Link
               href="/projects/new"
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
             >
-              <Plus size={15} /> New Project
+              <Plus size={14} /> New Project
             </Link>
           </div>
         </div>
 
         <div className="flex gap-6">
           {/* Sidebar */}
-          <div className="w-48 shrink-0 space-y-1">
-            <p
-              className={`text-xs font-semibold uppercase tracking-wider mb-2 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-            >
+          <div className="w-44 shrink-0 space-y-0.5">
+            <p className={`text-xs font-semibold uppercase tracking-widest mb-3 ${muted}`}>
               Folders
             </p>
-            <button
-              onClick={() => setSelectedFolder(null)}
-              className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors
-                ${
-                  selectedFolder === null
-                    ? 'bg-blue-500/10 text-blue-500 font-medium'
-                    : dark
-                      ? 'text-zinc-400 hover:bg-zinc-800'
-                      : 'text-zinc-500 hover:bg-zinc-100'
-                }`}
-            >
-              <BarChart2 size={14} /> All Projects
-            </button>
-            {folders.map((f) => (
+            {[
+              { label: 'All Projects', icon: BarChart2, value: null },
+              ...folders.map((f) => ({ label: f, icon: Folder, value: f })),
+            ].map(({ label, icon: Icon, value }) => (
               <button
-                key={f}
-                onClick={() => setSelectedFolder(f)}
-                className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors truncate
+                key={label}
+                onClick={() => setSelectedFolder(value)}
+                className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors truncate
                   ${
-                    selectedFolder === f
-                      ? 'bg-blue-500/10 text-blue-500 font-medium'
+                    selectedFolder === value
+                      ? 'bg-blue-500/10 text-blue-400 font-medium'
                       : dark
-                        ? 'text-zinc-400 hover:bg-zinc-800'
+                        ? 'text-white/40 hover:text-white/70 hover:bg-white/[0.04]'
                         : 'text-zinc-500 hover:bg-zinc-100'
                   }`}
               >
-                <Folder size={14} /> {f}
+                <Icon size={13} /> {label}
               </button>
             ))}
             <button
               onClick={() => setShowFolderModal(true)}
-              className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors mt-2
-                ${dark ? 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600'}`}
+              className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors mt-1
+                ${dark ? 'text-white/25 hover:text-white/50 hover:bg-white/[0.04]' : 'text-zinc-400 hover:bg-zinc-100'}`}
             >
-              <FolderPlus size={14} /> New Folder
+              <FolderPlus size={13} /> New Folder
             </button>
           </div>
 
           {/* Main */}
           <div className="flex-1 min-w-0">
             {/* Search + filters */}
-            <div className="flex items-center gap-3 mb-5 flex-wrap">
+            <div className="flex items-center gap-2 mb-5 flex-wrap">
               <div
-                className={`flex items-center gap-2 flex-1 min-w-40 px-3 py-2 rounded-xl border ${input}`}
+                className={`flex items-center gap-2 flex-1 min-w-40 px-3 py-2 rounded-lg border ${input}`}
               >
-                <Search size={14} className={dark ? 'text-zinc-500' : 'text-zinc-400'} />
+                <Search size={13} className={muted} />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -302,26 +289,20 @@ export default function ProjectsPage() {
               </div>
 
               {/* Status */}
-              <div className="flex gap-1.5">
+              <div className="flex gap-1">
                 {STATUS_OPTIONS.map((s) => (
                   <button
                     key={s}
                     onClick={() => setStatusFilter(s)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors
-                      ${
-                        statusFilter === s
-                          ? 'bg-blue-500 text-white'
-                          : dark
-                            ? 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                            : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
-                      }`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                      ${statusFilter === s ? 'bg-blue-500 text-white' : dark ? 'bg-white/[0.04] text-white/40 hover:bg-white/[0.07]' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
                   >
                     {s}
                   </button>
                 ))}
               </div>
 
-              {/* Tag filter dropdown */}
+              {/* Tag filter */}
               {allTags.length > 0 && (
                 <div ref={tagFilterRef} className="relative">
                   <button
@@ -329,17 +310,17 @@ export default function ProjectsPage() {
                       setShowTagFilter(!showTagFilter)
                       setTagSearch('')
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
                       ${
                         selectedTag
-                          ? 'border-blue-500 bg-blue-500/10 text-blue-500'
+                          ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
                           : dark
-                            ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'
+                            ? 'border-white/[0.08] text-white/40 hover:bg-white/[0.04]'
                             : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'
                       }`}
                   >
-                    <Tag size={12} />
-                    {selectedTag ? selectedTag : 'Tag'}
+                    <Tag size={11} />
+                    {selectedTag || 'Tag'}
                     {selectedTag ? (
                       <span
                         onMouseDown={(e) => {
@@ -348,40 +329,30 @@ export default function ProjectsPage() {
                         }}
                         className="cursor-pointer hover:opacity-60"
                       >
-                        <X size={11} />
+                        <X size={10} />
                       </span>
                     ) : (
-                      <ChevronDown size={11} />
+                      <ChevronDown size={10} />
                     )}
                   </button>
-
                   {showTagFilter && (
                     <div
-                      className={`absolute right-0 top-full mt-1 rounded-xl border shadow-xl z-20 overflow-hidden w-56
-                      ${dark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'}`}
+                      className={`absolute right-0 top-full mt-1 rounded-xl border shadow-2xl z-20 overflow-hidden w-52 ${dropdown}`}
                     >
-                      {/* Tag search */}
                       <div
-                        className={`p-2 border-b ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
+                        className={`p-2 border-b ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
                       >
                         <input
                           value={tagSearch}
                           onChange={(e) => setTagSearch(e.target.value)}
                           placeholder="Search tags..."
                           autoFocus
-                          className={`w-full px-3 py-1.5 rounded-lg border text-xs outline-none
-                            ${dark ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500' : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder-zinc-400'}`}
+                          className={`w-full px-3 py-1.5 rounded-lg border text-xs outline-none ${input}`}
                         />
                       </div>
-
-                      {/* Tag list */}
-                      <div className="max-h-52 overflow-y-auto">
+                      <div className="max-h-48 overflow-y-auto">
                         {filteredTagOptions.length === 0 ? (
-                          <p
-                            className={`px-3 py-2 text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                          >
-                            No tags found
-                          </p>
+                          <p className={`px-3 py-2 text-xs ${muted}`}>No tags found</p>
                         ) : (
                           filteredTagOptions.map((tag) => (
                             <button
@@ -390,15 +361,14 @@ export default function ProjectsPage() {
                                 setSelectedTag(selectedTag === tag ? null : tag)
                                 setShowTagFilter(false)
                               }}
-                              className={`w-full flex items-center justify-between px-3 py-2 text-xs transition-colors
-                              ${dark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-50'}`}
+                              className={`w-full flex items-center justify-between px-3 py-2 text-xs transition-colors ${dark ? 'hover:bg-white/[0.04]' : 'hover:bg-zinc-50'}`}
                             >
                               <span
                                 className={`px-2 py-0.5 rounded-lg border font-medium ${getTagColor(tag)}`}
                               >
                                 {tag}
                               </span>
-                              {selectedTag === tag && <Check size={12} className="text-blue-500" />}
+                              {selectedTag === tag && <Check size={11} className="text-blue-500" />}
                             </button>
                           ))
                         )}
@@ -412,15 +382,14 @@ export default function ProjectsPage() {
               <div className="relative">
                 <button
                   onClick={() => setShowSort(!showSort)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors
-                    ${dark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
+                    ${dark ? 'border-white/[0.08] text-white/40 hover:bg-white/[0.04]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
                 >
-                  <Filter size={12} /> {sort} <ChevronDown size={12} />
+                  <Filter size={11} /> {sort} <ChevronDown size={10} />
                 </button>
                 {showSort && (
                   <div
-                    className={`absolute right-0 top-full mt-1 rounded-xl border shadow-xl z-10 overflow-hidden w-32
-                    ${dark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'}`}
+                    className={`absolute right-0 top-full mt-1 rounded-xl border shadow-2xl z-10 overflow-hidden w-28 ${dropdown}`}
                   >
                     {SORT_OPTIONS.map((o) => (
                       <button
@@ -430,7 +399,7 @@ export default function ProjectsPage() {
                           setShowSort(false)
                         }}
                         className={`w-full text-left px-3 py-2 text-xs transition-colors
-                          ${sort === o ? 'text-blue-500 font-medium' : dark ? 'text-zinc-300 hover:bg-zinc-800' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                          ${sort === o ? 'text-blue-400 font-medium' : dark ? 'text-white/50 hover:bg-white/[0.04]' : 'text-zinc-600 hover:bg-zinc-50'}`}
                       >
                         {o}
                       </button>
@@ -440,12 +409,10 @@ export default function ProjectsPage() {
               </div>
             </div>
 
-            {/* Active tag filter indicator */}
+            {/* Active tag indicator */}
             {selectedTag && (
               <div className="flex items-center gap-2 mb-4">
-                <span className={`text-xs ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                  Filtering by:
-                </span>
+                <span className={`text-xs ${muted}`}>Filtering by:</span>
                 <span
                   className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium ${getTagColor(selectedTag)}`}
                 >
@@ -457,54 +424,45 @@ export default function ProjectsPage() {
               </div>
             )}
 
-            {/* Projects Grid */}
+            {/* Grid */}
             {loading ? (
               <div className="flex items-center justify-center py-20">
-                <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : filtered.length === 0 ? (
-              <div className={`p-12 rounded-2xl border text-center ${card}`}>
-                <BarChart2
-                  size={32}
-                  className={`mx-auto mb-3 ${dark ? 'text-zinc-600' : 'text-zinc-400'}`}
-                />
+              <div className={`p-12 rounded-xl border text-center ${card}`}>
+                <BarChart2 size={28} className={`mx-auto mb-3 ${muted}`} />
                 <p className="text-sm font-medium mb-1">No projects found</p>
-                <p className={`text-xs mb-4 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                <p className={`text-xs mb-4 ${muted}`}>
                   {search || selectedTag
                     ? 'Try a different search or filter'
                     : 'Create your first project to get started'}
                 </p>
                 <Link
                   href="/projects/new"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
                 >
-                  <Plus size={14} /> New Project
+                  <Plus size={13} /> New Project
                 </Link>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {filtered.map((p) => (
                   <div key={p.id} className="relative group">
                     {p.status === 'processing' ? (
-                      <div className={`p-4 rounded-2xl border opacity-75 ${card}`}>
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="p-2 rounded-xl bg-amber-500/10">
-                            <BarChart2 size={16} className="text-amber-500" />
+                      <div className={`p-4 rounded-xl border opacity-60 ${card}`}>
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="p-1.5 rounded-lg bg-amber-500/10">
+                            <BarChart2 size={14} className="text-amber-500" />
                           </div>
                           <span className="flex items-center gap-1.5 text-xs text-amber-400">
-                            <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                            <div className="w-2.5 h-2.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
                             Processing
                           </span>
                         </div>
                         <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                        <p
-                          className={`text-xs truncate ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                        >
-                          {p.file_name}
-                        </p>
-                        <p className={`text-xs mt-2 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                          Generating insights...
-                        </p>
+                        <p className={`text-xs truncate ${muted}`}>{p.file_name}</p>
+                        <p className={`text-xs mt-2 ${muted}`}>Generating insights...</p>
                       </div>
                     ) : (
                       <div className="relative">
@@ -512,7 +470,7 @@ export default function ProjectsPage() {
                           <button
                             onClick={(e) => toggleSelect(p.id, e)}
                             className={`absolute top-3 left-3 z-10 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors
-                              ${selectedIds.has(p.id) ? 'bg-blue-500 border-blue-500' : dark ? 'border-zinc-600 bg-zinc-800' : 'border-zinc-300 bg-white'}`}
+                              ${selectedIds.has(p.id) ? 'bg-blue-500 border-blue-500' : dark ? 'border-white/20 bg-white/5' : 'border-zinc-300 bg-white'}`}
                           >
                             {selectedIds.has(p.id) && (
                               <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
@@ -530,39 +488,33 @@ export default function ProjectsPage() {
                         <Link
                           href={selectMode ? '#' : `/projects/${p.id}`}
                           onClick={selectMode ? (e) => toggleSelect(p.id, e) : undefined}
-                          className={`block p-4 rounded-2xl border transition-all
-                            ${selectMode && selectedIds.has(p.id) ? 'border-blue-500 bg-blue-500/5' : ''}
-                            ${!selectMode ? 'hover:border-blue-500 hover:shadow-md' : ''}
+                          className={`block p-4 rounded-xl border transition-all
+                            ${selectMode && selectedIds.has(p.id) ? 'border-blue-500/50 bg-blue-500/5' : ''}
+                            ${!selectMode ? 'hover:border-blue-500/40 hover:bg-blue-500/[0.03]' : ''}
                             ${selectMode ? 'pl-10 cursor-pointer' : ''}
                             ${card}`}
                         >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="p-2 rounded-xl bg-blue-500/10">
-                              <BarChart2 size={16} className="text-blue-500" />
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="p-1.5 rounded-lg bg-blue-500/10">
+                              <BarChart2 size={14} className="text-blue-500" />
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="flex items-center gap-1 text-xs text-emerald-500">
-                                <CheckCircle size={12} /> Completed
+                                <CheckCircle size={11} /> Completed
                               </span>
                               {!selectMode && (
                                 <button
                                   onClick={(e) => requestDelete([p.id], e)}
-                                  className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400
-                                    ${dark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}`}
+                                  className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400 ${dark ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}
                                 >
-                                  <Trash2 size={13} />
+                                  <Trash2 size={12} />
                                 </button>
                               )}
                             </div>
                           </div>
                           <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                          <p
-                            className={`text-xs truncate mb-2 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                          >
-                            {p.file_name}
-                          </p>
+                          <p className={`text-xs truncate mb-2 ${muted}`}>{p.file_name}</p>
 
-                          {/* Custom tags */}
                           {(p.tags || []).length > 0 && (
                             <div className="flex flex-wrap gap-1 mb-2">
                               {p.tags.slice(0, 3).map((tag: string) => (
@@ -574,16 +526,13 @@ export default function ProjectsPage() {
                                 </span>
                               ))}
                               {p.tags.length > 3 && (
-                                <span
-                                  className={`text-xs px-2 py-0.5 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                                >
+                                <span className={`text-xs px-1 ${muted}`}>
                                   +{p.tags.length - 3}
                                 </span>
                               )}
                             </div>
                           )}
 
-                          {/* Target company/audience/folder pills */}
                           <div className="flex items-center gap-2 flex-wrap mb-3">
                             {p.target_company && (
                               <span
@@ -601,22 +550,20 @@ export default function ProjectsPage() {
                             )}
                             {p.folder && (
                               <span
-                                className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}
+                                className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${dark ? 'bg-white/5 text-white/35' : 'bg-zinc-100 text-zinc-500'}`}
                               >
-                                <Folder size={10} /> {p.folder}
+                                <Folder size={9} /> {p.folder}
                               </span>
                             )}
                           </div>
 
                           <div className="flex items-center justify-between">
-                            <div
-                              className={`flex items-center gap-1 text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                            >
-                              <Clock size={11} /> {new Date(p.created_at).toLocaleDateString()}
+                            <div className={`flex items-center gap-1 text-xs ${muted}`}>
+                              <Clock size={10} /> {new Date(p.created_at).toLocaleDateString()}
                             </div>
                             {!selectMode && (
                               <span className="text-xs text-blue-500 flex items-center gap-1 font-medium">
-                                View Results <ArrowRight size={11} />
+                                View Results <ArrowRight size={10} />
                               </span>
                             )}
                           </div>
@@ -634,12 +581,10 @@ export default function ProjectsPage() {
         {showFolderModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
               onClick={() => setShowFolderModal(false)}
             />
-            <div
-              className={`relative w-full max-w-sm p-6 rounded-2xl border shadow-2xl ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
-            >
+            <div className={`relative w-full max-w-sm p-6 rounded-2xl border shadow-2xl ${card}`}>
               <h3 className="font-bold text-base mb-4">Create New Folder</h3>
               <input
                 value={newFolderName}
@@ -647,20 +592,19 @@ export default function ProjectsPage() {
                 onKeyDown={(e) => e.key === 'Enter' && createFolder()}
                 placeholder="Folder name..."
                 autoFocus
-                className={`w-full px-4 py-3 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500 mb-4
-                  ${dark ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500' : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'}`}
+                className={`w-full px-4 py-3 rounded-xl border text-sm outline-none focus:border-blue-500/50 mb-4 ${input}`}
               />
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowFolderModal(false)}
-                  className={`flex-1 py-2.5 rounded-xl border text-sm font-medium ${dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'}`}
+                  className={`flex-1 py-2.5 rounded-xl border text-sm font-medium ${dark ? 'border-white/[0.08] hover:bg-white/[0.04]' : 'border-zinc-200 hover:bg-zinc-50'}`}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={createFolder}
                   disabled={!newFolderName.trim()}
-                  className="flex-1 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40"
+                  className="flex-1 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors disabled:opacity-40"
                 >
                   Create
                 </button>

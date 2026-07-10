@@ -1,585 +1,571 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
-import Navbar from '@/components/Navbar'
-import { useTheme } from '@/hooks/useTheme'
-import { supabase } from '@/lib/supabase'
 import {
-  UploadCloud,
-  FolderOpen,
-  BarChart2,
-  Globe,
   ArrowRight,
-  Trash2,
-  Clock,
-  CheckCircle,
-  Globe2,
-  ChevronDown,
-  ChevronUp,
-  Package,
+  BarChart2,
+  Sparkles,
+  Globe,
   Users,
-  Swords,
-  Newspaper,
+  FileText,
+  ChevronRight,
+  Check,
+  Zap,
+  Shield,
+  TrendingUp,
+  Play,
+  UploadCloud,
+  Target,
+  Presentation,
+  Download,
 } from 'lucide-react'
-import Link from 'next/link'
-import WelcomeState from '@/components/WelcomeState'
-import OnboardingModal from '@/components/OnboardingModal'
 
-const TIER_COLORS: Record<string, string> = {
-  executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  director: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  manager: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  individual: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-}
+const NAV_LINKS = ['Product', 'Use Cases', 'Pricing', 'Blog']
 
-export default function Home() {
+const FEATURES = [
+  {
+    icon: UploadCloud,
+    color: 'text-blue-600',
+    bg: 'bg-blue-50',
+    border: 'border-blue-200',
+    title: 'Upload any dataset',
+    description:
+      'Drop in a CSV or Excel file. ampli reads the structure, identifies the story inside, and gets to work instantly.',
+  },
+  {
+    icon: Sparkles,
+    color: 'text-purple-600',
+    bg: 'bg-purple-50',
+    border: 'border-purple-200',
+    title: 'AI-generated narratives',
+    description:
+      "Get a full business narrative, key insight cards, and branded charts — framed for the exact person you're pitching.",
+  },
+  {
+    icon: Globe,
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50',
+    border: 'border-emerald-200',
+    title: 'Company intelligence',
+    description:
+      'Research any company URL. Instant breakdown of products, competitors, and an audience map for every stakeholder.',
+  },
+  {
+    icon: Target,
+    color: 'text-amber-600',
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+    title: 'Audience-aware framing',
+    description:
+      'Select your target audience — CMO, VP of Data, Director of Analytics — and ampli tailors the entire story to their priorities.',
+  },
+  {
+    icon: Presentation,
+    color: 'text-red-600',
+    bg: 'bg-red-50',
+    border: 'border-red-200',
+    title: 'One-click pitch mode',
+    description:
+      'Full-screen presentation built for screen sharing. Branded with your colors and logo. No PowerPoint required.',
+  },
+  {
+    icon: Download,
+    color: 'text-cyan-600',
+    bg: 'bg-cyan-50',
+    border: 'border-cyan-200',
+    title: 'PDF export',
+    description:
+      'Select the slides you want, export a branded PDF in seconds. Leave-behinds that look like they took hours.',
+  },
+]
+
+const STEPS = [
+  {
+    number: '01',
+    title: 'Research your target',
+    description:
+      'Paste any company URL. Get products, competitors, and a full audience map in seconds.',
+  },
+  {
+    number: '02',
+    title: 'Upload your data',
+    description: 'Drop in a CSV or Excel file and brief the AI on your angle, audience, and focus.',
+  },
+  {
+    number: '03',
+    title: 'Generate your story',
+    description: 'Narrative, insight cards, and charts — tailored to the exact person in the room.',
+  },
+  {
+    number: '04',
+    title: 'Present or export',
+    description: 'Hit Pitch Mode for a branded presentation, or export a PDF leave-behind.',
+  },
+]
+
+const STATS = [
+  { value: '10×', label: 'faster than manual decks' },
+  { value: '6+', label: 'charts per project' },
+  { value: '100%', label: 'audience-tailored output' },
+  { value: '<30s', label: 'average generation time' },
+]
+
+const TESTIMONIALS = [
+  {
+    quote:
+      'I used to spend half a day turning data into a deck. ampli does it in under a minute and the framing is actually better.',
+    name: 'Sarah K.',
+    role: 'Senior Insights Analyst, Fortune 500',
+  },
+  {
+    quote:
+      'The audience map feature is a game-changer. Every stakeholder gets a narrative built around what they actually care about.',
+    name: 'Marcus T.',
+    role: 'Director of Analytics, B2B SaaS',
+  },
+  {
+    quote:
+      "Finally, a tool that understands that data storytelling isn't just about charts — it's about who's in the room.",
+    name: 'Priya M.',
+    role: 'Head of Data & Insights, Agency',
+  },
+]
+
+export default function LandingPage() {
   const { user, isLoaded } = useUser()
-  const { dark } = useTheme()
   const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [submitted, setSubmitted] = useState(false)
 
-  const [showOnboarding, setShowOnboarding] = useState(false)
-  const [projects, setProjects] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [url, setUrl] = useState('')
-  const [researching, setResearching] = useState(false)
-  const [research, setResearch] = useState<any>(null)
-  const [news, setNews] = useState<any[]>([])
-  const [expandedSection, setExpandedSection] = useState<
-    'products' | 'competitors' | 'audiences' | 'news' | null
-  >('news')
-
+  // Logged-in users skip the landing page entirely
   useEffect(() => {
-    if (isLoaded && !user) router.push('/sign-in')
+    if (isLoaded && user) router.push('/dashboard')
   }, [isLoaded, user, router])
 
-  // Check if user needs onboarding
-  useEffect(() => {
-    if (!user) return
-    supabase
-      .from('user_settings')
-      .select('onboarding_complete')
-      .eq('user_id', user.id)
-      .single()
-      .then(({ data }) => {
-        if (!data || !data.onboarding_complete) setShowOnboarding(true)
-      })
-  }, [user])
-
-  const completeOnboarding = async () => {
-    if (!user) return
-    setShowOnboarding(false)
-    await supabase.from('user_settings').upsert(
-      {
-        user_id: user.id,
-        onboarding_complete: true,
-      },
-      { onConflict: 'user_id' }
-    )
-  }
-
-  const loadProjects = () => {
-    if (!user) return
-    supabase
-      .from('projects')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(6)
-      .then(({ data }) => {
-        setProjects(data || [])
-        setLoading(false)
-      })
-  }
-
-  useEffect(() => {
-    loadProjects()
-  }, [user])
-
-  // Poll every 5s if any projects are processing
-  useEffect(() => {
-    if (!projects.some((p) => p.status === 'processing')) return
-    const interval = setInterval(loadProjects, 5000)
-    return () => clearInterval(interval)
-  }, [projects])
-
-  const handleResearch = async () => {
-    if (!url || !user) return
-    setResearching(true)
-    setResearch(null)
-    setNews([])
-    try {
-      const res = await fetch('/api/research', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      })
-      const data = await res.json()
-      setResearch(data)
-      setExpandedSection('news')
-
-      await supabase.from('company_research').insert({
-        user_id: user.id,
-        url,
-        company_name: data.company_name,
-        description: data.description,
-        products: data.products,
-        competitors: data.competitors,
-        audiences: data.audiences,
-      })
-
-      fetch('/api/news', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyName: data.company_name }),
-      })
-        .then((r) => r.json())
-        .then((n) => setNews(n.news || []))
-    } catch (err) {
-      console.error(err)
-    }
-    setResearching(false)
-  }
-
-  const deleteProject = async (id: string, e: React.MouseEvent) => {
+  const handleDemo = (e: React.FormEvent) => {
     e.preventDefault()
-    e.stopPropagation()
-    await supabase.from('projects').delete().eq('id', id)
-    setProjects((p) => p.filter((x) => x.id !== id))
+    if (!email) return
+    setSubmitted(true)
   }
 
-  const filtered = projects.filter(
-    (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.file_name?.toLowerCase().includes(search.toLowerCase())
-  )
-
-  const processing = filtered.filter((p) => p.status === 'processing')
-  const completed = filtered.filter((p) => p.status === 'completed')
-
-  const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
-  const input = dark
-    ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500'
-    : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'
-
-  if (!isLoaded || !user) return null
+  // Avoid flashing the landing page before redirect resolves
+  if (!isLoaded || user) return null
 
   return (
-    <div className={`min-h-screen ${base}`}>
-      <Navbar />
-      {showOnboarding && <OnboardingModal onComplete={completeOnboarding} />}
+    <div className="min-h-screen bg-white text-zinc-900 antialiased">
+      {/* ── Navbar ─────────────────────────────────────────────────────────── */}
+      <nav className="fixed top-0 left-0 right-0 z-50 h-14 flex items-center justify-between px-8 border-b border-zinc-200 bg-white/90 backdrop-blur-xl">
+        <Link href="/" className="flex flex-col leading-none">
+          <span className="text-[17px] font-bold tracking-tight">
+            <span className="text-blue-600">a</span>
+            <span className="text-zinc-700">mp</span>
+            <span className="text-blue-500">-</span>
+            <span className="text-zinc-700">l</span>
+            <span className="text-blue-600">i</span>
+          </span>
+          <span className="text-[9px] tracking-widest font-medium uppercase text-zinc-400">
+            stories, not spreadsheets
+          </span>
+        </Link>
 
-      <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
-        {/* Welcome */}
-        <div className="mt-6 mb-8">
-          <h1 className="text-2xl font-bold mb-1">
-            Welcome back{user?.firstName ? `, ${user.firstName}` : ''}
-          </h1>
-          <p className={`text-sm ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-            What would you like to do today?
-          </p>
-        </div>
-
-        {/* Quick actions */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-10">
-          {[
-            { icon: UploadCloud, label: 'New Project', href: '/projects/new' },
-            { icon: FolderOpen, label: 'My Projects', href: '/projects' },
-            { icon: BarChart2, label: 'Crowd Insights', href: '/crowd' },
-            { icon: Globe, label: 'Research', href: '#research' },
-          ].map(({ icon: Icon, label, href }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`flex items-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium transition-all hover:border-blue-500 ${card}`}
+        <div className="hidden md:flex items-center gap-1">
+          {NAV_LINKS.map((link) => (
+            <a
+              key={link}
+              href={`#${link.toLowerCase().replace(' ', '-')}`}
+              className="px-4 py-1.5 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-all"
             >
-              <Icon size={16} className="text-blue-500" />
-              {label}
-            </Link>
+              {link}
+            </a>
           ))}
         </div>
 
-        {/* Recent Projects */}
-        <div className="mb-10">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-lg">Recent Projects</h2>
-            <div className="flex items-center gap-3">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search projects..."
-                className={`px-3 py-1.5 rounded-xl border text-sm outline-none w-48 ${input}`}
-              />
-              <Link
-                href="/projects"
-                className="text-sm text-blue-500 flex items-center gap-1 hover:underline"
-              >
-                View All <ArrowRight size={14} />
-              </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/sign-in"
+            className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/sign-up"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500 transition-colors shadow-lg shadow-blue-600/15"
+          >
+            Request Demo <ArrowRight size={13} />
+          </Link>
+        </div>
+      </nav>
+
+      {/* ── Hero ───────────────────────────────────────────────────────────── */}
+      <section className="relative pt-32 pb-24 px-6 overflow-hidden">
+        {/* Grid background */}
+        <div
+          className="absolute inset-0 opacity-60"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px)',
+            backgroundSize: '40px 40px',
+          }}
+        />
+
+        {/* Radial glow */}
+        <div
+          className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full"
+          style={{
+            background:
+              'radial-gradient(ellipse at center, rgba(59,130,246,0.08) 0%, transparent 70%)',
+          }}
+        />
+
+        <div className="relative max-w-5xl mx-auto text-center">
+          {/* Badge */}
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-600 text-xs font-semibold mb-8 tracking-wide">
+            <Zap size={11} />
+            AI-powered data storytelling for analysts
+          </div>
+
+          {/* Headline */}
+          <h1 className="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.05] mb-6 text-zinc-900">
+            Turn raw data into
+            <br />
+            <span className="bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-500 bg-clip-text text-transparent">
+              stories that sell.
+            </span>
+          </h1>
+
+          {/* Subheadline */}
+          <p className="text-lg sm:text-xl text-zinc-500 max-w-2xl mx-auto mb-10 leading-relaxed font-light">
+            Ampli transforms raw data into branded sales stories tailored to{' '}
+            <span className="text-blue-600 font-medium">your target account</span> and{' '}
+            <span className="text-blue-600 font-medium">the decision makers who matter most</span>.
+          </p>
+
+          {/* CTA */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
+            <Link
+              href="/sign-up"
+              className="flex items-center gap-2 px-6 py-3.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-500 transition-all shadow-xl shadow-blue-600/20 text-sm"
+            >
+              Request a Demo <ArrowRight size={15} />
+            </Link>
+            <a
+              href="#how-it-works"
+              className="flex items-center gap-2 px-6 py-3.5 rounded-xl border border-zinc-200 text-zinc-600 hover:text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 transition-all text-sm font-medium"
+            >
+              <Play size={13} /> See how it works
+            </a>
+          </div>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-zinc-200 rounded-2xl overflow-hidden border border-zinc-200">
+            {STATS.map((stat, i) => (
+              <div key={i} className="bg-white px-6 py-5 text-center">
+                <div className="text-3xl font-black text-zinc-900 mb-1">{stat.value}</div>
+                <div className="text-xs text-zinc-400 font-medium">{stat.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Product preview ────────────────────────────────────────────────── */}
+      <section className="px-6 pb-24 max-w-6xl mx-auto">
+        <div
+          className="relative rounded-2xl border border-zinc-200 overflow-hidden bg-zinc-50"
+          style={{ boxShadow: '0 40px 120px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.02)' }}
+        >
+          {/* Top accent */}
+          <div className="h-0.5 w-full bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-600" />
+
+          {/* Fake browser chrome */}
+          <div className="flex items-center gap-1.5 px-4 py-3 border-b border-zinc-200 bg-white">
+            <div className="w-2.5 h-2.5 rounded-full bg-zinc-200" />
+            <div className="w-2.5 h-2.5 rounded-full bg-zinc-200" />
+            <div className="w-2.5 h-2.5 rounded-full bg-zinc-200" />
+            <div className="flex-1 mx-4 h-6 rounded-md bg-zinc-100 flex items-center px-3">
+              <span className="text-xs text-zinc-400">app.ampli.ai/projects/q4-analysis</span>
             </div>
           </div>
 
-          {projects.length === 0 && !loading ? (
-            <WelcomeState firstName={user?.firstName || undefined} />
-          ) : (
-            <div className="space-y-6">
-              {/* Processing */}
-              {processing.length > 0 && (
-                <div>
-                  <h3
-                    className={`text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                  >
-                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                    In Progress
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {processing.map((p) => (
-                      <div key={p.id} className={`p-4 rounded-2xl border opacity-75 ${card}`}>
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="p-2 rounded-xl bg-amber-500/10">
-                            <BarChart2 size={16} className="text-amber-500" />
-                          </div>
-                          <span className="flex items-center gap-1.5 text-xs text-amber-400">
-                            <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                            Processing
-                          </span>
-                        </div>
-                        <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                        <p
-                          className={`text-xs truncate mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                        >
-                          {p.file_name}
-                        </p>
-                        <p className={`text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                          Your insights are being generated...
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Completed */}
-              {completed.length > 0 && (
-                <div>
-                  <h3
-                    className={`text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                  >
-                    <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                    Completed
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {completed.map((p) => (
-                      <Link
-                        key={p.id}
-                        href={`/projects/${p.id}`}
-                        className={`group p-4 rounded-2xl border transition-all hover:border-blue-500 hover:shadow-md ${card}`}
-                      >
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="p-2 rounded-xl bg-blue-500/10">
-                            <BarChart2 size={16} className="text-blue-500" />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="flex items-center gap-1 text-xs text-emerald-500">
-                              <CheckCircle size={12} /> Completed
-                            </span>
-                            <button
-                              onClick={(e) => deleteProject(p.id, e)}
-                              className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400 ${dark ? 'hover:bg-zinc-800' : 'hover:bg-zinc-100'}`}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </div>
-                        <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                        <p
-                          className={`text-xs truncate mb-3 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                        >
-                          {p.file_name}
-                        </p>
-                        <div
-                          className={`flex items-center gap-1 text-xs ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                        >
-                          <Clock size={11} />
-                          {new Date(p.created_at).toLocaleDateString()}
-                        </div>
-                        <div
-                          className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-blue-500 ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
-                        >
-                          View Results <ArrowRight size={12} />
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {/* Mock dashboard */}
+          <div className="p-6 bg-white">
+            {/* Mock header */}
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <div className="h-5 w-48 bg-zinc-100 rounded-lg mb-2" />
+                <div className="h-3 w-32 bg-zinc-50 rounded-lg" />
+              </div>
+              <div className="flex gap-2">
+                <div className="h-8 w-24 bg-zinc-50 rounded-lg border border-zinc-200" />
+                <div className="h-8 w-24 bg-blue-50 rounded-lg border border-blue-200" />
+              </div>
             </div>
-          )}
+
+            {/* Mock insight cards */}
+            <div className="grid grid-cols-5 gap-3 mb-6">
+              {[
+                {
+                  label: 'Revenue Growth',
+                  value: '+24%',
+                  color: 'text-emerald-600',
+                  bg: 'bg-emerald-50',
+                  border: 'border-emerald-200',
+                },
+                {
+                  label: 'Conversion Rate',
+                  value: '3.8%',
+                  color: 'text-blue-600',
+                  bg: 'bg-blue-50',
+                  border: 'border-blue-200',
+                },
+                {
+                  label: 'Avg Deal Size',
+                  value: '$48K',
+                  color: 'text-purple-600',
+                  bg: 'bg-purple-50',
+                  border: 'border-purple-200',
+                },
+                {
+                  label: 'Pipeline Velocity',
+                  value: '↑ 18%',
+                  color: 'text-amber-600',
+                  bg: 'bg-amber-50',
+                  border: 'border-amber-200',
+                },
+                {
+                  label: 'Win Rate',
+                  value: '62%',
+                  color: 'text-cyan-600',
+                  bg: 'bg-cyan-50',
+                  border: 'border-cyan-200',
+                },
+              ].map((card, i) => (
+                <div key={i} className={`p-3 rounded-xl border ${card.bg} ${card.border}`}>
+                  <div className="text-xs mb-2 text-zinc-400">{card.label}</div>
+                  <div className={`text-xl font-black ${card.color}`}>{card.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Mock charts row */}
+            <div className="grid grid-cols-3 gap-3">
+              {/* Bar chart mock */}
+              <div className="col-span-2 p-4 rounded-xl border border-zinc-200 bg-zinc-50">
+                <div className="h-3 w-32 bg-zinc-200 rounded mb-1" />
+                <div className="h-2 w-48 bg-zinc-100 rounded mb-4" />
+                <div className="flex items-end gap-2 h-24">
+                  {[65, 40, 80, 55, 90, 70, 85, 60].map((h, i) => (
+                    <div
+                      key={i}
+                      className="flex-1 rounded-t-sm"
+                      style={{
+                        height: `${h}%`,
+                        background: i % 2 === 0 ? 'rgba(37,99,235,0.7)' : 'rgba(139,92,246,0.45)',
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+              {/* Hero stat mock */}
+              <div className="p-4 rounded-xl border border-blue-200 bg-blue-50 flex flex-col items-center justify-center text-center">
+                <div className="text-4xl font-black text-blue-600 mb-2">+24%</div>
+                <div className="text-xs text-zinc-500 leading-snug">
+                  Revenue growth driven by enterprise segment expansion
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── How it works ───────────────────────────────────────────────────── */}
+      <section id="how-it-works" className="px-6 py-24 max-w-5xl mx-auto">
+        <div className="text-center mb-16">
+          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 mb-3">
+            How it works
+          </p>
+          <h2 className="text-4xl font-black tracking-tight mb-4 text-zinc-900">
+            From raw data to <span className="text-blue-600">closed-won</span> in 4 simple steps
+          </h2>
+          <p className="text-zinc-500 text-lg max-w-xl mx-auto">
+            No templates. No PowerPoint. Just your data and a story worth telling.
+          </p>
         </div>
 
-        {/* Company Research */}
-        <div id="research">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-lg">Company Research</h2>
-            <span className="text-xs text-blue-500 font-medium">AI-Powered</span>
-          </div>
-
-          <div className={`p-5 rounded-2xl border ${card}`}>
-            <p className={`text-sm mb-4 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Enter a company website URL to get an instant AI breakdown of what they do, their
-              products, audiences, and top competitors.
-            </p>
-            <div className="flex gap-2">
-              <div
-                className={`flex items-center gap-2 flex-1 px-4 py-2.5 rounded-xl border ${input}`}
-              >
-                <Globe2 size={15} className={dark ? 'text-zinc-500' : 'text-zinc-400'} />
-                <input
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleResearch()}
-                  placeholder="https://example.com"
-                  className="flex-1 bg-transparent outline-none text-sm"
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-zinc-200 rounded-2xl overflow-hidden border border-zinc-200">
+          {STEPS.map((step, i) => (
+            <div key={i} className="bg-white p-6 relative">
+              <div className="text-5xl font-black text-zinc-100 absolute top-4 right-4 leading-none select-none">
+                {step.number}
+              </div>
+              <div className="text-xs font-bold text-blue-600 mb-3 tracking-widest uppercase">
+                {step.number}
+              </div>
+              <h3 className="font-bold text-sm mb-2 leading-snug text-zinc-900">{step.title}</h3>
+              <p className="text-xs text-zinc-500 leading-relaxed">{step.description}</p>
+              {i < STEPS.length - 1 && (
+                <ChevronRight
+                  size={14}
+                  className="absolute top-1/2 -right-2 -translate-y-1/2 text-zinc-300 hidden lg:block z-10"
                 />
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Features ───────────────────────────────────────────────────────── */}
+      <section id="product" className="px-6 py-24 max-w-5xl mx-auto">
+        <div className="text-center mb-16">
+          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 mb-3">
+            Features
+          </p>
+          <h2 className="text-4xl font-black tracking-tight mb-4 text-zinc-900">
+            Everything analysts need to <span className="text-blue-600">tell their story</span>
+          </h2>
+          <p className="text-zinc-500 text-lg max-w-xl mx-auto">
+            Built for the people who live in data but present to people.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-zinc-200 rounded-2xl overflow-hidden border border-zinc-200">
+          {FEATURES.map((f, i) => {
+            const Icon = f.icon
+            return (
+              <div key={i} className="bg-white p-6 hover:bg-zinc-50 transition-colors group">
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center mb-4 ${f.bg} border ${f.border}`}
+                >
+                  <Icon size={16} className={f.color} />
+                </div>
+                <h3 className="font-bold text-sm mb-2 text-zinc-900">{f.title}</h3>
+                <p className="text-xs text-zinc-500 leading-relaxed">{f.description}</p>
               </div>
-              <button
-                onClick={handleResearch}
-                disabled={!url || researching}
-                className="px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {researching && (
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                )}
-                {researching ? 'Analyzing...' : 'Analyze'}
-              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      {/* ── Testimonials ───────────────────────────────────────────────────── */}
+      <section className="px-6 py-24 max-w-5xl mx-auto">
+        <div className="text-center mb-16">
+          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 mb-3">
+            What analysts say
+          </p>
+          <h2 className="text-4xl font-black tracking-tight text-zinc-900">
+            Where analysts become storytellers
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {TESTIMONIALS.map((t, i) => (
+            <div key={i} className="p-6 rounded-2xl border border-zinc-200 bg-white shadow-sm">
+              <div className="flex gap-0.5 mb-4">
+                {[...Array(5)].map((_, j) => (
+                  <div key={j} className="w-3 h-3 rounded-sm bg-blue-500" />
+                ))}
+              </div>
+              <p className="text-sm text-zinc-600 leading-relaxed mb-5">"{t.quote}"</p>
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">{t.name}</p>
+                <p className="text-xs text-zinc-400">{t.role}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── CTA ────────────────────────────────────────────────────────────── */}
+      <section className="px-6 py-24">
+        <div className="max-w-2xl mx-auto text-center">
+          <div className="relative p-12 rounded-3xl border border-zinc-200 bg-zinc-50 overflow-hidden">
+            {/* Glow */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div
+                className="w-96 h-48 rounded-full"
+                style={{
+                  background: 'radial-gradient(ellipse, rgba(59,130,246,0.1) 0%, transparent 70%)',
+                }}
+              />
             </div>
 
-            {/* Research Results */}
-            {research && (
-              <div className="mt-6 space-y-4">
-                <div>
-                  <h3 className="font-bold text-lg">{research.company_name}</h3>
-                  <p className={`text-sm mt-1 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                    {research.description}
-                  </p>
-                </div>
-
-                {/* News */}
-                <div
-                  className={`rounded-xl border overflow-hidden ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}
-                >
-                  <button
-                    onClick={() => setExpandedSection(expandedSection === 'news' ? null : 'news')}
-                    className={`w-full flex items-center justify-between px-4 py-3 text-sm font-semibold ${dark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Newspaper size={14} className="text-blue-500" /> Recent News
-                    </span>
-                    {expandedSection === 'news' ? (
-                      <ChevronUp size={14} />
-                    ) : (
-                      <ChevronDown size={14} />
-                    )}
-                  </button>
-                  {expandedSection === 'news' && (
-                    <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                      {news.length === 0 ? (
-                        <div className="p-4 flex items-center gap-2">
-                          <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                          <span className={`text-xs ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                            Fetching latest news...
-                          </span>
-                        </div>
-                      ) : (
-                        news.map((n: any, i: number) => (
-                          <div key={i} className={`p-3 ${dark ? 'bg-zinc-900' : 'bg-white'}`}>
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <p className="text-sm font-medium leading-snug">{n.headline}</p>
-                              <span
-                                className={`shrink-0 text-xs px-1.5 py-0.5 rounded-full ${
-                                  n.sentiment === 'positive'
-                                    ? 'bg-emerald-500/10 text-emerald-400'
-                                    : n.sentiment === 'negative'
-                                      ? 'bg-red-500/10 text-red-400'
-                                      : 'bg-zinc-500/10 text-zinc-400'
-                                }`}
-                              >
-                                {n.sentiment}
-                              </span>
-                            </div>
-                            <p
-                              className={`text-xs mb-1 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                            >
-                              {n.summary}
-                            </p>
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`text-xs font-medium ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                              >
-                                {n.publication}
-                              </span>
-                              <span
-                                className={`text-xs ${dark ? 'text-zinc-600' : 'text-zinc-300'}`}
-                              >
-                                ·
-                              </span>
-                              <span
-                                className={`text-xs ${dark ? 'text-zinc-600' : 'text-zinc-400'}`}
-                              >
-                                {n.date}
-                              </span>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Products */}
-                <div
-                  className={`rounded-xl border overflow-hidden ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}
-                >
-                  <button
-                    onClick={() =>
-                      setExpandedSection(expandedSection === 'products' ? null : 'products')
-                    }
-                    className={`w-full flex items-center justify-between px-4 py-3 text-sm font-semibold ${dark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Package size={14} className="text-blue-500" /> Products & Services
-                    </span>
-                    {expandedSection === 'products' ? (
-                      <ChevronUp size={14} />
-                    ) : (
-                      <ChevronDown size={14} />
-                    )}
-                  </button>
-                  {expandedSection === 'products' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800">
-                      {research.products?.map((p: any, i: number) => (
-                        <div key={i} className={`p-3 ${dark ? 'bg-zinc-900' : 'bg-white'}`}>
-                          <p className="text-sm font-medium">{p.name}</p>
-                          <p
-                            className={`text-xs mt-0.5 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                          >
-                            {p.description}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Audiences */}
-                <div
-                  className={`rounded-xl border overflow-hidden ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}
-                >
-                  <button
-                    onClick={() =>
-                      setExpandedSection(expandedSection === 'audiences' ? null : 'audiences')
-                    }
-                    className={`w-full flex items-center justify-between px-4 py-3 text-sm font-semibold ${dark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Users size={14} className="text-purple-500" /> Audience Map
-                    </span>
-                    {expandedSection === 'audiences' ? (
-                      <ChevronUp size={14} />
-                    ) : (
-                      <ChevronDown size={14} />
-                    )}
-                  </button>
-                  {expandedSection === 'audiences' && (
-                    <div className="p-3 space-y-3">
-                      {research.audiences?.map((a: any, i: number) => (
-                        <div
-                          key={i}
-                          className={`p-3 rounded-xl border ${dark ? 'border-zinc-800 bg-zinc-800/30' : 'border-zinc-100 bg-zinc-50'}`}
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-sm font-semibold">{a.role}</span>
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full border ${TIER_COLORS[a.tier] || TIER_COLORS.individual}`}
-                            >
-                              {a.seniority}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <p
-                                className={`font-medium mb-1 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                              >
-                                Cares about
-                              </p>
-                              <ul className="space-y-0.5">
-                                {a.cares_about?.map((c: string, j: number) => (
-                                  <li key={j} className="flex items-center gap-1">
-                                    <span className="w-1 h-1 rounded-full bg-blue-500 inline-block" />
-                                    {c}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                            <div>
-                              <p
-                                className={`font-medium mb-1 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                              >
-                                Narrative style
-                              </p>
-                              <p className={dark ? 'text-zinc-300' : 'text-zinc-600'}>
-                                {a.narrative_style}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Competitors */}
-                <div
-                  className={`rounded-xl border overflow-hidden ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}
-                >
-                  <button
-                    onClick={() =>
-                      setExpandedSection(expandedSection === 'competitors' ? null : 'competitors')
-                    }
-                    className={`w-full flex items-center justify-between px-4 py-3 text-sm font-semibold ${dark ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Swords size={14} className="text-red-400" /> Top Competitors
-                    </span>
-                    {expandedSection === 'competitors' ? (
-                      <ChevronUp size={14} />
-                    ) : (
-                      <ChevronDown size={14} />
-                    )}
-                  </button>
-                  {expandedSection === 'competitors' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800">
-                      {research.competitors?.map((c: any, i: number) => (
-                        <div key={i} className={`p-3 ${dark ? 'bg-zinc-900' : 'bg-white'}`}>
-                          <p className="text-sm font-medium">{c.name}</p>
-                          <p
-                            className={`text-xs mt-0.5 ${dark ? 'text-zinc-400' : 'text-zinc-500'}`}
-                          >
-                            {c.description}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-600 text-xs font-semibold mb-6">
+                <Sparkles size={11} /> Early access now open
               </div>
-            )}
+              <h2 className="text-4xl font-black tracking-tight mb-4 text-zinc-900">
+                Ready to stop creating narratives manually?
+              </h2>
+              <p className="text-zinc-500 mb-8 leading-relaxed">
+                Join analysts at leading companies who use ampli to turn data into decisions faster.
+              </p>
+
+              {submitted ? (
+                <div className="flex items-center justify-center gap-2 text-emerald-600 font-semibold">
+                  <Check size={18} /> We'll be in touch soon.
+                </div>
+              ) : (
+                <form
+                  onSubmit={handleDemo}
+                  className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
+                >
+                  <input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    type="email"
+                    placeholder="your@company.com"
+                    required
+                    className="flex-1 px-4 py-3 rounded-xl bg-white border border-zinc-300 text-zinc-900 placeholder-zinc-400 text-sm outline-none focus:border-blue-500 transition-colors"
+                  />
+                  <button
+                    type="submit"
+                    className="px-6 py-3 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 whitespace-nowrap"
+                  >
+                    Request Demo
+                  </button>
+                </form>
+              )}
+
+              <p className="text-xs text-zinc-400 mt-4">
+                No credit card required · Setup in minutes
+              </p>
+            </div>
           </div>
         </div>
-      </main>
+      </section>
+
+      {/* ── Footer ─────────────────────────────────────────────────────────── */}
+      <footer className="border-t border-zinc-200 px-8 py-10">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col leading-none">
+            <span className="text-base font-bold tracking-tight">
+              <span className="text-blue-600">a</span>
+              <span className="text-zinc-500">mp</span>
+              <span className="text-blue-500">-</span>
+              <span className="text-zinc-500">l</span>
+              <span className="text-blue-600">i</span>
+            </span>
+            <span className="text-[9px] tracking-widest text-zinc-300 uppercase">
+              stories, not spreadsheets
+            </span>
+          </div>
+          <div className="flex items-center gap-6 text-xs text-zinc-400">
+            <a href="#" className="hover:text-zinc-600 transition-colors">
+              Privacy
+            </a>
+            <a href="#" className="hover:text-zinc-600 transition-colors">
+              Terms
+            </a>
+            <a href="#" className="hover:text-zinc-600 transition-colors">
+              Contact
+            </a>
+          </div>
+          <p className="text-xs text-zinc-300">© 2026 ampli. All rights reserved.</p>
+        </div>
+      </footer>
     </div>
   )
 }
