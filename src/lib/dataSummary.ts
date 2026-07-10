@@ -47,6 +47,32 @@ export interface ScatterPairSummary {
   correlation: number | null
 }
 
+// A single metric value for one group in a group comparison — e.g. the
+// average "conversion_rate" for the "Email" channel group.
+export interface GroupMetricStat {
+  raw: number
+  formatted: string
+}
+
+// One group within a comparison — e.g. "Email" within a "channel" comparison.
+export interface GroupStat {
+  groupName: string
+  rowCount: number
+  shareOfTotal: number
+  metrics: Record<string, GroupMetricStat>
+}
+
+// A full comparison across the groups of one dimension column — e.g.
+// comparing all "channel" values (Email, Paid Search, Social) against
+// each other on every metric column. Computed from ALL rows, not a sample,
+// so /api/analyze can pass these to Claude as verified ground truth.
+export interface GroupComparison {
+  dimensionName: string
+  totalRows: number
+  hasStrongDivergence: boolean
+  groups: GroupStat[]
+}
+
 export interface DataSummary {
   rowCount: number
   dateRange: { start: string; end: string } | null
@@ -667,6 +693,112 @@ function summarizeDimension(
   return { top, metricsByCategory }
 }
 
+// ── Group comparisons ───────────────────────────────────────────────────────
+// Builds a per-dimension comparison table across ALL rows (not sampled),
+// so /api/analyze can hand Claude verified numbers instead of asking it to
+// compute segment differences from a 200-row sample. Each comparison groups
+// one dimension column's values and computes every metric column's average
+// per group, plus a display-formatted string for each.
+
+function formatGroupMetricValue(value: number, metricName: string): string {
+  if (isRateLikeMetric(metricName)) {
+    return `${value.toFixed(2)}%`
+  }
+  if (Math.abs(value) >= 1000) {
+    return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  }
+  return value.toFixed(2)
+}
+
+function computeGroupComparisons(
+  rows: Record<string, any>[],
+  dimensionCols: string[],
+  metricCols: string[]
+): GroupComparison[] {
+  if (metricCols.length === 0 || rows.length === 0) return []
+
+  const totalRows = rows.length
+  const comparisons: GroupComparison[] = []
+
+  for (const dimCol of dimensionCols) {
+    const byGroup = new Map<
+      string,
+      {
+        displayName: string
+        rowCount: number
+        metricSums: Record<string, { sum: number; count: number }>
+      }
+    >()
+
+    for (const row of rows) {
+      const raw = String(row[dimCol] ?? 'Unknown')
+      const key = raw.toLowerCase().trim()
+      let entry = byGroup.get(key)
+      if (!entry) {
+        entry = { displayName: raw, rowCount: 0, metricSums: {} }
+        byGroup.set(key, entry)
+      }
+      entry.rowCount += 1
+      for (const m of metricCols) {
+        const v = row[m]
+        if (typeof v === 'number') {
+          if (!entry.metricSums[m]) entry.metricSums[m] = { sum: 0, count: 0 }
+          entry.metricSums[m].sum += v
+          entry.metricSums[m].count += 1
+        }
+      }
+    }
+
+    // A comparison only makes sense with at least 2 groups, and stops being
+    // readable as a table beyond a dozen or so — skip outside that range.
+    if (byGroup.size < 2 || byGroup.size > 12) continue
+
+    const groups: GroupStat[] = Array.from(byGroup.values())
+      .sort((a, b) => b.rowCount - a.rowCount)
+      .map((entry) => {
+        const metrics: Record<string, GroupMetricStat> = {}
+        for (const [m, s] of Object.entries(entry.metricSums)) {
+          if (s.count === 0) continue
+          const average = s.sum / s.count
+          metrics[m] = { raw: average, formatted: formatGroupMetricValue(average, m) }
+        }
+        return {
+          groupName: entry.displayName,
+          rowCount: entry.rowCount,
+          shareOfTotal: totalRows ? Math.round((entry.rowCount / totalRows) * 1000) / 10 : 0,
+          metrics,
+        }
+      })
+
+    // Flags this comparison as worth highlighting when the widest gap
+    // between any two groups' averages on the primary metric exceeds
+    // half the larger value — a rough signal for "this dimension matters."
+    let hasStrongDivergence = false
+    const primaryMetric = metricCols[0]
+    const primaryValues = groups
+      .map((g) => g.metrics[primaryMetric]?.raw)
+      .filter((v): v is number => typeof v === 'number')
+    if (primaryValues.length >= 2) {
+      const max = Math.max(...primaryValues)
+      const min = Math.min(...primaryValues)
+      if (max !== 0 && (max - min) / Math.abs(max) > 0.5) hasStrongDivergence = true
+    }
+
+    comparisons.push({
+      dimensionName: dimCol,
+      totalRows,
+      hasStrongDivergence,
+      groups,
+    })
+  }
+
+  // Cap at 4 comparisons for the prompt — prioritize the ones flagged as
+  // strongly divergent, since those are the most likely to matter to the user.
+  return comparisons
+    .sort((a, b) => Number(b.hasStrongDivergence) - Number(a.hasStrongDivergence))
+    .slice(0, 4)
+}
+
 function pearsonCorrelation(points: { x: number; y: number }[]): number | null {
   const n = points.length
   if (n < 2) return null
@@ -737,6 +869,7 @@ async function buildCore(
         dimensions: {},
         industrySegments: null,
         scatterPairs: null,
+        groupComparisons: [],
         warnings: ['File contained no rows.'],
       },
     }
