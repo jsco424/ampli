@@ -458,7 +458,7 @@ export async function POST(req: Request) {
             const metricCols = Object.keys(gc.groups[0]?.metrics || {})
             const header = ['Group', 'Rows', 'Share %', ...metricCols].join(' | ')
             const divider = ['---', '---', '---', ...metricCols.map(() => '---')].join(' | ')
-            const rows = gc.groups.map((g) =>
+            const rows = gc.groups.map((g: any) =>
               [
                 g.groupName,
                 g.rowCount.toLocaleString(),
