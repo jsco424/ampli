@@ -95,8 +95,18 @@ export interface Anomaly {
 // The full output of one analysis pass — initial or follow-up.
 // The same schema is used for both so the UI renderer is identical
 // for initial analysis and conversational follow-up responses.
+export type DetectedDataType =
+  | 'experimental'
+  | 'time_series'
+  | 'cross_sectional'
+  | 'funnel'
+  | 'multi_entity'
+  | 'mixed'
+  | 'unknown'
+
 export interface AnalysisOutput {
   executiveSummary: string // 2-3 sentences, plain language, most important thing first
+  detectedDataType?: DetectedDataType
   insightTables: InsightTable[]
   keyFindings: KeyFinding[] // ranked by business impact, not by what's easy to describe
   anomalies: Anomaly[]
