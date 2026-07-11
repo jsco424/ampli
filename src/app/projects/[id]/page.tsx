@@ -8,7 +8,6 @@ import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import { useBrand } from '@/hooks/useBrand'
 import ChartRenderer from '@/components/ChartRenderer'
-import PDFExportModal from '@/components/PDFExportModal'
 import TagInput from '@/components/TagInput'
 import AnalysisView from '@/components/AnalysisView'
 import SlideSelector from '@/components/SlideSelector'
@@ -18,17 +17,14 @@ import {
   ArrowLeft,
   Target,
   Users,
-  Sparkles,
   FileText,
   CheckCircle,
   ChevronRight,
-  Presentation,
-  Download,
+  Sparkles,
   Briefcase,
   Microscope,
   Newspaper,
 } from 'lucide-react'
-import Link from 'next/link'
 
 const TONE_META: Record<string, { label: string; icon: any; color: string }> = {
   executive: { label: 'Executive & Concise', icon: Briefcase, color: 'text-blue-400' },
@@ -45,18 +41,15 @@ export default function ProjectViewPage() {
   const { brand } = useBrand()
   const router = useRouter()
 
-  // Project data
   const [project, setProject] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('analysis')
   const [tags, setTags] = useState<string[]>([])
   const [allTags, setAllTags] = useState<string[]>([])
-  const [showPDFExport, setShowPDFExport] = useState(false)
   const [notes, setNotes] = useState('')
   const [notesSaved, setNotesSaved] = useState(false)
   const notesTimer = useRef<any>(null)
 
-  // Analysis state
   const [analysisOutput, setAnalysisOutput] = useState<AnalysisOutput | null>(null)
   const [conversationHistory, setConversationHistory] = useState<
     { role: 'user' | 'assistant'; content: string }[]
@@ -67,6 +60,12 @@ export default function ProjectViewPage() {
   const [analysisLoading, setAnalysisLoading] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [showSlideSelector, setShowSlideSelector] = useState(false)
+
+  const [chartsGenerating, setChartsGenerating] = useState(false)
+  const chartsGenTriggered = useRef(false)
+
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const analysisTriggered = useRef(false)
 
@@ -144,7 +143,44 @@ export default function ProjectViewPage() {
     }
   }, [id])
 
-  // Follow-up turns only — initial analysis fires in the useEffect above
+  useEffect(() => {
+    if (!project || !analysisOutput) return
+    if (project.charts?.length > 0) return
+    if (chartsGenTriggered.current) return
+    chartsGenTriggered.current = true
+
+    setChartsGenerating(true)
+    fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        dataSummary: project.raw_data || null,
+        rawSample: null,
+        prompt: project.prompt || null,
+        tone: project.tone || 'executive',
+        projectName: project.name,
+        targetCompany: project.target_company || null,
+        targetAudience: null,
+        optIn: project.opt_in_crowd || false,
+        dataSourceType: project.data_source_type || null,
+        confirmedAnalysis: analysisOutput,
+        selectedFindings: null,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Visual generation failed: ${res.status}`)
+      })
+      .then(() => supabase.from('projects').select('*').eq('id', project.id).single())
+      .then(({ data }) => {
+        if (data) setProject(data)
+      })
+      .catch((err) => {
+        console.error('Visual generation failed:', err)
+      })
+      .finally(() => setChartsGenerating(false))
+  }, [project, analysisOutput])
+
   const runAnalysis = useCallback(
     async (followUpQuestion: string) => {
       if (!project) return
@@ -173,7 +209,6 @@ export default function ProjectViewPage() {
         if (!res.ok) throw new Error(`Analysis failed: ${res.status}`)
         const { analysis, assistantTurn } = await res.json()
 
-        // Append to conversation thread — initial analysis stays as anchor
         setConversationEntries((prev) => [...prev, { question: followUpQuestion, analysis }])
         setConversationHistory([...historyToSend, assistantTurn])
       } catch (err: any) {
@@ -195,24 +230,49 @@ export default function ProjectViewPage() {
 
   const handleRequestSlides = useCallback(() => {
     setShowSlideSelector(true)
-    setTab('analysis')
+    setExportError(null)
+    // No longer forces the tab to 'analysis' — the selector now renders
+    // independent of which tab is active, so opening it from Visuals no
+    // longer redirects anywhere. The selector itself has its own internal
+    // Visuals / Findings & Tables toggle.
   }, [])
 
-  const handleBuildSlides = useCallback(
-    async (selections: SelectedFinding[]) => {
+  const handleExport = useCallback(
+    async (format: 'pptx' | 'pdf', selections: SelectedFinding[]) => {
       if (!analysisOutput || !project) return
+      setIsExporting(true)
+      setExportError(null)
 
-      const handoff: AnalysisHandoff = {
-        dataSummaryJson: project.raw_data || '',
-        conversationHistory,
-        confirmedAnalysis: analysisOutput,
-        selectedFindings: selections,
+      try {
+        const handoff: AnalysisHandoff = {
+          dataSummaryJson: project.raw_data || '',
+          conversationHistory,
+          confirmedAnalysis: analysisOutput,
+          selectedFindings: selections,
+        }
+        await supabase.from('projects').update({ analysis_handoff: handoff }).eq('id', id)
+
+        const res = await fetch('/api/gamma', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: project.id, exportFormat: format }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data.exportUrl) throw new Error(data.error || 'Export failed')
+
+        const a = document.createElement('a')
+        a.href = data.exportUrl
+        a.download = `${project.name || 'presentation'}.${format}`
+        a.click()
+
+        setShowSlideSelector(false)
+      } catch (err: any) {
+        setExportError(err.message || 'Export failed — please try again')
+      } finally {
+        setIsExporting(false)
       }
-
-      await supabase.from('projects').update({ analysis_handoff: handoff }).eq('id', id)
-      router.push(`/projects/${id}/pitch`)
     },
-    [analysisOutput, project, conversationHistory, id, router]
+    [analysisOutput, project, conversationHistory, id]
   )
 
   const handleTagsChange = async (newTags: string[]) => {
@@ -273,12 +333,8 @@ export default function ProjectViewPage() {
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
-      {showPDFExport && (
-        <PDFExportModal project={project} onClose={() => setShowPDFExport(false)} />
-      )}
 
       <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
-        {/* Header */}
         <div className="flex items-center gap-3 mb-4 mt-6">
           <button
             onClick={() => router.push('/')}
@@ -292,21 +348,8 @@ export default function ProjectViewPage() {
               {project.file_name} · {new Date(project.created_at).toLocaleDateString()}
             </p>
           </div>
-          <button
-            onClick={() => setShowPDFExport(true)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${dark ? 'border-white/[0.08] text-white/40 hover:bg-white/[0.04]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
-          >
-            <Download size={13} /> Export PDF
-          </button>
-          <Link
-            href={`/projects/${id}/pitch`}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-500 text-white hover:bg-blue-400 transition-colors"
-          >
-            <Presentation size={13} /> Pitch Mode
-          </Link>
         </div>
 
-        {/* Tags */}
         <div className="mb-4">
           <TagInput
             tags={tags}
@@ -316,7 +359,6 @@ export default function ProjectViewPage() {
           />
         </div>
 
-        {/* Context banner */}
         {(project.target_company || project.target_audience || project.tone) && (
           <div
             className={`flex items-center gap-3 px-4 py-3 rounded-lg border mb-4 flex-wrap ${dark ? 'bg-white/[0.02] border-white/[0.06]' : 'bg-zinc-50 border-zinc-200'}`}
@@ -367,7 +409,6 @@ export default function ProjectViewPage() {
           </div>
         )}
 
-        {/* Tabs */}
         <div
           className={`flex gap-1 mb-6 p-1 rounded-xl w-fit ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
         >
@@ -382,10 +423,24 @@ export default function ProjectViewPage() {
           ))}
         </div>
 
-        {/* ── Analysis Tab ───────────────────────────────────────────────── */}
-        {tab === 'analysis' && (
+        {/* Slide selector — rendered independent of the active tab, so
+            opening it from either Analysis or Visuals never redirects.
+            It has its own internal Visuals / Findings & Tables toggle. */}
+        {showSlideSelector && analysisOutput && (
+          <SlideSelector
+            analysis={analysisOutput}
+            charts={project.charts || []}
+            chartsLoading={chartsGenerating}
+            dark={dark}
+            isExporting={isExporting}
+            exportError={exportError}
+            onExport={handleExport}
+            onCancel={() => setShowSlideSelector(false)}
+          />
+        )}
+
+        {!showSlideSelector && tab === 'analysis' && (
           <div>
-            {/* Loading skeleton */}
             {analysisLoading && !analysisOutput && (
               <div className="space-y-4">
                 <div className={`p-5 rounded-2xl border ${card}`}>
@@ -412,7 +467,6 @@ export default function ProjectViewPage() {
               </div>
             )}
 
-            {/* Error state */}
             {analysisError && (
               <div
                 className={`p-5 rounded-2xl border mb-4 ${dark ? 'bg-red-950/20 border-red-900/30' : 'bg-red-50 border-red-200'}`}
@@ -430,18 +484,7 @@ export default function ProjectViewPage() {
               </div>
             )}
 
-            {/* Slide selector */}
-            {showSlideSelector && analysisOutput && (
-              <SlideSelector
-                analysis={analysisOutput}
-                dark={dark}
-                onConfirm={handleBuildSlides}
-                onCancel={() => setShowSlideSelector(false)}
-              />
-            )}
-
-            {/* Analysis view */}
-            {!showSlideSelector && analysisOutput && (
+            {analysisOutput && (
               <AnalysisView
                 analysis={analysisOutput}
                 dark={dark}
@@ -454,37 +497,49 @@ export default function ProjectViewPage() {
           </div>
         )}
 
-        {/* ── Visuals Tab ────────────────────────────────────────────────── */}
-        {tab === 'visuals' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {project.charts?.length > 0 ? (
-              project.charts.map((chart: any, i: number) => (
-                <div key={i} className={`p-5 rounded-xl border ${card}`}>
-                  <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
-                  <p className={`text-xs mb-4 ${muted}`}>{chart.description}</p>
-                  <ChartRenderer chart={chart} colors={BRAND_COLORS} height={200} dark={dark} />
-                </div>
-              ))
-            ) : (
-              <div className={`col-span-2 p-10 rounded-xl border text-center ${card}`}>
-                <p className={`text-sm ${muted}`}>
-                  Charts appear here once you build slides from your analysis.
-                </p>
-                {analysisOutput && (
-                  <button
-                    onClick={handleRequestSlides}
-                    className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
-                  >
-                    <Sparkles size={13} /> Build Slides
-                  </button>
-                )}
+        {!showSlideSelector && tab === 'visuals' && (
+          <div>
+            {project.charts?.length > 0 && (
+              <div className="flex justify-end mb-4">
+                <button
+                  onClick={handleRequestSlides}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
+                >
+                  <Sparkles size={13} /> Build Slides
+                </button>
               </div>
             )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {project.charts?.length > 0 ? (
+                project.charts.map((chart: any, i: number) => (
+                  <div key={i} className={`p-5 rounded-xl border ${card}`}>
+                    <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
+                    <p className={`text-xs mb-4 ${muted}`}>{chart.description}</p>
+                    <ChartRenderer chart={chart} colors={BRAND_COLORS} height={200} dark={dark} />
+                  </div>
+                ))
+              ) : (
+                <div className={`col-span-2 p-10 rounded-xl border text-center ${card}`}>
+                  {chartsGenerating || analysisLoading ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      <p className={`text-sm ${muted}`}>
+                        AI is building your visuals — this happens automatically alongside your
+                        analysis.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className={`text-sm ${muted}`}>
+                      Visuals will appear here automatically once your analysis completes.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* ── Data Tab ──────────────────────────────────────────────────── */}
-        {tab === 'data' && (
+        {!showSlideSelector && tab === 'data' && (
           <div className={`rounded-xl border overflow-auto ${card}`}>
             <div
               className={`p-4 border-b flex items-center justify-between ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
@@ -514,8 +569,7 @@ export default function ProjectViewPage() {
           </div>
         )}
 
-        {/* ── CRM Notes Tab ──────────────────────────────────────────────── */}
-        {tab === 'notes' && (
+        {!showSlideSelector && tab === 'notes' && (
           <div className={`rounded-xl border ${card}`}>
             <div
               className={`p-4 border-b flex items-center justify-between ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}

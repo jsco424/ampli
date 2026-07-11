@@ -77,7 +77,7 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
 
   sections.push([titleLine, '', cleanForSlide(confirmedAnalysis.executiveSummary)].join('\n'))
 
-  // ── Cards 2–N: Findings ────────────────────────────────────────────────
+  // ── Cards 2–N: Findings, Tables, and Visuals ───────────────────────────
   const findings =
     selectedFindings && selectedFindings.length > 0
       ? selectedFindings
@@ -116,6 +116,32 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
           table.footnote ? `\n*${table.footnote}*` : '',
         ]
           .filter(Boolean)
+          .join('\n')
+      )
+      continue
+    }
+
+    if (sel.type === 'visual' && sel.chart) {
+      // Visual selections come from an already AI-built chart (project.charts),
+      // not a raw KeyFinding — so label/heroStat/takeaway are read off the
+      // chart object itself, falling back to the user's edited values in
+      // sel.heroStat / sel.takeaway (set via SlideSelector's Detailed mode).
+      // Gamma only ever receives text here, same as findings — the actual
+      // chart image isn't sent, Gamma builds its own visual from the outline.
+      const label = sel.chart.title || ''
+      const heroStat = sel.heroStat || sel.chart.hero_stat || ''
+      const takeaway = cleanForSlide(
+        sel.takeaway || sel.chart.takeaway || sel.chart.description || ''
+      )
+
+      sections.push(
+        [
+          heroStat ? `# ${heroStat}` : `# ${label}`,
+          heroStat && label ? `## ${label}` : '',
+          '',
+          takeaway,
+        ]
+          .filter((l) => l !== undefined)
           .join('\n')
       )
       continue
@@ -232,6 +258,13 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   // Separate from additionalInstructions — used by the route to select
   // a theme. Currently a description string; swap for a themeId once
   // a custom Gamma theme is created in the workspace.
+  //
+  // NOTE: this is exactly the mechanism the brand-color roadmap item
+  // depends on — a custom Gamma theme keyed by themeId gives exact hex
+  // color reproduction, while this description string only gets Gamma's
+  // closest interpretation. When that item gets built, the route should
+  // pass user_settings.gamma_theme_id as themeId when present, and only
+  // fall back to this description-based themeInstructions when it's not.
   const themeInstructions = [
     'Clean, minimal, data-focused.',
     'Dark navy or white background preferred.',

@@ -1,17 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import {
-  CheckCircle2,
-  Circle,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  AlertTriangle,
-  Table2,
-  ChevronRight,
-  Sparkles,
-} from 'lucide-react'
+import { CheckCircle2, Circle, Table2, Sparkles, BarChart3, FileDown, Download } from 'lucide-react'
 import type { AnalysisOutput, KeyFinding, InsightTable } from '@/lib/analysisTypes'
 
 // ── Chart type resolver ────────────────────────────────────────────────────
@@ -27,11 +17,26 @@ export type ResolvedChartType =
   | 'composed'
   | 'table'
 
+// A single already-generated chart, as stored in project.charts.
+// Shape inferred from how pitch/page.tsx reads chart fields today.
+export interface GeneratedChart {
+  title: string
+  description?: string
+  type: string
+  data: Record<string, any>[]
+  hero_stat?: string
+  takeaway?: string
+  layout?: string
+  [key: string]: any
+}
+
 export interface SelectedFinding {
-  type: 'finding' | 'table'
+  type: 'finding' | 'table' | 'visual'
   id: string
   finding?: KeyFinding
   table?: InsightTable
+  chart?: GeneratedChart
+  chartIndex?: number // original index into project.charts, for visuals
   heroStat: string
   takeaway: string
   chartType: ResolvedChartType
@@ -82,7 +87,24 @@ function resolveChartData(
   return [{ name: finding.label, value: finding.raw ?? 0 }]
 }
 
-const MAX_SLIDES = 6
+// Maps a generated chart's own `type` field (recharts-style: bar, line, area,
+// pie, composed, treemap, funnel, scatter) to our ResolvedChartType. Falls
+// back to 'bar' for anything unrecognized rather than erroring.
+function normalizeGeneratedChartType(rawType: string): ResolvedChartType {
+  const known: ResolvedChartType[] = [
+    'bar',
+    'grouped_bar',
+    'line',
+    'area',
+    'pie',
+    'treemap',
+    'scatter',
+    'composed',
+  ]
+  return (known as string[]).includes(rawType) ? (rawType as ResolvedChartType) : 'bar'
+}
+
+const MAX_SLIDES = 10
 
 function directionColor(direction: string): string {
   return (
@@ -108,7 +130,7 @@ function chartTypeLabel(type: ResolvedChartType): string {
   )
 }
 
-// ── Toggle component ───────────────────────────────────────────────────────
+// ── Toggle components ──────────────────────────────────────────────────────
 
 function CompactDetailedToggle({
   value,
@@ -139,25 +161,77 @@ function CompactDetailedToggle({
   )
 }
 
+type Section = 'visuals' | 'analysis'
+
+// Lets the user flip between the Visuals grid and the Findings/Tables view
+// while building one shared selection — selections persist across both,
+// only the visible section changes.
+function SectionToggle({
+  value,
+  onChange,
+  dark,
+  visualsCount,
+  analysisCount,
+}: {
+  value: Section
+  onChange: (s: Section) => void
+  dark: boolean
+  visualsCount: number
+  analysisCount: number
+}) {
+  const base = 'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors'
+  const active = dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm'
+  const inactive = dark ? 'text-zinc-500' : 'text-zinc-400'
+  return (
+    <div
+      className={`flex items-center rounded-lg border p-0.5 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+    >
+      <button
+        onClick={() => onChange('visuals')}
+        className={`${base} ${value === 'visuals' ? active : inactive}`}
+      >
+        Visuals ({visualsCount})
+      </button>
+      <button
+        onClick={() => onChange('analysis')}
+        className={`${base} ${value === 'analysis' ? active : inactive}`}
+      >
+        Findings & Tables ({analysisCount})
+      </button>
+    </div>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 interface SlideSelectorProps {
   analysis: AnalysisOutput
+  charts?: GeneratedChart[]
+  chartsLoading?: boolean
   dark?: boolean
-  onConfirm: (selections: SelectedFinding[]) => void
+  isExporting?: boolean
+  exportError?: string | null
+  onExport: (format: 'pptx' | 'pdf', selections: SelectedFinding[]) => void
   onCancel: () => void
 }
 
 export default function SlideSelector({
   analysis,
+  charts = [],
+  chartsLoading = false,
   dark = true,
-  onConfirm,
+  isExporting = false,
+  exportError = null,
+  onExport,
   onCancel,
 }: SlideSelectorProps) {
   const [selected, setSelected] = useState<Record<string, SelectedFinding>>({})
   // detailedMode: when true, selected cards expand to show editable fields.
   // Toggling this at any time immediately affects ALL currently selected cards.
   const [detailedMode, setDetailedMode] = useState(false)
+  // Which section is visible right now — independent of what's selected,
+  // so switching back and forth never loses or resets your picks.
+  const [activeSection, setActiveSection] = useState<Section>('visuals')
 
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const inputCls = dark
@@ -166,6 +240,7 @@ export default function SlideSelector({
 
   const selectedCount = Object.keys(selected).length
   const atLimit = selectedCount >= MAX_SLIDES
+  const analysisCount = analysis.keyFindings.length + analysis.insightTables.length
 
   const toggleFinding = (finding: KeyFinding, idx: number) => {
     const id = `finding-${idx}`
@@ -213,6 +288,30 @@ export default function SlideSelector({
     }
   }
 
+  const toggleVisual = (chart: GeneratedChart, idx: number) => {
+    const id = `visual-${idx}`
+    if (selected[id]) {
+      const next = { ...selected }
+      delete next[id]
+      setSelected(next)
+    } else {
+      if (atLimit) return
+      setSelected({
+        ...selected,
+        [id]: {
+          type: 'visual',
+          id,
+          chart,
+          chartIndex: idx,
+          heroStat: chart.hero_stat || '',
+          takeaway: chart.takeaway || chart.description || '',
+          chartType: normalizeGeneratedChartType(chart.type),
+          chartData: chart.data,
+        },
+      })
+    }
+  }
+
   const updateSelected = (id: string, patch: Partial<SelectedFinding>) => {
     if (!selected[id]) return
     setSelected({ ...selected, [id]: { ...selected[id], ...patch } })
@@ -228,8 +327,8 @@ export default function SlideSelector({
 
   // ── Shared expanded editor ─────────────────────────────────────────────
   // Rendered inside any selected card when detailedMode is true.
-  // Extracted here so the click-stop propagation and field logic live once.
-  const renderDetailFields = (id: string, isFinding: boolean) => {
+  // showHeroStat covers both findings and visuals — tables never show it.
+  const renderDetailFields = (id: string, showHeroStat: boolean) => {
     const sel = selected[id]
     if (!sel || !detailedMode) return null
     return (
@@ -237,7 +336,7 @@ export default function SlideSelector({
         className={`px-4 pb-4 pt-3 space-y-2 border-t ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
         onClick={(e) => e.stopPropagation()}
       >
-        {isFinding && (
+        {showHeroStat && (
           <div>
             <label
               className={`text-[10px] font-semibold uppercase tracking-wide mb-1 block ${subtle}`}
@@ -266,7 +365,7 @@ export default function SlideSelector({
             placeholder="One punchy sentence..."
           />
         </div>
-        {isFinding && (
+        {showHeroStat && (
           <div>
             <label
               className={`text-[10px] font-semibold uppercase tracking-wide mb-1 block ${subtle}`}
@@ -303,6 +402,15 @@ export default function SlideSelector({
     )
   }
 
+  const cardBase = (isSelected: boolean, disabled: boolean) =>
+    `rounded-2xl border transition-all cursor-pointer ${
+      isSelected
+        ? 'border-blue-500 bg-blue-500/8'
+        : dark
+          ? 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
+          : 'bg-white border-zinc-200 hover:border-zinc-300'
+    } ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -313,32 +421,22 @@ export default function SlideSelector({
           <div>
             <h2 className="font-bold text-base mb-1 flex items-center gap-2">
               <Sparkles size={15} className="text-blue-400" />
-              Select Slides to Build
+              Select What to Export
             </h2>
             <p className={`text-xs leading-relaxed ${subtle}`}>
-              Pick up to {MAX_SLIDES} findings or tables. Switch to Detailed to edit hero stats and
-              takeaways.
+              Pick up to {MAX_SLIDES} findings, tables, or visuals — mix and match freely, switch
+              sections anytime without losing your picks.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={onCancel}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${dark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => onConfirm(orderedSelections)}
-              disabled={selectedCount === 0}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-500 text-white text-xs font-medium hover:bg-blue-600 transition-colors disabled:opacity-40"
-            >
-              Build {selectedCount > 0 ? `${selectedCount} ` : ''}Slides
-              <ChevronRight size={12} />
-            </button>
-          </div>
+          <button
+            onClick={onCancel}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors shrink-0 ${dark ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}
+          >
+            Cancel
+          </button>
         </div>
         {/* Progress bar */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {Array.from({ length: MAX_SLIDES }).map((_, i) => (
             <div
               key={i}
@@ -351,137 +449,217 @@ export default function SlideSelector({
         </div>
       </div>
 
-      {/* Toggle — always visible, above findings */}
-      <div className="flex items-center justify-between">
-        <p className={`text-xs ${subtle}`}>
-          {detailedMode
-            ? 'Detailed — edit hero stat, takeaway, and chart type per slide'
-            : 'Compact — tap a card to select it for a slide'}
-        </p>
-        <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
+      {/* Section toggle + Compact/Detailed toggle, side by side */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <SectionToggle
+          value={activeSection}
+          onChange={setActiveSection}
+          dark={dark}
+          visualsCount={charts.length}
+          analysisCount={analysisCount}
+        />
+        <div className="flex items-center gap-3">
+          <p className={`text-xs ${subtle}`}>
+            {detailedMode ? 'Detailed — edit hero stat & takeaway' : 'Compact — tap to select'}
+          </p>
+          <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
+        </div>
       </div>
 
-      {/* Key Findings */}
-      {analysis.keyFindings.length > 0 && (
+      {/* Visuals section */}
+      {activeSection === 'visuals' && (
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
-            Key Findings
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {analysis.keyFindings.map((finding, idx) => {
-              const id = `finding-${idx}`
-              const isSelected = !!selected[id]
-              const disabled = !isSelected && atLimit
-              return (
-                <div
-                  key={idx}
-                  className={`rounded-2xl border transition-all cursor-pointer ${
-                    isSelected
-                      ? 'border-blue-500 bg-blue-500/8'
-                      : dark
-                        ? 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
-                        : 'bg-white border-zinc-200 hover:border-zinc-300'
-                  } ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-                  onClick={() => !disabled && toggleFinding(finding, idx)}
-                >
-                  <div className="p-4 flex items-start gap-3">
-                    <span className="mt-0.5 shrink-0">
-                      {isSelected ? (
-                        <CheckCircle2 size={15} className="text-blue-500" />
-                      ) : (
-                        <Circle size={15} className={subtle} />
-                      )}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
-                        {finding.label}
-                      </p>
-                      <p
-                        className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
-                      >
-                        {finding.value}
-                      </p>
-                    </div>
-                  </div>
-                  {isSelected && renderDetailFields(id, true)}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Insight Tables */}
-      {analysis.insightTables.length > 0 && (
-        <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
-            Computed Tables
-          </p>
-          <div className="space-y-3">
-            {analysis.insightTables.map((table, idx) => {
-              const id = `table-${idx}`
-              const isSelected = !!selected[id]
-              const disabled = !isSelected && atLimit
-              return (
-                <div
-                  key={idx}
-                  className={`rounded-2xl border transition-all cursor-pointer ${
-                    isSelected
-                      ? 'border-blue-500 bg-blue-500/8'
-                      : dark
-                        ? 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
-                        : 'bg-white border-zinc-200 hover:border-zinc-300'
-                  } ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-                  onClick={() => !disabled && toggleTable(table, idx)}
-                >
-                  <div className="p-4 flex items-start gap-3">
-                    <span className="mt-0.5 shrink-0">
-                      {isSelected ? (
-                        <CheckCircle2 size={15} className="text-blue-500" />
-                      ) : (
-                        <Circle size={15} className={subtle} />
-                      )}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <Table2 size={11} className={subtle} />
-                        <p className={`text-[11px] ${subtle}`}>Data Table</p>
+          {chartsLoading ? (
+            <div
+              className={`p-6 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
+            >
+              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              <p className={`text-xs ${subtle}`}>AI is building your visuals...</p>
+            </div>
+          ) : charts.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {charts.map((chart, idx) => {
+                const id = `visual-${idx}`
+                const isSelected = !!selected[id]
+                const disabled = !isSelected && atLimit
+                return (
+                  <div
+                    key={idx}
+                    className={cardBase(isSelected, disabled)}
+                    onClick={() => !disabled && toggleVisual(chart, idx)}
+                  >
+                    <div className="p-4 flex items-start gap-3">
+                      <span className="mt-0.5 shrink-0">
+                        {isSelected ? (
+                          <CheckCircle2 size={15} className="text-blue-500" />
+                        ) : (
+                          <Circle size={15} className={subtle} />
+                        )}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <BarChart3 size={11} className={subtle} />
+                          <p className={`text-[11px] ${subtle}`}>
+                            {chartTypeLabel(normalizeGeneratedChartType(chart.type))}
+                          </p>
+                        </div>
+                        <p className="text-sm font-semibold truncate mb-1">{chart.title}</p>
+                        {chart.hero_stat && (
+                          <p className="text-xl font-black leading-none text-blue-400">
+                            {chart.hero_stat}
+                          </p>
+                        )}
                       </div>
-                      <p className="text-sm font-semibold truncate">{table.title}</p>
                     </div>
+                    {isSelected && renderDetailFields(id, true)}
                   </div>
-                  {isSelected && renderDetailFields(id, false)}
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div
+              className={`p-5 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
+            >
+              <p className={`text-xs ${subtle}`}>No visuals available for this analysis yet.</p>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Sticky footer CTA */}
+      {/* Findings & Tables section */}
+      {activeSection === 'analysis' && (
+        <div className="space-y-6">
+          {analysis.keyFindings.length > 0 && (
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
+                Key Findings
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {analysis.keyFindings.map((finding, idx) => {
+                  const id = `finding-${idx}`
+                  const isSelected = !!selected[id]
+                  const disabled = !isSelected && atLimit
+                  return (
+                    <div
+                      key={idx}
+                      className={cardBase(isSelected, disabled)}
+                      onClick={() => !disabled && toggleFinding(finding, idx)}
+                    >
+                      <div className="p-4 flex items-start gap-3">
+                        <span className="mt-0.5 shrink-0">
+                          {isSelected ? (
+                            <CheckCircle2 size={15} className="text-blue-500" />
+                          ) : (
+                            <Circle size={15} className={subtle} />
+                          )}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
+                            {finding.label}
+                          </p>
+                          <p
+                            className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
+                          >
+                            {finding.value}
+                          </p>
+                        </div>
+                      </div>
+                      {isSelected && renderDetailFields(id, true)}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {analysis.insightTables.length > 0 && (
+            <div>
+              <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
+                Computed Tables
+              </p>
+              <div className="space-y-3">
+                {analysis.insightTables.map((table, idx) => {
+                  const id = `table-${idx}`
+                  const isSelected = !!selected[id]
+                  const disabled = !isSelected && atLimit
+                  return (
+                    <div
+                      key={idx}
+                      className={cardBase(isSelected, disabled)}
+                      onClick={() => !disabled && toggleTable(table, idx)}
+                    >
+                      <div className="p-4 flex items-start gap-3">
+                        <span className="mt-0.5 shrink-0">
+                          {isSelected ? (
+                            <CheckCircle2 size={15} className="text-blue-500" />
+                          ) : (
+                            <Circle size={15} className={subtle} />
+                          )}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <Table2 size={11} className={subtle} />
+                            <p className={`text-[11px] ${subtle}`}>Data Table</p>
+                          </div>
+                          <p className="text-sm font-semibold truncate">{table.title}</p>
+                        </div>
+                      </div>
+                      {isSelected && renderDetailFields(id, false)}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sticky footer CTA — direct export, no intermediate slide build.
+          Reflects the TOTAL selected count across both sections, regardless
+          of which one is currently visible. */}
       {selectedCount > 0 && (
         <div
-          className={`sticky bottom-4 p-4 rounded-2xl border shadow-xl flex items-center justify-between gap-4 ${dark ? 'bg-zinc-900/95 border-zinc-700' : 'bg-white/95 border-zinc-200'}`}
+          className={`sticky bottom-4 p-4 rounded-2xl border shadow-xl flex items-center justify-between gap-4 flex-wrap ${dark ? 'bg-zinc-900/95 border-zinc-700' : 'bg-white/95 border-zinc-200'}`}
           style={{ backdropFilter: 'blur(12px)' }}
         >
           <div className="flex items-center gap-3">
             <div>
               <p className="text-sm font-semibold">
-                {selectedCount} slide{selectedCount !== 1 ? 's' : ''} selected
+                {selectedCount} item{selectedCount !== 1 ? 's' : ''} selected
               </p>
               <p className={`text-xs ${subtle}`}>
-                Hero stats and takeaways are locked — no AI rewriting
+                {exportError ? (
+                  <span className="text-red-400">{exportError}</span>
+                ) : (
+                  'Hero stats and takeaways are locked — no AI rewriting'
+                )}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
             <button
-              onClick={() => onConfirm(orderedSelections)}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shrink-0"
+              onClick={() => onExport('pptx', orderedSelections)}
+              disabled={isExporting}
+              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors disabled:opacity-40 ${dark ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
             >
-              <Sparkles size={13} />
-              Generate {selectedCount} Slide{selectedCount !== 1 ? 's' : ''}
+              {isExporting ? (
+                <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <FileDown size={14} />
+              )}
+              PPTX
+            </button>
+            <button
+              onClick={() => onExport('pdf', orderedSelections)}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shrink-0 disabled:opacity-40"
+            >
+              {isExporting ? (
+                <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Download size={14} />
+              )}
+              {isExporting ? 'Exporting…' : 'PDF'}
             </button>
           </div>
         </div>
