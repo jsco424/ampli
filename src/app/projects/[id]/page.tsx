@@ -258,12 +258,14 @@ export default function ProjectViewPage() {
           body: JSON.stringify({ projectId: project.id, exportFormat: format }),
         })
         const data = await res.json()
-        if (!res.ok || !data.exportUrl) throw new Error(data.error || 'Export failed')
+        if (!res.ok || !data.downloadUrl) throw new Error(data.error || 'Export failed')
 
-        const a = document.createElement('a')
-        a.href = data.exportUrl
-        a.download = `${project.name || 'presentation'}.${format}`
-        a.click()
+        // downloadUrl is our own /api/exports/[id]/download route, which
+        // sets Content-Disposition: attachment — a direct navigation here
+        // actually downloads instead of leaving the page, since the browser
+        // sees it as same-origin. Gamma's raw exportUrl no longer reaches
+        // the client at all.
+        window.location.href = data.downloadUrl
 
         setShowSlideSelector(false)
       } catch (err: any) {

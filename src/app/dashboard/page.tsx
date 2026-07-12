@@ -26,6 +26,7 @@ import {
 import Link from 'next/link'
 import WelcomeState from '@/components/WelcomeState'
 import OnboardingModal from '@/components/OnboardingModal'
+import ExportsDropdown from '@/components/ExportsDropdown'
 
 const TIER_COLORS: Record<string, string> = {
   executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -260,38 +261,40 @@ export default function Home() {
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {completed.map((p) => (
-                      <Link
-                        key={p.id}
-                        href={`/projects/${p.id}`}
-                        className={`group p-4 rounded-xl border transition-all hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${card}`}
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="p-1.5 rounded-lg bg-blue-500/10">
-                            <BarChart2 size={14} className="text-blue-500" />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="flex items-center gap-1 text-xs text-emerald-500">
-                              <CheckCircle size={11} /> Completed
-                            </span>
-                            <button
-                              onClick={(e) => deleteProject(p.id, e)}
-                              className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400 ${dark ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        </div>
-                        <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
-                        <p className={`text-xs truncate mb-3 ${muted}`}>{p.file_name}</p>
-                        <div className={`flex items-center gap-1 text-xs ${muted}`}>
-                          <Clock size={10} /> {new Date(p.created_at).toLocaleDateString()}
-                        </div>
-                        <div
-                          className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-blue-500 ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+                      <div key={p.id} className="relative group">
+                        <Link
+                          href={`/projects/${p.id}`}
+                          className={`block p-4 rounded-xl border transition-all hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${card}`}
                         >
-                          View Results <ArrowRight size={11} />
-                        </div>
-                      </Link>
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="p-1.5 rounded-lg bg-blue-500/10">
+                              <BarChart2 size={14} className="text-blue-500" />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="flex items-center gap-1 text-xs text-emerald-500">
+                                <CheckCircle size={11} /> Completed
+                              </span>
+                              <ExportsDropdown projectId={p.id} dark={dark} />
+                              <button
+                                onClick={(e) => deleteProject(p.id, e)}
+                                className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:text-red-400 ${dark ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                          <h3 className="font-semibold text-sm mb-1 truncate">{p.name}</h3>
+                          <p className={`text-xs truncate mb-3 ${muted}`}>{p.file_name}</p>
+                          <div className={`flex items-center gap-1 text-xs ${muted}`}>
+                            <Clock size={10} /> {new Date(p.created_at).toLocaleDateString()}
+                          </div>
+                          <div
+                            className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-blue-500 ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+                          >
+                            View Results <ArrowRight size={11} />
+                          </div>
+                        </Link>
+                      </div>
                     ))}
                   </div>
                 </div>

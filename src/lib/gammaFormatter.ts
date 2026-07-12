@@ -20,6 +20,27 @@ function defaultAudience(tone?: string): string {
   )
 }
 
+// Chart type is a SOFT SIGNAL only — Gamma has no per-card "render as X"
+// parameter in its generation API, so this can only ever be a text hint
+// inside additionalInstructions, not a guarantee. Returns null for types
+// that don't map to a meaningful visual suggestion (e.g. 'table').
+function chartTypeHint(type: string | undefined, cardLabel: string): string | null {
+  if (!type) return null
+  const phrase: Record<string, string> = {
+    bar: 'a bar chart',
+    grouped_bar: 'a grouped/comparison bar chart',
+    line: 'a line chart',
+    area: 'an area chart',
+    pie: 'a pie or donut chart',
+    treemap: 'a treemap',
+    scatter: 'a scatter plot',
+    composed: 'a dual-axis chart',
+  }
+  const p = phrase[type]
+  if (!p) return null
+  return `"${cardLabel}" → ${p} if a visual fits`
+}
+
 export interface GammaFormatterInput {
   confirmedAnalysis: AnalysisOutput
   selectedFindings?: any[]
@@ -71,6 +92,9 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   } = input
 
   const sections: string[] = []
+  // Collected alongside sections — soft chart-type suggestions per card,
+  // folded into additionalInstructions below. Never a guarantee.
+  const chartHints: string[] = []
 
   // ── Card 1: Title + executive summary ─────────────────────────────────
   const titleLine = targetCompany ? `# ${projectName} — ${targetCompany}` : `# ${projectName}`
@@ -144,6 +168,8 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
           .filter((l) => l !== undefined)
           .join('\n')
       )
+      const visualHint = chartTypeHint(sel.chartType, label)
+      if (visualHint) chartHints.push(visualHint)
       continue
     }
 
@@ -173,6 +199,8 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
         .filter((l) => l !== undefined)
         .join('\n')
     )
+    const findingHint = chartTypeHint(sel.chartType, label)
+    if (findingHint) chartHints.push(findingHint)
   }
 
   // ── Anomaly card — max 3, critical first, short descriptions only ──────
@@ -250,6 +278,11 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
       ? `Use ${primaryColor} as the primary accent color for headings, highlights, and chart elements.`
       : null,
     targetCompany ? `This presentation is prepared for ${targetCompany}.` : null,
+    // Soft signal only — these are suggestions, not requirements. Gamma
+    // should still use its own judgment on what best represents each card.
+    chartHints.length > 0
+      ? `For visual/chart cards, these are suggested (not required) chart types based on the user's preference: ${chartHints.join('; ')}. Use your own judgment if a different visual better represents the data.`
+      : null,
   ]
     .filter(Boolean)
     .join(' ')

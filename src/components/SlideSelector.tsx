@@ -1,7 +1,16 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { CheckCircle2, Circle, Table2, Sparkles, BarChart3, FileDown, Download } from 'lucide-react'
+import {
+  CheckCircle2,
+  Circle,
+  Table2,
+  Sparkles,
+  BarChart3,
+  FileDown,
+  Download,
+  Info,
+} from 'lucide-react'
 import type { AnalysisOutput, KeyFinding, InsightTable } from '@/lib/analysisTypes'
 
 // ── Chart type resolver ────────────────────────────────────────────────────
@@ -368,9 +377,15 @@ export default function SlideSelector({
         {showHeroStat && (
           <div>
             <label
-              className={`text-[10px] font-semibold uppercase tracking-wide mb-1 block ${subtle}`}
+              className={`text-[10px] font-semibold uppercase tracking-wide mb-1 flex items-center gap-1 ${subtle}`}
             >
-              Chart Type
+              Suggest Chart Type
+              <span
+                title="This is a suggestion sent to Gamma, not a guarantee — Gamma picks the visual it judges best for each card and may choose something different."
+                className="cursor-help"
+              >
+                <Info size={10} />
+              </span>
             </label>
             <select
               value={sel.chartType}

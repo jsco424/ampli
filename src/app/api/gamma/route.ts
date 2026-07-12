@@ -8,6 +8,14 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
+// Service-role client — needed to write to Storage and project_exports
+// regardless of the requesting user's own RLS permissions, since this is
+// a system-level write (re-hosting a file), not a user-scoped one.
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
 const GAMMA_API_BASE = 'https://public-api.gamma.app/v1.0'
 const POLL_INTERVAL_MS = 3000
 const POLL_MAX_ATTEMPTS = 40
@@ -51,6 +59,53 @@ async function pollForCompletion(
   }
 
   throw new Error('Gamma generation timed out after 2 minutes')
+}
+
+// Downloads the file from Gamma's temporary exportUrl (expires in ~1 week)
+// and re-hosts it in our own private Supabase Storage bucket, logging it to
+// project_exports. This is what makes a "past downloads" list durable, and
+// what lets the browser force a real download via our own
+// /api/exports/[id]/download route instead of navigating to a cross-origin
+// Gamma URL, which is what caused the "overtakes the site" behavior.
+async function rehostExport(
+  projectId: string,
+  exportUrl: string,
+  exportFormat: 'pptx' | 'pdf',
+  fileBaseName: string
+): Promise<{ exportId: string; downloadUrl: string }> {
+  const fileRes = await fetch(exportUrl)
+  if (!fileRes.ok) throw new Error(`Failed to fetch export from Gamma: ${fileRes.status}`)
+  const arrayBuffer = await fileRes.arrayBuffer()
+  const buffer = Buffer.from(arrayBuffer)
+
+  const fileName = `${fileBaseName}.${exportFormat}`
+  const storagePath = `${projectId}/${Date.now()}-${fileName}`
+  const contentType =
+    exportFormat === 'pptx'
+      ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      : 'application/pdf'
+
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from('exports')
+    .upload(storagePath, buffer, { contentType, upsert: false })
+
+  if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`)
+
+  const { data: row, error: insertError } = await supabaseAdmin
+    .from('project_exports')
+    .insert({
+      project_id: projectId,
+      format: exportFormat,
+      storage_path: storagePath,
+      file_name: fileName,
+      file_size_bytes: buffer.length,
+    })
+    .select('id')
+    .single()
+
+  if (insertError || !row) throw new Error(`Failed to log export: ${insertError?.message}`)
+
+  return { exportId: row.id, downloadUrl: `/api/exports/${row.id}/download` }
 }
 
 export async function POST(req: Request) {
@@ -103,6 +158,12 @@ export async function POST(req: Request) {
   const formatted = formatForGamma({
     confirmedAnalysis: handoff.confirmedAnalysis,
     selectedFindings: handoff.selectedFindings || [],
+    // This was missing entirely before — without it, gammaFormatter.ts
+    // always fell through to its suggestedFollowUps fallback (the
+    // analytical "ask me to..." follow-up questions from /api/analyze),
+    // even on projects where real AI-generated recommendations existed
+    // in the database the whole time.
+    projectRecommendations: project.recommendations || [],
     projectName: project.name || project.pitch_title || 'Untitled',
     tone: project.tone || 'executive',
     targetCompany: project.target_company || null,
@@ -198,21 +259,33 @@ export async function POST(req: Request) {
   try {
     const { gammaUrl, exportUrl } = await pollForCompletion(generationId, apiKey)
 
-    // Optionally save the Gamma URL to the project for reference
+    // Save the Gamma URL to the project for reference (view/edit in Gamma app)
     await supabase
       .from('projects')
       .update({ gamma_url: gammaUrl, gamma_export_url: exportUrl })
       .eq('id', projectId)
 
+    // Re-host in our own Storage — see rehostExport() comment above for why
+    const fileBaseName = (project.name || project.pitch_title || 'presentation')
+      .replace(/[^a-zA-Z0-9-_ ]/g, '')
+      .trim()
+    const { exportId, downloadUrl } = await rehostExport(
+      projectId,
+      exportUrl,
+      exportFormat,
+      fileBaseName
+    )
+
     return NextResponse.json({
       success: true,
       generationId,
       gammaUrl, // View/edit in Gamma app
-      exportUrl, // Direct download URL (expires in ~1 week)
+      exportId, // project_exports row id
+      downloadUrl, // our own route — forces a real download, never expires
       exportFormat,
     })
   } catch (err: any) {
-    console.error('Gamma poll error:', err)
+    console.error('Gamma poll or rehost error:', err)
     return NextResponse.json({ error: err.message || 'Generation timed out' }, { status: 500 })
   }
 }

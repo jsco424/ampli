@@ -25,6 +25,7 @@ import {
 import Link from 'next/link'
 import UndoToast from '@/components/UndoToast'
 import DeleteModal from '@/components/DeleteModal'
+import ExportsDropdown from '@/components/ExportsDropdown'
 import { getTagColor } from '@/components/TagInput'
 
 const STATUS_OPTIONS = ['All', 'Completed', 'Processing']
@@ -502,6 +503,7 @@ export default function ProjectsPage() {
                               <span className="flex items-center gap-1 text-xs text-emerald-500">
                                 <CheckCircle size={11} /> Completed
                               </span>
+                              {!selectMode && <ExportsDropdown projectId={p.id} dark={dark} />}
                               {!selectMode && (
                                 <button
                                   onClick={(e) => requestDelete([p.id], e)}
