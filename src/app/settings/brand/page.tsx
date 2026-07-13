@@ -53,8 +53,6 @@ const COLOR_PRESETS = [
   '#1a1a1a',
 ]
 
-// Map colorKeywords to a rough preview color for the theme swatch.
-// Not exact — just a visual hint so users can scan quickly.
 function swatchColorFromKeywords(keywords: string[]): string {
   const k = keywords.map((w) => w.toLowerCase())
   if (k.some((w) => ['dark', 'black', 'carbon', 'onyx', 'night'].includes(w))) return '#1a1a2e'
@@ -70,7 +68,6 @@ function swatchColorFromKeywords(keywords: string[]): string {
 }
 
 function swatchTextColor(bg: string): string {
-  // Light backgrounds need dark text
   const lightBgs = ['#e2e8f0']
   return lightBgs.includes(bg) ? '#1a1a1a' : '#ffffff'
 }
@@ -184,7 +181,6 @@ export default function BrandSettingsPage() {
         </div>
 
         <div className="space-y-4">
-          {/* Brand Name */}
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center gap-2 mb-4">
               <Building2 size={15} className="text-blue-400" />
@@ -201,7 +197,6 @@ export default function BrandSettingsPage() {
             </p>
           </div>
 
-          {/* Primary Color */}
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center gap-2 mb-4">
               <Palette size={15} className="text-blue-400" />
@@ -255,7 +250,6 @@ export default function BrandSettingsPage() {
             </p>
           </div>
 
-          {/* Logo URL */}
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center gap-2 mb-4">
               <Image size={15} className="text-blue-400" />
@@ -304,7 +298,6 @@ export default function BrandSettingsPage() {
             </p>
           </div>
 
-          {/* Gamma Theme Picker */}
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
@@ -325,7 +318,6 @@ export default function BrandSettingsPage() {
               brand colors for best results.
             </p>
 
-            {/* Selected theme indicator */}
             {selectedTheme && (
               <div
                 className={`flex items-center gap-3 p-3 rounded-xl border mb-4 ${dark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'}`}
@@ -344,7 +336,6 @@ export default function BrandSettingsPage() {
               </div>
             )}
 
-            {/* Search + filter */}
             <div className="flex gap-2 mb-3">
               <input
                 value={themeSearch}
@@ -367,7 +358,6 @@ export default function BrandSettingsPage() {
               </div>
             </div>
 
-            {/* Theme grid */}
             {themesLoading ? (
               <div className="flex items-center justify-center py-8 gap-2">
                 <RefreshCw size={14} className={`animate-spin ${subtle}`} />
@@ -400,7 +390,6 @@ export default function BrandSettingsPage() {
                             : 'border-zinc-200 hover:border-zinc-300'
                       }`}
                     >
-                      {/* Color swatch */}
                       <div
                         className="h-10 w-full flex items-center justify-between px-2.5 relative"
                         style={{ background: swatchBg }}
@@ -418,7 +407,6 @@ export default function BrandSettingsPage() {
                           </span>
                         )}
                       </div>
-                      {/* Theme info */}
                       <div className={`px-2.5 py-2 ${dark ? 'bg-zinc-800' : 'bg-white'}`}>
                         <p className="text-xs font-semibold truncate">{theme.name}</p>
                         <p className={`text-[10px] truncate mt-0.5 ${subtler}`}>
@@ -438,12 +426,12 @@ export default function BrandSettingsPage() {
 
             {!settings.gamma_theme_id && !themesLoading && (
               <p className={`text-xs mt-3 ${subtler}`}>
-                No theme selected — exports will use the default for your chosen tone.
+                No theme selected — exports will try to match your Primary Color to a standard Gamma
+                theme automatically, falling back to your tone setting if no close match is found.
               </p>
             )}
           </div>
 
-          {/* What flows to deck */}
           <div className={`p-4 rounded-2xl border ${section}`}>
             <p className={`text-xs font-semibold mb-2 ${subtle}`}>
               What flows to your exported deck
@@ -463,7 +451,6 @@ export default function BrandSettingsPage() {
             </div>
           </div>
 
-          {/* Save */}
           <button
             onClick={handleSave}
             disabled={saving}

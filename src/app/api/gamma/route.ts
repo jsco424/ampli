@@ -29,6 +29,69 @@ const TONE_THEME_MAP: Record<string, string> = {
   educational: process.env.GAMMA_THEME_EDUCATIONAL || 'gold-leaf',
 } // ~2 minutes max
 
+// ── Closest-theme color matching (Tier 2 fallback) ──────────────────────
+// Gamma's themes API returns colorKeywords as words ("blue", "gradient"),
+// not hex codes — there's no way to search by hex directly. This converts
+// a hex color to a basic hue name via HSL, then looks for a standard theme
+// whose colorKeywords includes that word. Approximate by nature — this is
+// explicitly the fallback tier, not the exact-match path (that's a custom
+// theme set up in Brand Settings, checked first in the route handler).
+
+function hexToColorName(hex: string): string | null {
+  const clean = hex.replace('#', '')
+  if (clean.length !== 6) return null
+  const r = parseInt(clean.slice(0, 2), 16) / 255
+  const g = parseInt(clean.slice(2, 4), 16) / 255
+  const b = parseInt(clean.slice(4, 6), 16) / 255
+
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const lightness = (max + min) / 2
+
+  if (max - min < 0.08) {
+    if (lightness > 0.9) return 'white'
+    if (lightness < 0.15) return 'black'
+    return 'gray'
+  }
+
+  let hue = 0
+  const delta = max - min
+  if (max === r) hue = ((g - b) / delta) % 6
+  else if (max === g) hue = (b - r) / delta + 2
+  else hue = (r - g) / delta + 4
+  hue = Math.round(hue * 60)
+  if (hue < 0) hue += 360
+
+  if (hue < 15 || hue >= 345) return 'red'
+  if (hue < 45) return 'orange'
+  if (hue < 70) return 'yellow'
+  if (hue < 150) return 'green'
+  if (hue < 195) return 'teal'
+  if (hue < 255) return lightness < 0.35 ? 'navy' : 'blue'
+  if (hue < 290) return 'purple'
+  return 'pink'
+}
+
+async function findClosestThemeByColor(hex: string, apiKey: string): Promise<string | null> {
+  const colorName = hexToColorName(hex)
+  if (!colorName) return null
+
+  try {
+    const res = await fetch(`${GAMMA_API_BASE}/themes?type=standard&limit=50`, {
+      headers: { 'X-API-KEY': apiKey },
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    const match = (data.data || []).find((theme: any) =>
+      (theme.colorKeywords || []).includes(colorName)
+    )
+    return match?.id || null
+  } catch (err) {
+    console.error('Theme color matching failed, falling back to tone-based theme:', err)
+    return null
+  }
+}
+
 async function pollForCompletion(
   generationId: string,
   apiKey: string
@@ -139,11 +202,21 @@ export async function POST(req: Request) {
 
   // Fetch user brand settings separately — brand belongs to the user,
   // not the project. Falls back gracefully if not set.
+  //
+  // NOTE: this was previously fetched but never actually read anywhere
+  // below — primaryColor/logoUrl were pulled from `project.*` instead,
+  // which may not reflect what the user actually set in Brand Settings.
+  // Now used directly, with project fields kept only as a fallback for
+  // any older data that predates this fix.
   const { data: brandSettings } = await supabase
     .from('user_settings')
-    .select('brand_name, brand_primary_color, brand_logo_url')
+    .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
     .eq('user_id', project.user_id)
     .single()
+
+  const resolvedPrimaryColor =
+    brandSettings?.brand_primary_color || project.brand_primary_color || null
+  const resolvedLogoUrl = brandSettings?.brand_logo_url || project.brand_logo_url || null
 
   const handoff: AnalysisHandoff | null = project.analysis_handoff || null
 
@@ -168,13 +241,29 @@ export async function POST(req: Request) {
     tone: project.tone || 'executive',
     targetCompany: project.target_company || null,
     targetAudience: project.target_audience || null,
-    // Brand fields — stored in projects table or brand settings
-    primaryColor: project.brand_primary_color || null,
-    logoUrl: project.brand_logo_url || null,
+    primaryColor: resolvedPrimaryColor,
+    logoUrl: resolvedLogoUrl,
   })
 
-  // Resolve theme from tone — falls back to executive default if tone not set
-  const themeId = TONE_THEME_MAP[project.tone || 'executive'] || 'default-dark'
+  // Resolve theme — three-tier fallback:
+  //   1. User's own custom Gamma theme (exact color match, set up once
+  //      in Brand Settings) — the only path that guarantees pixel-exact
+  //      brand color, since Gamma's generation API has no raw hex-code
+  //      parameter, only themeId.
+  //   2. Closest standard Gamma theme by color keyword — approximate,
+  //      but works with zero setup for anyone who hasn't configured a
+  //      custom theme yet.
+  //   3. The original tone-based fallback, if the color-match lookup
+  //      itself fails for any reason (network error, no themes matched).
+  let themeId: string
+  if (brandSettings?.gamma_theme_id) {
+    themeId = brandSettings.gamma_theme_id
+  } else {
+    const matched = resolvedPrimaryColor
+      ? await findClosestThemeByColor(resolvedPrimaryColor, apiKey)
+      : null
+    themeId = matched || TONE_THEME_MAP[project.tone || 'executive'] || 'default-dark'
+  }
 
   // Build the Gamma API request body
   const gammaBody: Record<string, any> = {
@@ -206,8 +295,8 @@ export async function POST(req: Request) {
 
   // Add logo to top-right header if available
   // Logo must be a publicly accessible URL — localhost won't work with Gamma's servers
-  if (formatted.inputText && project.brand_logo_url) {
-    const logoUrl: string = project.brand_logo_url
+  if (formatted.inputText && resolvedLogoUrl) {
+    const logoUrl: string = resolvedLogoUrl
     const isPublic = logoUrl.startsWith('https://') && !logoUrl.includes('localhost')
     if (isPublic) {
       gammaBody.cardOptions.headerFooter = {
