@@ -95,7 +95,7 @@ async function findClosestThemeByColor(hex: string, apiKey: string): Promise<str
 async function pollForCompletion(
   generationId: string,
   apiKey: string
-): Promise<{ gammaUrl: string; exportUrl: string }> {
+): Promise<{ gammaUrl: string; exportUrl: string; creditsDeducted: number | null }> {
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
 
@@ -111,7 +111,14 @@ async function pollForCompletion(
       if (!data.gammaUrl || !data.exportUrl) {
         throw new Error('Gamma returned completed status but missing URLs')
       }
-      return { gammaUrl: data.gammaUrl, exportUrl: data.exportUrl }
+      // credits.deducted — how many Gamma credits this specific generation
+      // cost. Not guaranteed present on every API version/response, hence
+      // the optional chaining and null fallback rather than assuming it.
+      return {
+        gammaUrl: data.gammaUrl,
+        exportUrl: data.exportUrl,
+        creditsDeducted: data.credits?.deducted ?? null,
+      }
     }
 
     if (data.status === 'failed') {
@@ -130,11 +137,17 @@ async function pollForCompletion(
 // what lets the browser force a real download via our own
 // /api/exports/[id]/download route instead of navigating to a cross-origin
 // Gamma URL, which is what caused the "overtakes the site" behavior.
+//
+// Also logs creditsDeducted — since API calls are one of the few things
+// that consume Gamma credits regardless of plan tier, this is what turns
+// "I imagine we'll run out" into an actual, queryable usage ledger per
+// export and per project, rather than a guess.
 async function rehostExport(
   projectId: string,
   exportUrl: string,
   exportFormat: 'pptx' | 'pdf',
-  fileBaseName: string
+  fileBaseName: string,
+  creditsDeducted: number | null
 ): Promise<{ exportId: string; downloadUrl: string }> {
   const fileRes = await fetch(exportUrl)
   if (!fileRes.ok) throw new Error(`Failed to fetch export from Gamma: ${fileRes.status}`)
@@ -162,6 +175,7 @@ async function rehostExport(
       storage_path: storagePath,
       file_name: fileName,
       file_size_bytes: buffer.length,
+      gamma_credits_used: creditsDeducted,
     })
     .select('id')
     .single()
@@ -210,7 +224,7 @@ export async function POST(req: Request) {
   // any older data that predates this fix.
   const { data: brandSettings } = await supabase
     .from('user_settings')
-    .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
+    .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id, gamma_template_id')
     .eq('user_id', project.user_id)
     .single()
 
@@ -265,52 +279,85 @@ export async function POST(req: Request) {
     themeId = matched || TONE_THEME_MAP[project.tone || 'executive'] || 'default-dark'
   }
 
-  // Build the Gamma API request body
-  const gammaBody: Record<string, any> = {
-    inputText: formatted.inputText,
-    title: formatted.title,
-    textMode: 'preserve',
-    format: 'presentation',
-    cardSplit: 'inputTextBreaks',
-    exportAs: exportFormat,
-    themeId,
-    textOptions: {
-      amount: 'brief',
-      tone: formatted.tone,
-      audience: formatted.audience,
-      language: 'en',
-    },
-    imageOptions: {
-      source: 'themeAccent',
-    },
-    cardOptions: {
-      dimensions: '16x9',
-    },
-    additionalInstructions: formatted.additionalInstructions,
-    sharingOptions: {
-      workspaceAccess: 'noAccess',
-      externalAccess: 'noAccess',
-    },
-  }
+  // Template selection takes priority over theme-only generation — if the
+  // client has picked a saved template (built manually via a "Request a
+  // Custom Look" request), export through /generations/from-template
+  // instead, which uses that template's exact layout/design rather than
+  // letting Gamma build the layout automatically from a theme + outline.
+  const selectedTemplateId = brandSettings?.gamma_template_id || null
 
-  // Add logo to top-right header if available
-  // Logo must be a publicly accessible URL — localhost won't work with Gamma's servers
-  if (formatted.inputText && resolvedLogoUrl) {
-    const logoUrl: string = resolvedLogoUrl
-    const isPublic = logoUrl.startsWith('https://') && !logoUrl.includes('localhost')
-    if (isPublic) {
-      gammaBody.cardOptions.headerFooter = {
-        topRight: {
-          type: 'image',
-          source: 'custom',
-          src: logoUrl,
-          size: 'sm',
-        },
-        bottomRight: {
-          type: 'cardNumber',
-        },
-        // Don't show logo/page number on the title card
-        hideFromFirstCard: false,
+  let gammaBody: Record<string, any>
+  let generationEndpoint: string
+
+  if (selectedTemplateId) {
+    generationEndpoint = `${GAMMA_API_BASE}/generations/from-template`
+    // from-template takes a `prompt` describing what to change, not the
+    // same inputText/cardSplit/textOptions shape as a from-scratch
+    // generation — the template's own structure and design are preserved
+    // by default, so the prompt just needs to say what content goes in.
+    const logoInstruction = resolvedLogoUrl
+      ? ` Include the logo at ${resolvedLogoUrl} somewhere appropriate in the header if the template design allows for it.`
+      : ''
+    gammaBody = {
+      gammaId: selectedTemplateId,
+      prompt: `Replace the content in this template with the following, preserving the template's exact structure, layout, and design.${logoInstruction}\n\n${formatted.inputText}`,
+      themeId,
+      exportAs: exportFormat,
+      sharingOptions: {
+        workspaceAccess: 'noAccess',
+        externalAccess: 'noAccess',
+      },
+    }
+  } else {
+    generationEndpoint = `${GAMMA_API_BASE}/generations`
+    // Build the Gamma API request body
+    gammaBody = {
+      inputText: formatted.inputText,
+      title: formatted.title,
+      textMode: 'preserve',
+      format: 'presentation',
+      cardSplit: 'inputTextBreaks',
+      exportAs: exportFormat,
+      themeId,
+      textOptions: {
+        amount: 'brief',
+        tone: formatted.tone,
+        audience: formatted.audience,
+        language: 'en',
+      },
+      imageOptions: {
+        source: 'themeAccent',
+      },
+      cardOptions: {
+        dimensions: '16x9',
+      },
+      additionalInstructions: formatted.additionalInstructions,
+      sharingOptions: {
+        workspaceAccess: 'noAccess',
+        externalAccess: 'noAccess',
+      },
+    }
+
+    // Add logo to top-right header if available — only supported on the
+    // from-scratch generation path, since from-template has no
+    // cardOptions.headerFooter field in its schema.
+    if (formatted.inputText && resolvedLogoUrl) {
+      const logoUrl: string = resolvedLogoUrl
+      const isPublic = logoUrl.startsWith('https://') && !logoUrl.includes('localhost')
+      if (isPublic) {
+        gammaBody.cardOptions.headerFooter = {
+          topRight: {
+            type: 'image',
+            source: 'custom',
+            src: logoUrl,
+            size: 'sm',
+          },
+          bottomRight: {
+            type: 'cardNumber',
+          },
+          // Don't show logo/page number on the title card
+          hideFromFirstCard: false,
+        }
       }
     }
   }
@@ -318,7 +365,7 @@ export async function POST(req: Request) {
   // Fire the generation request
   let generationId: string
   try {
-    const res = await fetch(`${GAMMA_API_BASE}/generations`, {
+    const res = await fetch(generationEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -346,7 +393,7 @@ export async function POST(req: Request) {
 
   // Poll until complete
   try {
-    const { gammaUrl, exportUrl } = await pollForCompletion(generationId, apiKey)
+    const { gammaUrl, exportUrl, creditsDeducted } = await pollForCompletion(generationId, apiKey)
 
     // Save the Gamma URL to the project for reference (view/edit in Gamma app)
     await supabase
@@ -362,7 +409,8 @@ export async function POST(req: Request) {
       projectId,
       exportUrl,
       exportFormat,
-      fileBaseName
+      fileBaseName,
+      creditsDeducted
     )
 
     return NextResponse.json({
@@ -372,6 +420,7 @@ export async function POST(req: Request) {
       exportId, // project_exports row id
       downloadUrl, // our own route — forces a real download, never expires
       exportFormat,
+      creditsDeducted, // for visibility in logs/monitoring, not currently surfaced in the UI
     })
   } catch (err: any) {
     console.error('Gamma poll or rehost error:', err)
