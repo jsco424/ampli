@@ -335,6 +335,19 @@ export default function TrendsPage() {
                 </div>
               ) : (
                 <>
+                  {/* Early-data notice — a 100 score on day one just means
+                      "nothing to compare against yet," not "at its peak."
+                      Fades away naturally as history accumulates. */}
+                  {sparkline.length > 0 && sparkline.length < 4 && (
+                    <div
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg mb-4 text-xs ${dark ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700'}`}
+                    >
+                      <Info size={12} className="shrink-0" />
+                      Early data — scores stabilize after about a week of history. A 100 right now
+                      means "first reading," not "at its peak."
+                    </div>
+                  )}
+
                   {/* Sparkline */}
                   <div className="mb-5">
                     <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${muted}`}>
