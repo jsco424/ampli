@@ -55,7 +55,12 @@ export async function GET(req: Request) {
         fetchFn: () => fetchWikipediaToday(topic.wikipedia_article),
       })
     }
-    if (topic.reddit_subreddits?.length > 0 && topic.reddit_query) {
+    // Reddit is skipped entirely until REDDIT_CLIENT_ID/SECRET exist —
+    // not attempted-and-logged-as-error. Once those env vars are added
+    // (pending Reddit's commercial API approval), this resumes on its
+    // own with no code changes needed.
+    const redditConfigured = !!(process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET)
+    if (redditConfigured && topic.reddit_subreddits?.length > 0 && topic.reddit_query) {
       sourcesToFetch.push({
         source: 'reddit',
         fetchFn: () => fetchRedditToday(topic.reddit_subreddits, topic.reddit_query),

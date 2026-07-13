@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Projects', href: '/projects' },
   { label: 'Crowd Insights', href: '/crowd' },
+  { label: 'User Behaviors', href: '/trends' },
   { label: 'Research', href: '/dashboard#research' },
 ]
 
