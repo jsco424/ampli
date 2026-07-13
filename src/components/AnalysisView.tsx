@@ -26,8 +26,6 @@ import type {
   FindingDirection,
 } from '@/lib/analysisTypes'
 
-// ── Verification badge ─────────────────────────────────────────────────────
-
 function VerificationBadge({ status }: { status?: VerificationStatus }) {
   if (!status || status === 'pending' || status === 'not_applicable') return null
   const config: Record<string, { icon: React.ReactNode; label: string; className: string } | null> =
@@ -85,72 +83,59 @@ function DirectionIcon({ direction }: { direction: FindingDirection }) {
   )
 }
 
-// ── Finding card ───────────────────────────────────────────────────────────
-
+// Collapsed state is now deliberately minimal — just the hero number and a
+// short label underneath, centered, no chevron, no confidence dots, no
+// benchmark hint. Everything that used to live in the collapsed view
+// (interpretation, confidence, verification, sample size, benchmark detail)
+// now only appears after a click, in the expanded section below.
 function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const subtle = dark ? 'text-zinc-500' : 'text-zinc-400'
   const divider = dark ? 'border-zinc-800' : 'border-zinc-100'
-  const cardBg = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  const collapsedBg = dark ? 'bg-zinc-800/60' : 'bg-zinc-100'
+  const expandedBg = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
   const bm = finding.benchmarkContext
 
   return (
     <button
       onClick={() => setExpanded(!expanded)}
-      className={`w-full text-left rounded-2xl border transition-all ${cardBg} hover:border-blue-500/40`}
+      className={`w-full text-left rounded-2xl border transition-all overflow-hidden ${
+        expanded ? expandedBg : `${collapsedBg} border-transparent hover:border-blue-500/30`
+      }`}
     >
-      {/* Collapsed — always visible */}
-      <div className="p-4">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <p className={`text-[11px] font-medium leading-tight flex-1 min-w-0 ${subtle}`}>
-            {finding.label}
-          </p>
-          <ChevronDown
-            size={13}
-            className={`shrink-0 transition-transform ${subtle} ${expanded ? 'rotate-180' : ''}`}
-          />
-        </div>
-
-        {/* Hero number */}
+      {/* Collapsed — number + short label only */}
+      <div className="px-5 py-7 flex flex-col items-center text-center">
         <p
-          className={`text-3xl font-black leading-none mb-2 ${directionColor(finding.direction, dark)}`}
+          className={`text-3xl sm:text-4xl font-black leading-none mb-2 ${directionColor(finding.direction, dark)}`}
         >
           {finding.value}
         </p>
-
-        {/* Benchmark context — inline, subtle */}
-        {bm && (
-          <div className={`flex items-center gap-1.5 mb-2 text-[11px] ${subtle}`}>
-            <BarChart2 size={10} className="shrink-0" />
-            <span>
-              {bm.vsIndustryDisplay}
-              <span className="opacity-60"> · industry avg {bm.industryAvgDisplay}</span>
-            </span>
-          </div>
-        )}
-
-        {/* Confidence + verification */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="flex items-center gap-1.5">
-            <span
-              className={`w-1.5 h-1.5 rounded-full shrink-0 ${confidenceColor(finding.confidence)}`}
-            />
-            <span className={`text-[10px] ${subtle}`}>
-              {finding.confidence} confidence
-              {finding.sampleSize ? ` · n=${finding.sampleSize.toLocaleString()}` : ''}
-            </span>
-          </span>
-          <DirectionIcon direction={finding.direction} />
-          <VerificationBadge status={finding.verificationStatus} />
-        </div>
+        <p className={`text-sm font-medium ${dark ? 'text-zinc-200' : 'text-zinc-700'}`}>
+          {finding.label}
+        </p>
       </div>
 
-      {/* Expanded — interpretation + benchmark detail */}
+      {/* Expanded — interpretation, confidence, verification, benchmark detail */}
       {expanded && (
-        <div className={`px-4 pb-4 pt-3 border-t ${divider}`}>
-          <p className={`text-xs leading-relaxed ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}>
+        <div className={`px-5 pb-5 pt-4 border-t text-left ${divider}`}>
+          <p className={`text-xs leading-relaxed mb-3 ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}>
             {finding.interpretation}
           </p>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="flex items-center gap-1.5">
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${confidenceColor(finding.confidence)}`}
+              />
+              <span className={`text-[10px] ${subtle}`}>
+                {finding.confidence} confidence
+                {finding.sampleSize ? ` · n=${finding.sampleSize.toLocaleString()}` : ''}
+              </span>
+            </span>
+            <DirectionIcon direction={finding.direction} />
+            <VerificationBadge status={finding.verificationStatus} />
+          </div>
+
           {bm && (
             <div
               className={`mt-3 p-3 rounded-xl ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-zinc-50 border border-zinc-200'}`}
@@ -179,18 +164,11 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
               </p>
             </div>
           )}
-          {finding.sampleSize && (
-            <p className={`text-[11px] mt-2 ${subtle}`}>
-              Sample: {finding.sampleSize.toLocaleString()} rows
-            </p>
-          )}
         </div>
       )}
     </button>
   )
 }
-
-// ── Anomaly item ───────────────────────────────────────────────────────────
 
 function AnomalyItem({ anomaly, dark }: { anomaly: Anomaly; dark: boolean }) {
   const config = {
@@ -231,9 +209,6 @@ function AnomalyItem({ anomaly, dark }: { anomaly: Anomaly; dark: boolean }) {
   )
 }
 
-// ── Conversation turn ──────────────────────────────────────────────────────
-// Renders a single follow-up exchange in the conversation thread.
-
 function ConversationTurn({
   question,
   analysis,
@@ -251,7 +226,6 @@ function ConversationTurn({
 
   return (
     <div className="space-y-4">
-      {/* User question bubble */}
       <div className="flex justify-end">
         <div
           className={`max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm ${dark ? 'bg-blue-500/20 text-blue-200' : 'bg-blue-50 text-blue-800'}`}
@@ -260,7 +234,6 @@ function ConversationTurn({
         </div>
       </div>
 
-      {/* Follow-up analysis */}
       <div className={`rounded-2xl border p-4 ${card}`}>
         <div className="flex items-center gap-2 mb-3">
           <Sparkles size={12} className="text-blue-400" />
@@ -283,8 +256,6 @@ function ConversationTurn({
   )
 }
 
-// ── Main component ─────────────────────────────────────────────────────────
-
 interface ConversationEntry {
   question: string
   analysis: AnalysisOutput
@@ -296,7 +267,6 @@ interface AnalysisViewProps {
   onFollowUp: (question: string) => void
   onBuildSlides: () => void
   isLoading?: boolean
-  // Conversation history for thread display
   conversationEntries?: ConversationEntry[]
 }
 
@@ -323,7 +293,6 @@ export default function AnalysisView({
     onFollowUp(q)
   }
 
-  // Verification summary
   const allStatuses = [
     ...analysis.insightTables.flatMap((t) => (t.verificationGrid || []).flat()),
     ...analysis.keyFindings.map((f) => f.verificationStatus),
@@ -335,7 +304,6 @@ export default function AnalysisView({
 
   return (
     <div className="space-y-8">
-      {/* ── Executive summary ──────────────────────────────────────────── */}
       <div>
         <div className="flex items-center gap-2 mb-3">
           <Sparkles size={13} className="text-blue-400" />
@@ -376,7 +344,6 @@ export default function AnalysisView({
         </div>
       </div>
 
-      {/* ── Key findings grid ───────────────────────────────────────────── */}
       {analysis.keyFindings.length > 0 && (
         <div>
           <p className={`text-[11px] font-semibold uppercase tracking-wide mb-3 ${subtler}`}>
@@ -390,7 +357,6 @@ export default function AnalysisView({
         </div>
       )}
 
-      {/* ── Insight tables ──────────────────────────────────────────────── */}
       {analysis.insightTables.length > 0 && (
         <div>
           <p className={`text-[11px] font-semibold uppercase tracking-wide mb-3 ${subtler}`}>
@@ -466,7 +432,6 @@ export default function AnalysisView({
         </div>
       )}
 
-      {/* ── Anomalies ───────────────────────────────────────────────────── */}
       {analysis.anomalies.length > 0 && (
         <div>
           <button
@@ -495,7 +460,6 @@ export default function AnalysisView({
         </div>
       )}
 
-      {/* ── Conversation thread ─────────────────────────────────────────── */}
       {conversationEntries.length > 0 && (
         <div className="space-y-6">
           <div className={`h-px ${dark ? 'bg-zinc-800' : 'bg-zinc-200'}`} />
@@ -514,7 +478,6 @@ export default function AnalysisView({
         </div>
       )}
 
-      {/* ── Follow-up chat ──────────────────────────────────────────────── */}
       <div className={`rounded-2xl border ${card}`}>
         <div className="p-4 pb-3">
           <p
@@ -532,7 +495,6 @@ export default function AnalysisView({
               ' Try: "Which segment is most over-indexed?" or "Show the top vs bottom performers."'}
           </p>
 
-          {/* Suggested follow-ups — always shown, not dependent on selection */}
           {analysis.suggestedFollowUps.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-3">
               {analysis.suggestedFollowUps.map((q, i) => (
@@ -584,7 +546,6 @@ export default function AnalysisView({
         </div>
       </div>
 
-      {/* ── Build slides CTA ─────────────────────────────────────────────── */}
       <div
         className={`p-5 rounded-2xl border-2 border-dashed flex items-center justify-between gap-4 ${dark ? 'border-zinc-700' : 'border-zinc-300'}`}
       >
