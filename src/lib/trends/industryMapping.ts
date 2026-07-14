@@ -48,6 +48,9 @@ export const TREND_TO_INDUSTRY: Record<TrendCategory, CrowdIndustry | null> = {
   home: 'Real Estate',
   travel: 'Hospitality',
   auto: null, // no automotive industry currently exists in Crowd Insights
+  // 'company' topics are on-demand tracked companies/competitors, not part
+  // of the curated public-interest categories — no crowd industry to map to
+  company: null,
 }
 
 // crowd industry -> matching trend category, or null if none exists yet.
