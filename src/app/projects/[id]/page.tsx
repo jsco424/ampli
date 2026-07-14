@@ -89,6 +89,13 @@ export default function ProjectViewPage() {
 
         if (data.analysis) {
           setAnalysisOutput(data.analysis as AnalysisOutput)
+          // Restore follow-up "Dig deeper" state — previously this was
+          // pure React state with no persistence at all, so navigating
+          // away and back lost every follow-up turn. Both fields are
+          // nullable jsonb columns; a project with no follow-ups yet
+          // simply has null here, which the || [] fallbacks handle.
+          if (data.conversation_history) setConversationHistory(data.conversation_history)
+          if (data.conversation_entries) setConversationEntries(data.conversation_entries)
           return
         }
 
@@ -126,7 +133,14 @@ export default function ProjectViewPage() {
             setConversationHistory([assistantTurn])
             supabase
               .from('projects')
-              .update({ analysis, status: 'complete' })
+              .update({
+                analysis,
+                status: 'complete',
+                // Persist the very first turn immediately too, so even a
+                // project with zero follow-up questions yet has a
+                // consistent, restorable conversation_history from the start.
+                conversation_history: [assistantTurn],
+              })
               .eq('id', id)
               .then(() => {})
           })
@@ -224,8 +238,23 @@ export default function ProjectViewPage() {
         if (!res.ok) throw new Error(`Analysis failed: ${res.status}`)
         const { analysis, assistantTurn } = await res.json()
 
-        setConversationEntries((prev) => [...prev, { question: followUpQuestion, analysis }])
-        setConversationHistory([...historyToSend, assistantTurn])
+        const newEntries = [...conversationEntries, { question: followUpQuestion, analysis }]
+        const newHistory = [...historyToSend, assistantTurn]
+
+        setConversationEntries(newEntries)
+        setConversationHistory(newHistory)
+
+        // Persist immediately — this is the fix for follow-up turns
+        // disappearing on navigation. Previously both of these only ever
+        // lived in React state, so leaving the page and coming back had
+        // nothing to restore from.
+        await supabase
+          .from('projects')
+          .update({
+            conversation_entries: newEntries,
+            conversation_history: newHistory,
+          })
+          .eq('id', project.id)
       } catch (err: any) {
         console.error(err)
         setAnalysisError('Follow-up failed — please try again.')
@@ -233,7 +262,7 @@ export default function ProjectViewPage() {
         setAnalysisLoading(false)
       }
     },
-    [project, conversationHistory]
+    [project, conversationHistory, conversationEntries]
   )
 
   const handleFollowUp = useCallback(
