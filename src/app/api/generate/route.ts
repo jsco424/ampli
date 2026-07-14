@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import type { AnalysisOutput } from '@/lib/analysisTypes'
 import { stripDashJoins } from '@/lib/textCleanup'
+import { logTokenUsage } from '@/lib/tokenUsage'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(
@@ -223,6 +224,13 @@ ${rawSample || ''}`,
       ],
     })
 
+    await logTokenUsage({
+      projectId: projectId || null,
+      route: 'generate_core',
+      inputTokens: coreMessage.usage.input_tokens,
+      outputTokens: coreMessage.usage.output_tokens,
+    })
+
     const coreRaw = coreMessage.content[0].type === 'text' ? coreMessage.content[0].text : ''
     const coreCleaned = coreRaw.replace(/```json|```/g, '').trim()
     const coreParsed = JSON.parse(coreCleaned)
@@ -303,6 +311,13 @@ Return ONLY the JSON array, no markdown.`
         ],
       })
       .then(async (recoMessage) => {
+        await logTokenUsage({
+          projectId: projectId || null,
+          route: 'generate_recommendations',
+          inputTokens: recoMessage.usage.input_tokens,
+          outputTokens: recoMessage.usage.output_tokens,
+        })
+
         const recoRaw = recoMessage.content[0].type === 'text' ? recoMessage.content[0].text : ''
         const recoCleaned = recoRaw.replace(/```json|```/g, '').trim()
         try {

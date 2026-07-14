@@ -10,6 +10,7 @@ import type {
 } from '@/lib/analysisTypes'
 import type { DataSummary } from '@/lib/dataSummary'
 import { stripDashJoins } from '@/lib/textCleanup'
+import { logTokenUsage } from '@/lib/tokenUsage'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(
@@ -659,6 +660,16 @@ This is real-time public interest data, separate from the uploaded dataset. Use 
       .filter((b) => b.type === 'text')
       .map((b) => b.text)
       .join('')
+
+    // Real usage, not an estimate — response.usage is Anthropic's own
+    // accounting of exactly what this call cost, including any cache
+    // read/write savings already applied.
+    await logTokenUsage({
+      projectId: projectId || null,
+      route: isFollowUp ? 'analyze_followup' : 'analyze',
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    })
   } catch (err) {
     console.error('Analysis API error:', err)
     return NextResponse.json({ error: 'Analysis generation failed' }, { status: 500 })
