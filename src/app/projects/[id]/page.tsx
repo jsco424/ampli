@@ -167,7 +167,10 @@ export default function ProjectViewPage() {
         tone: project.tone || 'executive',
         projectName: project.name,
         targetCompany: project.target_company || null,
-        targetAudience: null,
+        // Was hardcoded to null — meant Visuals were built audience-agnostic
+        // even after /api/analyze became audience-aware. Now consistent
+        // with both /api/analyze calls above.
+        targetAudience: project.target_audience || null,
         optIn: project.opt_in_crowd || false,
         dataSourceType: project.data_source_type || null,
         confirmedAnalysis: analysisOutput,
