@@ -88,13 +88,41 @@ function DirectionIcon({ direction }: { direction: FindingDirection }) {
 // benchmark hint. Everything that used to live in the collapsed view
 // (interpretation, confidence, verification, sample size, benchmark detail)
 // now only appears after a click, in the expanded section below.
+// Generic, human-readable formula per type — paired with the finding's
+// actual `inputs` values in the "Show the math" toggle, so someone sees
+// both the general shape of the calculation and the specific numbers
+// that produced this exact hero number.
+const FORMULA_LABELS: Record<string, string> = {
+  average: 'sum ÷ count',
+  lift_pct: '(treatment_avg − control_avg) ÷ |control_avg| × 100',
+  share_pct: 'category_value ÷ total_value × 100',
+  incremental_value: '(treatment_avg − control_avg) × treatment_count',
+  roi: 'incremental_value ÷ cost_awarded',
+  weighted_average: 'weighted_sum ÷ total_weight',
+  period_over_period: '(current_value − prior_value) ÷ |prior_value| × 100',
+  sum: 'sum of inputs',
+  count: 'count of inputs',
+  ratio: 'numerator ÷ denominator',
+}
+
+function formatInputValue(n: number): string {
+  if (Number.isInteger(n)) return n.toLocaleString()
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) {
   const [expanded, setExpanded] = useState(false)
+  const [showMath, setShowMath] = useState(false)
   const subtle = dark ? 'text-zinc-500' : 'text-zinc-400'
   const divider = dark ? 'border-zinc-800' : 'border-zinc-100'
   const collapsedBg = dark ? 'bg-zinc-800/60' : 'bg-zinc-100'
   const expandedBg = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
   const bm = finding.benchmarkContext
+  const hasFormula =
+    finding.formulaType &&
+    finding.formulaType !== 'raw' &&
+    finding.inputs &&
+    Object.keys(finding.inputs).length > 0
 
   return (
     <button
@@ -135,6 +163,46 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
             <DirectionIcon direction={finding.direction} />
             <VerificationBadge status={finding.verificationStatus} />
           </div>
+
+          {/* Secondary expand — the actual calculation behind the hero
+              number. Only rendered when the finding has a real formula
+              and inputs to show (not for formulaType 'raw', which has
+              nothing computed to explain). Nested inside a span with its
+              own stopPropagation so clicking it doesn't collapse the
+              whole card. */}
+          {hasFormula && (
+            <div className="mt-2">
+              <span
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowMath(!showMath)
+                }}
+                className={`inline-flex items-center gap-1 text-[10px] font-medium cursor-pointer ${dark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}
+              >
+                {showMath ? 'Hide' : 'Show'} the math
+                <ChevronDown
+                  size={10}
+                  className={`transition-transform ${showMath ? 'rotate-180' : ''}`}
+                />
+              </span>
+              {showMath && (
+                <div
+                  className={`mt-2 p-3 rounded-xl text-[11px] ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-zinc-50 border border-zinc-200'}`}
+                >
+                  <p className={`font-mono mb-2 ${dark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                    {FORMULA_LABELS[finding.formulaType as string] || finding.formulaType}
+                  </p>
+                  <div className="space-y-0.5">
+                    {Object.entries(finding.inputs || {}).map(([key, value]) => (
+                      <p key={key} className={subtle}>
+                        <span className="font-mono">{key}</span> = {formatInputValue(value)}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {bm && (
             <div

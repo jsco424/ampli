@@ -5,7 +5,18 @@
 // scale, using the same "100 = own trailing baseline" convention as
 // ampli's existing Crowd Insights index, per the roadmap decision.
 
-export type TrendCategory = 'auto' | 'education' | 'home' | 'finance' | 'travel' | 'tech'
+// 'company' is distinct from the six curated public-interest categories —
+// it's for on-demand tracked companies/competitors added per-project,
+// not part of the curated topic list. Same tables, same pipeline, kept
+// as one type so both flows share all the same normalization logic.
+export type TrendCategory =
+  | 'auto'
+  | 'education'
+  | 'home'
+  | 'finance'
+  | 'travel'
+  | 'tech'
+  | 'company'
 export type TrendSource = 'wikipedia' | 'reddit' | 'youtube'
 
 // What a source fetcher returns for one topic on one day — still in that

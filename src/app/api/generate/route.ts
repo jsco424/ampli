@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import type { AnalysisOutput } from '@/lib/analysisTypes'
+import { stripDashJoins } from '@/lib/textCleanup'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(
@@ -85,6 +86,16 @@ CRITICAL — data grounding: the data summary provided was computed deterministi
   // analysis layer, those findings are the ground truth for slide content.
   // Charts visualize what was confirmed. Narrative reflects what was discussed.
   // The model must not contradict, reframe, or introduce new conclusions.
+  //
+  // TAKEAWAY GROUNDING — this is the piece that was previously enforced by
+  // client-side code, not the prompt: the old pitch-page flow hard-overrode
+  // whatever takeaway the model wrote here with the exact, formula-verified
+  // interpretation text from the matching Key Finding, verbatim, before the
+  // slide ever rendered. Now that visuals generate independently (no single
+  // selected finding to lock each chart to), that override doesn't happen
+  // client-side anymore — so the instruction below has to do that job
+  // instead, explicitly, rather than relying on a weaker "don't contradict"
+  // framing that still leaves room for freely-written narrative prose.
   let confirmedAnalysisInstruction = ''
   if (confirmedAnalysis) {
     const findingsSummary = confirmedAnalysis.keyFindings
@@ -114,7 +125,10 @@ Computed Tables (use these as the basis for chart data where applicable):
 ${tablesSummary}
 
 Flagged Anomalies (acknowledge these in narrative where relevant — do not hide them):
-${anomaliesSummary}`
+${anomaliesSummary}
+
+CHART TAKEAWAY RULE — read carefully, this is stricter than the general "don't contradict" guidance above:
+For each chart, first check whether it corresponds to one of the Key Findings listed above. If it does, the chart's "takeaway" field MUST reuse that finding's interpretation directly — the same wording, or a close verbatim trim of it if length requires. Do NOT rewrite it into new sales narrative, do NOT add persuasive framing it doesn't already have, and do NOT paraphrase it into a different sentence structure. The interpretation text is already formula-verified and analyst-reviewed — treat it as fixed copy to reuse, not a fact to reference while writing something new. Only if a chart has no corresponding Key Finding above should you write an original takeaway, and even then it must be a single factual sentence describing exactly what that specific chart shows — no narrative flourish, no sales language, regardless of the overall tone setting below.`
   }
 
   let chartVarietyHint = ''
@@ -156,7 +170,7 @@ The "${dimName}" breakdown has ${(dimData as any).top.length} categories — use
       "description": "One sentence",
       "data": [{ "name": "Label", "value": 100 }],
       "hero_stat": "48%",
-      "takeaway": "One punchy business sentence",
+      "takeaway": "A single sentence directly grounded in the verified data — see CHART TAKEAWAY RULE below when CONFIRMED ANALYSIS is present. Never narrative or persuasive flourish here, even when the overall narrative field is story-driven.",
       "layout": "split-right",
       "stacked": false,
       "annotations": [{ "x": "Mar", "label": "Launch spike" }],
@@ -172,11 +186,12 @@ Rules:
 - chart data: max 6 data points per chart, every point must come from the data summary.
 - single series: use "value" key. Two series: use two numeric keys e.g. { "name": "Jan", "new": 700, "returning": 1600 }
 - layout: "split-right" | "split-left" | "full-bleed" | "top-bottom"
+- takeaway: data-grounded, not narrative. This field is held to a stricter standard than "narrative" and "insights" — see CHART TAKEAWAY RULE in CONFIRMED ANALYSIS below when present. When no confirmed analysis is provided, still keep takeaway to one factual sentence about what the chart shows, not a sales pitch.
 - annotations: OPTIONAL, max 1-2 per chart. "x" must exactly match a "name" value in that chart's data array. Omit entirely if nothing noteworthy.
 - reference_line: OPTIONAL, max 1 per chart. Value must be in the same unit/scale as chart data. Omit if not relevant.
 - competitor_overlay: OPTIONAL, max 1 chart total across the whole deck. Omit entirely if not relevant.
 - narrative: max 3 paragraphs, keep tight.
-- Writing style: avoid chaining clauses with em-dashes or hyphens. Vary sentence length like a sharp human analyst.
+- Writing style — read carefully, this is a hard rule, not a preference: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen (e.g. "word — word" or "word - word"). This specific pattern is one of the most recognizable tells of AI-generated text, and it must not appear anywhere in narrative, insights, chart descriptions, takeaways, or any other text field. Use a period, comma, or a connecting word ("and", "since", "because") instead. Vary sentence length like a sharp human analyst. Hyphens inside a single word (e.g. "high-revenue", "F-150") are fine and unaffected by this rule — it only applies to a dash used as punctuation between clauses.
 - Return ONLY the JSON object, no markdown, no explanation.
 
 ${toneInstruction}
@@ -212,14 +227,27 @@ ${rawSample || ''}`,
     const coreCleaned = coreRaw.replace(/```json|```/g, '').trim()
     const coreParsed = JSON.parse(coreCleaned)
 
+    // stripDashJoins runs on every AI-authored text field right after
+    // parsing — a deterministic backstop on top of the prompt instruction
+    // above, since a prompt rule alone isn't a guarantee. Never applied to
+    // chart data labels/values, which may legitimately contain hyphenated
+    // words or numeric ranges.
     const coreResult = {
-      pitch_title: coreParsed.pitch_title || projectName || 'Untitled',
-      narrative:
+      pitch_title: stripDashJoins(coreParsed.pitch_title || projectName || 'Untitled'),
+      narrative: stripDashJoins(
         typeof coreParsed.narrative === 'string'
           ? coreParsed.narrative
-          : JSON.stringify(coreParsed.narrative),
-      insights: coreParsed.insights || [],
-      charts: coreParsed.charts || [],
+          : JSON.stringify(coreParsed.narrative)
+      ),
+      insights: (coreParsed.insights || []).map((insight: any) => ({
+        ...insight,
+        description: stripDashJoins(insight.description),
+      })),
+      charts: (coreParsed.charts || []).map((chart: any) => ({
+        ...chart,
+        description: stripDashJoins(chart.description),
+        takeaway: stripDashJoins(chart.takeaway),
+      })),
     }
 
     await supabase
@@ -259,7 +287,7 @@ ${rawSample || ''}`,
   }
 ]
 The "stat" must be grounded in the data summary — never invent a precise figure that isn't traceable to it.
-Writing style: avoid chaining clauses with em-dashes or hyphens. Write like a sharp human analyst.
+Writing style — hard rule: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen. Use a period, comma, or connecting word instead. Word-internal hyphens (e.g. "high-revenue") are fine. Write like a sharp human analyst.
 Return ONLY the JSON array, no markdown.`
 
     client.messages
@@ -278,7 +306,12 @@ Return ONLY the JSON array, no markdown.`
         const recoRaw = recoMessage.content[0].type === 'text' ? recoMessage.content[0].text : ''
         const recoCleaned = recoRaw.replace(/```json|```/g, '').trim()
         try {
-          const recommendations = JSON.parse(recoCleaned)
+          const recommendationsParsed = JSON.parse(recoCleaned)
+          const recommendations = (recommendationsParsed || []).map((rec: any) => ({
+            ...rec,
+            title: stripDashJoins(rec.title),
+            description: stripDashJoins(rec.description),
+          }))
           await supabase.from('projects').update({ recommendations }).eq('id', projectId)
         } catch {
           console.error('Failed to parse recommendations')

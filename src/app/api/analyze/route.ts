@@ -9,6 +9,7 @@ import type {
   BenchmarkContext,
 } from '@/lib/analysisTypes'
 import type { DataSummary } from '@/lib/dataSummary'
+import { stripDashJoins } from '@/lib/textCleanup'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(
@@ -90,6 +91,7 @@ CRITICAL OUTPUT RULES:
 - Anomalies: max 3. One sentence each.
 - Suggested follow-ups: exactly 3. One sentence each.
 - Be concise throughout — the goal is signal density, not completeness.
+- Writing style — read carefully, this is a hard rule, not a preference: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen (e.g. "word — word" or "word - word") anywhere in executiveSummary, interpretation, anomaly descriptions, suggestedAction, table descriptions/footnotes, or suggestedFollowUps. This specific pattern is one of the most recognizable tells of AI-generated text. Use a period, comma, or a connecting word ("and", "since", "because") instead. Word-internal hyphens (e.g. "high-revenue", "F-150") are fine and unaffected — this only applies to a dash used as punctuation between clauses.
 
 Return JSON matching this exact schema. Do not wrap in markdown. Start with { and end with }.
 
@@ -253,6 +255,31 @@ function runVerificationPass(output: AnalysisOutput): void {
     }
   }
   output.verificationComplete = true
+}
+
+// ── Text cleanup pass ───────────────────────────────────────────────────────
+// Deterministic backstop on top of the prompt instruction above — runs
+// stripDashJoins on every free-text field Claude wrote. Never touches
+// numeric fields, formulaType, inputs, or table cell "display" strings
+// (which can legitimately contain numeric ranges like "10 - 20").
+function cleanAnalysisOutputText(output: AnalysisOutput): void {
+  output.executiveSummary = stripDashJoins(output.executiveSummary)
+
+  for (const finding of output.keyFindings) {
+    finding.interpretation = stripDashJoins(finding.interpretation)
+  }
+
+  for (const table of output.insightTables) {
+    table.description = stripDashJoins(table.description)
+    if (table.footnote) table.footnote = stripDashJoins(table.footnote)
+  }
+
+  for (const anomaly of output.anomalies) {
+    anomaly.description = stripDashJoins(anomaly.description)
+    if (anomaly.suggestedAction) anomaly.suggestedAction = stripDashJoins(anomaly.suggestedAction)
+  }
+
+  output.suggestedFollowUps = output.suggestedFollowUps.map((q) => stripDashJoins(q))
 }
 
 // ── Benchmark injection ────────────────────────────────────────────────────
@@ -422,6 +449,33 @@ export async function POST(req: Request) {
     prompt,
     tone,
     industry, // passed from project.industry for benchmark injection
+    // NEW — targetAudience previously only reached /api/generate, meaning
+    // the deck's narrative wrapper could be audience-shaped but the core
+    // findings/hero numbers themselves never were. Passing it here lets
+    // the analysis itself — not just the prose built around it later —
+    // reflect who it's actually being built for.
+    targetAudience,
+    // NEW — target company + competitors, used for the on-demand public
+    // interest fetch below. Optional — analysis works exactly as before
+    // if these aren't passed (e.g. a project with no target company set).
+    targetCompany,
+    projectId,
+  }: {
+    dataSummaryJson: string
+    rawRowsJson?: string
+    conversationHistory?: { role: 'user' | 'assistant'; content: string }[]
+    prompt?: string
+    tone?: string
+    industry?: string | null
+    targetAudience?: {
+      role?: string
+      seniority?: string
+      cares_about?: string[]
+      narrative_style?: string
+      avoid?: string
+    } | null
+    targetCompany?: string | null
+    projectId?: string | null
   } = await req.json()
 
   let summary: DataSummary | null = null
@@ -445,6 +499,60 @@ export async function POST(req: Request) {
   const metricColumns = summary.columns.filter((c) => c.role === 'metric').map((c) => c.name)
   const dimensionColumns = summary.columns.filter((c) => c.role === 'dimension').map((c) => c.name)
   const sampledRows = sampleRows(rawRows)
+
+  // ── Audience tailoring ──────────────────────────────────────────────────
+  // Shapes the actual findings/hero numbers/interpretations, not just the
+  // narrative wrapper built later in /api/generate. Mirrors the same
+  // targetAudience shape that route already accepts, so callers pass the
+  // identical object to both endpoints.
+  let audienceInstruction = ''
+  if (targetAudience) {
+    audienceInstruction = `
+AUDIENCE TAILORING:
+This analysis is being built for: ${targetAudience.role || 'a business stakeholder'}${targetAudience.seniority ? ` (${targetAudience.seniority})` : ''}.
+${targetAudience.cares_about?.length ? `They care about: ${targetAudience.cares_about.join(', ')}. Prioritize findings and hero numbers that speak to these specifically over ones that don't.` : ''}
+${targetAudience.narrative_style ? `Match this narrative style throughout: ${targetAudience.narrative_style}.` : ''}
+${targetAudience.avoid ? `Avoid: ${targetAudience.avoid}.` : ''}
+This shapes which findings you rank highest and how you interpret them — it never changes what the data actually says, only which true things you choose to lead with and how you frame them.`
+  }
+
+  // ── On-demand public interest fetch (Crowd Insights + User Behaviors) ──
+  // Synchronous, not gated behind the daily Trends cron — a target company
+  // being pitched right now almost certainly isn't already one of the
+  // curated topics. Reuses the same Wikipedia/YouTube fetchers and
+  // normalization the scheduled pipeline uses, and persists into
+  // trend_topics/trend_signals so it's tracked going forward too, per the
+  // decision to let ampli's tracked list grow organically. Explicitly
+  // supplementary — instructed below to confirm the story, never drive it.
+  let publicInterestInstruction = ''
+  if (targetCompany) {
+    try {
+      // Same lookup pattern generate/route.ts already uses for
+      // competitorInstruction — kept server-side so the caller doesn't
+      // need to duplicate this fetch.
+      const { data: research } = await supabase
+        .from('company_research')
+        .select('competitors')
+        .eq('company_name', targetCompany)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      const competitorNames = (research?.competitors || []).slice(0, 3).map((c: any) => c.name)
+
+      const { fetchCompanyTrendOnDemand } = await import('@/lib/trends/onDemandFetch')
+      const namesToFetch = [targetCompany, ...competitorNames]
+      const results = await Promise.all(
+        namesToFetch.map((name) => fetchCompanyTrendOnDemand(name, projectId || null))
+      )
+      const sentences = results.map((r) => r.summarySentence).join(' ')
+      publicInterestInstruction = `
+SUPPLEMENTARY CONTEXT — Public Interest (from ampli's User Behaviors tracking):
+${sentences}
+This is real-time public interest data, separate from the uploaded dataset. Use it only as confirming color in the executive summary or a suggested follow-up if it genuinely strengthens the story already told by the core data — never as a primary finding, never in place of a verified number from the dataset, and never if it doesn't clearly support what the data already shows. If it doesn't add anything, don't mention it at all.`
+    } catch (err) {
+      console.error('On-demand public interest fetch failed, continuing without it:', err)
+    }
+  }
 
   // ── Format group comparisons as a verified data table ─────────────────
   // These are computed from ALL rows in dataSummary.ts — server-verified,
@@ -523,6 +631,8 @@ export async function POST(req: Request) {
     `Dimension columns: ${dimensionColumns.join(', ') || 'none detected'}`,
     prompt ? `\n## User Focus\n${prompt}` : '',
     tone ? `\n## Tone\n${tone}` : '',
+    audienceInstruction ? `\n${audienceInstruction}` : '',
+    publicInterestInstruction ? `\n${publicInterestInstruction}` : '',
     '',
     `## Raw Rows Sample (${sampledRows.length} of ${summary.rowCount} rows — for pattern recognition only, not arithmetic)`,
     '```json',
@@ -584,7 +694,10 @@ export async function POST(req: Request) {
   // Pass 2 — deterministic formula verification (<100ms)
   runVerificationPass(analysisOutput)
 
-  // Pass 3 — crowd pool benchmark injection
+  // Pass 3 — dash-join cleanup (deterministic backstop on the prompt rule)
+  cleanAnalysisOutputText(analysisOutput)
+
+  // Pass 4 — crowd pool benchmark injection
   // Runs async after verification — queries Supabase for the project's
   // industry and injects inline benchmark context into matching findings.
   // Only injects when the crowd pool has ≥2 contributions for that industry.

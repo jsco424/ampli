@@ -109,6 +109,12 @@ export default function ProjectViewPage() {
             prompt: data.prompt || null,
             tone: data.tone || 'executive',
             industry: data.industry || null,
+            // NEW — lets the analysis itself (hero numbers, findings) be
+            // audience-shaped, and triggers the on-demand public interest
+            // fetch when a target company is set.
+            targetAudience: data.target_audience || null,
+            targetCompany: data.target_company || null,
+            projectId: data.id,
           }),
         })
           .then((res) => {
@@ -203,6 +209,12 @@ export default function ProjectViewPage() {
             prompt: project.prompt || null,
             tone: project.tone || 'executive',
             industry: project.industry || null,
+            // Audience tailoring carries through follow-ups too. targetCompany
+            // is deliberately omitted here — the on-demand public interest
+            // fetch already ran once on the initial analysis; re-fetching on
+            // every follow-up question would be wasteful and the context is
+            // already part of conversationHistory Claude has access to.
+            targetAudience: project.target_audience || null,
           }),
         })
 
