@@ -453,6 +453,7 @@ export default function ProjectViewPage() {
             exportError={exportError}
             onExport={handleExport}
             onCancel={() => setShowSlideSelector(false)}
+            conversationEntries={conversationEntries}
           />
         )}
 

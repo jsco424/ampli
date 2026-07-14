@@ -222,6 +222,11 @@ interface SlideSelectorProps {
   exportError?: string | null
   onExport: (format: 'pptx' | 'pdf', selections: SelectedFinding[]) => void
   onCancel: () => void
+  // Follow-up "Dig deeper" turns — each has its own findings/tables that
+  // previously had no way to reach the selector at all. Optional so this
+  // component still works exactly as before wherever it's rendered without
+  // a conversation history to pass.
+  conversationEntries?: { question: string; analysis: AnalysisOutput }[]
 }
 
 export default function SlideSelector({
@@ -233,6 +238,7 @@ export default function SlideSelector({
   exportError = null,
   onExport,
   onCancel,
+  conversationEntries = [],
 }: SlideSelectorProps) {
   const [selected, setSelected] = useState<Record<string, SelectedFinding>>({})
   // detailedMode: when true, selected cards expand to show editable fields.
@@ -249,10 +255,19 @@ export default function SlideSelector({
 
   const selectedCount = Object.keys(selected).length
   const atLimit = selectedCount >= MAX_SLIDES
-  const analysisCount = analysis.keyFindings.length + analysis.insightTables.length
+  const followUpFindingsCount = conversationEntries.reduce(
+    (sum, entry) => sum + entry.analysis.keyFindings.length + entry.analysis.insightTables.length,
+    0
+  )
+  const analysisCount =
+    analysis.keyFindings.length + analysis.insightTables.length + followUpFindingsCount
 
-  const toggleFinding = (finding: KeyFinding, idx: number) => {
-    const id = `finding-${idx}`
+  // turnIndex is undefined for the original analysis, a number for a
+  // follow-up turn — this is what keeps IDs unique across all of them
+  // (e.g. "finding-2" from the original vs. "finding-t0-2" from the first
+  // follow-up), since both start counting from 0 independently.
+  const toggleFinding = (finding: KeyFinding, idx: number, turnIndex?: number) => {
+    const id = turnIndex === undefined ? `finding-${idx}` : `finding-t${turnIndex}-${idx}`
     if (selected[id]) {
       const next = { ...selected }
       delete next[id]
@@ -275,8 +290,8 @@ export default function SlideSelector({
     }
   }
 
-  const toggleTable = (table: InsightTable, idx: number) => {
-    const id = `table-${idx}`
+  const toggleTable = (table: InsightTable, idx: number, turnIndex?: number) => {
+    const id = turnIndex === undefined ? `table-${idx}` : `table-t${turnIndex}-${idx}`
     if (selected[id]) {
       const next = { ...selected }
       delete next[id]
@@ -326,13 +341,11 @@ export default function SlideSelector({
     setSelected({ ...selected, [id]: { ...selected[id], ...patch } })
   }
 
-  const orderedSelections = useMemo(
-    () =>
-      Object.values(selected).sort(
-        (a, b) => parseInt(a.id.split('-')[1]) - parseInt(b.id.split('-')[1])
-      ),
-    [selected]
-  )
+  // Selection order — relies on JS preserving insertion order for string
+  // object keys (guaranteed for non-integer-like keys, which all of ours
+  // are, e.g. "finding-2" or "finding-t0-2"). No custom sort needed, and
+  // none would work reliably across both ID formats anyway.
+  const orderedSelections = useMemo(() => Object.values(selected), [selected])
 
   // ── Shared expanded editor ─────────────────────────────────────────────
   // Rendered inside any selected card when detailedMode is true.
@@ -379,7 +392,7 @@ export default function SlideSelector({
             <label
               className={`text-[10px] font-semibold uppercase tracking-wide mb-1 flex items-center gap-1 ${subtle}`}
             >
-              Suggest Chart Type
+              Chart Type
               <span
                 title="This is a suggestion sent to Gamma, not a guarantee — Gamma picks the visual it judges best for each card and may choose something different."
                 className="cursor-help"
@@ -626,6 +639,96 @@ export default function SlideSelector({
               </div>
             </div>
           )}
+
+          {/* Follow-up "Dig deeper" findings — previously had no way to
+              reach the selector at all. Each turn gets its own labeled
+              group so it's clear which follow-up question a finding came
+              from, but selecting one works exactly like an original finding. */}
+          {conversationEntries.map((entry, turnIndex) => (
+            <div key={turnIndex} className="space-y-4">
+              {entry.analysis.keyFindings.length > 0 && (
+                <div>
+                  <p className={`text-xs font-semibold uppercase tracking-wide mb-1 ${subtle}`}>
+                    Follow-up · "{entry.question}"
+                  </p>
+                  <p className={`text-[11px] mb-3 ${subtle}`}>Key Findings</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {entry.analysis.keyFindings.map((finding, idx) => {
+                      const id = `finding-t${turnIndex}-${idx}`
+                      const isSelected = !!selected[id]
+                      const disabled = !isSelected && atLimit
+                      return (
+                        <div
+                          key={idx}
+                          className={cardBase(isSelected, disabled)}
+                          onClick={() => !disabled && toggleFinding(finding, idx, turnIndex)}
+                        >
+                          <div className="p-4 flex items-start gap-3">
+                            <span className="mt-0.5 shrink-0">
+                              {isSelected ? (
+                                <CheckCircle2 size={15} className="text-blue-500" />
+                              ) : (
+                                <Circle size={15} className={subtle} />
+                              )}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
+                                {finding.label}
+                              </p>
+                              <p
+                                className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
+                              >
+                                {finding.value}
+                              </p>
+                            </div>
+                          </div>
+                          {isSelected && renderDetailFields(id, true)}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {entry.analysis.insightTables.length > 0 && (
+                <div>
+                  <p className={`text-[11px] mb-3 ${subtle}`}>Computed Tables</p>
+                  <div className="space-y-3">
+                    {entry.analysis.insightTables.map((table, idx) => {
+                      const id = `table-t${turnIndex}-${idx}`
+                      const isSelected = !!selected[id]
+                      const disabled = !isSelected && atLimit
+                      return (
+                        <div
+                          key={idx}
+                          className={cardBase(isSelected, disabled)}
+                          onClick={() => !disabled && toggleTable(table, idx, turnIndex)}
+                        >
+                          <div className="p-4 flex items-start gap-3">
+                            <span className="mt-0.5 shrink-0">
+                              {isSelected ? (
+                                <CheckCircle2 size={15} className="text-blue-500" />
+                              ) : (
+                                <Circle size={15} className={subtle} />
+                              )}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <Table2 size={11} className={subtle} />
+                                <p className={`text-[11px] ${subtle}`}>Data Table</p>
+                              </div>
+                              <p className="text-sm font-semibold truncate">{table.title}</p>
+                            </div>
+                          </div>
+                          {isSelected && renderDetailFields(id, false)}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
