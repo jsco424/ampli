@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useUser } from '@clerk/nextjs'
+import { useUser, useAuth } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
@@ -42,13 +42,11 @@ import {
 import Link from 'next/link'
 import USStateHeatmap from '@/components/USStateHeatmap'
 
-// Single-color icon components instead of emoji — emoji render
-// inconsistently across OS/browsers (different glyph styles, sometimes
-// multi-color) and clash with the dark, single-accent UI. Rendered with
-// the industry accent color, see render call sites below. Typed as
-// React.ComponentType rather than importing LucideIcon's type separately —
-// keeps this file's imports value-only, which the artifact preview's static
-// checker is strict about.
+// Same Plan ID checked in src/lib/creditLimit.ts and the pricing page —
+// Crowd Insights is Paid-and-above only, per James's decision that Free
+// users shouldn't get access to the pooled benchmark data.
+const PAID_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
+
 const INDUSTRY_ICONS: Record<
   string,
   React.ComponentType<{ size?: number; style?: React.CSSProperties }>
@@ -86,14 +84,6 @@ const INDUSTRY_COLORS: Record<string, string> = {
   Other: '#94a3b8',
 }
 
-// Mirrors the same heuristic /api/crowd uses server-side: rate-like metrics
-// (conversion, churn, ROAS, etc.) were stored as their average LEVEL; absolute
-// quantities (revenue, customers, spend) were stored as GROWTH %. Canonical
-// keys were deliberately chosen to preserve this signal, so re-deriving mode
-// from the stored key here matches what was actually computed at write time.
-// Kept in sync with the abbreviation set in dataSummary.ts / crowd/route.ts —
-// CTR/CPC/CPA/CPM/CPL/ROI/ROAS/ARPU/CVR/CAC don't contain "rate"/"ratio" as a
-// literal substring, so the regex alone would miss them.
 const RATE_LIKE_ABBREVIATIONS = new Set([
   'ctr',
   'cpc',
@@ -136,14 +126,6 @@ function isGrowthMetric(key: string): boolean {
   return !isRateLikeKey(key)
 }
 
-// ── Pooled stat resolution ───────────────────────────────────────────────────
-// Mirrors PooledCategoryMetric in /api/crowd/route.ts exactly — raw
-// accumulators, never a pre-divided number. The displayed value is derived
-// HERE, at read time, from true combined totals — this is what makes the
-// pooled index/rate mathematically correct instead of an average-of-averages.
-// See the route file's doc comment for why that distinction matters (it's
-// the same reason you can't average two batting averages by games played
-// and get the real combined one).
 interface PooledCategoryMetric {
   mode: 'rate' | 'index'
   label: string
@@ -158,17 +140,12 @@ interface ResolvedStat {
   mode: 'rate' | 'index'
   label: string
   value: number
-  // Actual rows behind this number — the real confidence signal (vs. just
-  // "how many contributors mentioned this category"), matching the vision
-  // doc's "Confidence 98% / 48,231 campaigns" pattern.
   sampleRowCount: number
   contributionCount: number
 }
 
 function resolvePooledStat(stat: PooledCategoryMetric): ResolvedStat | null {
   if (stat.mode === 'rate') {
-    // True weighted mean: sum of values / total rows — NOT an average of
-    // each contribution's own average.
     if (stat.sumOfRowCountInCategory === 0) return null
     const value = round2(stat.sumOfMetricInCategory / stat.sumOfRowCountInCategory) as number
     return {
@@ -179,8 +156,6 @@ function resolvePooledStat(stat: PooledCategoryMetric): ResolvedStat | null {
       contributionCount: stat.contributionCount,
     }
   }
-  // Index mode: (category's share of combined metric total) / (category's
-  // share of combined row count) * 100, computed from TRUE pooled sums.
   if (stat.sumOfMetricGrandTotal === 0 || stat.sumOfTotalRowCount === 0) return null
   const shareOfMetric = stat.sumOfMetricInCategory / stat.sumOfMetricGrandTotal
   const shareOfRows = stat.sumOfRowCountInCategory / stat.sumOfTotalRowCount
@@ -199,9 +174,6 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-// Builds a simple CSV export of everything currently visible for an
-// industry — headline metrics, additional metrics, dimension breakdowns,
-// trends, and insights — entirely client-side, no backend call needed.
 function downloadIndustryCSV(industry: any) {
   const lines: string[] = []
   lines.push(`Industry,${industry.industry}`)
@@ -270,6 +242,7 @@ function downloadIndustryCSV(industry: any) {
 
 export default function CrowdInsightsPage() {
   const { user, isLoaded } = useUser()
+  const { has } = useAuth()
   const { dark } = useTheme()
   const router = useRouter()
 
@@ -311,12 +284,6 @@ export default function CrowdInsightsPage() {
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
 
-  // Union of every metric available across ALL industries (the 3 original
-  // fixed buckets plus anything in extendedMetrics), so the comparison
-  // chart's dropdown works across the full captured vocabulary. This is
-  // ALWAYS computed regardless of how many industries currently have data
-  // for the active comparisonMetric — the dropdown must stay populated even
-  // when the chart itself can't render (see chartIndustries below).
   const metricOptions: [string, string][] = (() => {
     const map = new Map<string, string>()
     map.set('avg_revenue_growth', 'Revenue Growth')
@@ -335,12 +302,6 @@ export default function CrowdInsightsPage() {
 
   const chartIndustries = industries.filter((i) => getMetricValue(i, comparisonMetric) !== null)
 
-  // Shows the selected industry plus its closest-performing peers on the
-  // chosen metric — not the full ranked list. With a handful of industries
-  // today this naturally shows everyone, but it's built to scale: once
-  // there are 20 industries, "Tech is #1" isn't a useful comparison if the
-  // user's own industry sits in a totally different performance tier — what
-  // actually matters is who's nearby.
   const PEER_COMPARISON_COUNT = 5
   const selectedValue = selected ? getMetricValue(selected, comparisonMetric) : null
   const peerIndustries =
@@ -359,10 +320,6 @@ export default function CrowdInsightsPage() {
               (getMetricValue(b, comparisonMetric) ?? 0)
           )
 
-  // Raw pooled accumulators for the selected industry's state breakdown.
-  // Resolved into displayable {value, sampleRowCount} pairs below via
-  // resolvePooledStat — NEVER read a stored average/index directly, since
-  // none is stored anymore (see PooledCategoryMetric).
   const stateBreakdown = selected?.metrics?.dimensionBreakdowns?.state as
     | Record<
         string,
@@ -393,10 +350,6 @@ export default function CrowdInsightsPage() {
   const mapSuffix = mapStatMode === 'index' ? '' : '%'
   const mapIsIndex = mapStatMode === 'index'
 
-  // Grand total of rows across every state, for share-of-activity mode —
-  // computed from the same totalRowCount accumulators, so "share" is a true
-  // pooled share (rows in this state / rows in all states) rather than an
-  // average of per-contributor percentages.
   const stateGrandTotalRows = stateBreakdown
     ? Object.values(stateBreakdown).reduce((sum, s) => sum + s.totalRowCount, 0)
     : 0
@@ -419,16 +372,46 @@ export default function CrowdInsightsPage() {
     return result
   })()
 
-  // For index mode, "top" means furthest over-indexed (highest number) —
-  // sorting by raw value still does the right thing there. Share/rate modes
-  // also sort fine by raw value (higher share or higher rate is "top").
   const top5States = Object.entries(mapData)
     .sort((a, b) => b[1].value - a[1].value)
     .slice(0, 5)
 
   if (!isLoaded || !user) return null
 
-  // Locked state — user has never opted in
+  // Plan gate — checked first, regardless of opt-in status. Crowd Insights
+  // is Paid-and-above only; a Free user who's opted in on a project still
+  // shouldn't see this data, since the two gates answer different
+  // questions ("have you contributed" vs. "are you on a paid plan").
+  const hasPaidPlan = has?.({ plan: PAID_PLAN_ID }) ?? false
+  if (!hasPaidPlan) {
+    return (
+      <div className={`min-h-screen ${base}`}>
+        <Navbar />
+        <main className="pt-24 px-6 max-w-lg mx-auto text-center">
+          <div className={`p-10 rounded-2xl border ${card}`}>
+            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
+              <Lock size={24} className="text-blue-500" />
+            </div>
+            <h1 className="text-xl font-bold mb-2">Crowd Insights is a Paid feature</h1>
+            <p className={`text-sm leading-relaxed mb-6 ${subtle}`}>
+              Industry benchmarking is available on Paid and Enterprise plans. Upgrade to unlock
+              anonymized aggregates across every industry contributing to the pool.
+            </p>
+            <Link
+              href="/pricing"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
+            >
+              View Plans
+            </Link>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  // Locked state — user has never opted in (still applies on top of the
+  // plan gate above; being Paid doesn't waive the "contribute to unlock"
+  // requirement, since the pool's value depends on real contributions)
   if (!hasOptedIn && !loading) {
     return (
       <div className={`min-h-screen ${base}`}>
@@ -461,7 +444,6 @@ export default function CrowdInsightsPage() {
     <div className={`min-h-screen ${base}`}>
       <Navbar />
       <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
-        {/* Header */}
         <div className="mt-6 mb-8 flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold mb-1">Crowd Insights</h1>
@@ -491,7 +473,6 @@ export default function CrowdInsightsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Industry List */}
             <div className="lg:col-span-1 space-y-2">
               {industries.map((ind) => (
                 <button
@@ -540,10 +521,8 @@ export default function CrowdInsightsPage() {
               ))}
             </div>
 
-            {/* Industry Detail */}
             {selected && (
               <div className="lg:col-span-2 space-y-4">
-                {/* Header + headline metrics */}
                 <div className={`p-5 rounded-2xl border ${card}`}>
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
@@ -603,7 +582,6 @@ export default function CrowdInsightsPage() {
                   </div>
                 </div>
 
-                {/* Additional Benchmarks */}
                 {Object.entries(selected.metrics?.extendedMetrics || {}).filter(
                   ([k]) => !FIXED_BUCKET_KEYS.includes(k)
                 ).length > 0 && (
@@ -632,7 +610,6 @@ export default function CrowdInsightsPage() {
                   </div>
                 )}
 
-                {/* Category Breakdowns */}
                 {Object.keys(selected.metrics?.dimensionBreakdowns || {}).length > 0 && (
                   <div className={`p-5 rounded-2xl border ${card}`}>
                     <h3 className="font-semibold text-sm mb-1">Category Breakdowns</h3>
@@ -642,18 +619,10 @@ export default function CrowdInsightsPage() {
                     <div className="space-y-5">
                       {Object.entries(selected.metrics.dimensionBreakdowns).map(
                         ([dimName, dimData]: [string, any]) => {
-                          // Redundant once state-level data exists for the same
-                          // industry — state is strictly higher-resolution, and
-                          // the map + Top 5 list already cover this ground.
                           if (dimName === 'region') return null
                           if (dimName === 'state') {
                             return (
                               <div key={dimName}>
-                                {/* Dropdown lives in its own always-rendered
-                                    header, separate from the map/empty-state
-                                    below it — picking a metric with no current
-                                    data must never remove the only control
-                                    that lets you pick a DIFFERENT metric. */}
                                 <div className="flex items-center justify-between mb-2 gap-3">
                                   <p
                                     className={`text-xs font-semibold uppercase tracking-wide ${subtle}`}
@@ -796,11 +765,7 @@ export default function CrowdInsightsPage() {
                   </div>
                 )}
 
-                {/* Chart — cross-industry comparison, metric selectable */}
                 <div className={`p-5 rounded-2xl border ${card}`}>
-                  {/* Dropdown is in its own always-rendered header, outside the
-                      chart-vs-empty-state branch below — the same fix as the
-                      state map above, and for the same reason. */}
                   <div className="flex items-center justify-between mb-1 gap-3">
                     <h3 className="font-semibold text-sm truncate">
                       {comparisonLabel} by Industry
@@ -872,7 +837,6 @@ export default function CrowdInsightsPage() {
                   )}
                 </div>
 
-                {/* Trends */}
                 {selected.metrics?.top_trends?.length > 0 && (
                   <div className={`p-5 rounded-2xl border ${card}`}>
                     <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
@@ -892,7 +856,6 @@ export default function CrowdInsightsPage() {
                   </div>
                 )}
 
-                {/* Key Insights */}
                 {selected.metrics?.key_insights?.length > 0 && (
                   <div className={`p-5 rounded-2xl border ${card}`}>
                     <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">

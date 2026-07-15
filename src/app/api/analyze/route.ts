@@ -487,31 +487,23 @@ export async function POST(req: Request) {
     projectId?: string | null
   } = await req.json()
 
-  // ── Interim credit limit check ──────────────────────────────────────────
-  // Blanket Free-tier cap applied to every account right now, since there's
-  // no plan concept in the app yet (pending Clerk Billing). This is the
-  // stopgap that prevents unlimited usage on brand-new signups while real
-  // billing gets built — see src/lib/creditLimit.ts for the full reasoning.
-  if (projectId) {
-    const { data: projectRow } = await supabase
-      .from('projects')
-      .select('user_id')
-      .eq('id', projectId)
-      .single()
-
-    if (projectRow?.user_id) {
-      const limitCheck = await checkCreditLimit(projectRow.user_id)
-      if (!limitCheck.allowed) {
-        return NextResponse.json(
-          {
-            error: 'CREDIT_LIMIT_EXCEEDED',
-            message: "You've used all your credits for this month.",
-            creditsUsed: limitCheck.creditsUsed,
-            creditsLimit: limitCheck.creditsLimit,
-          },
-          { status: 402 }
-        )
-      }
+  // ── Credit limit check, now plan-aware ──────────────────────────────────
+  // checkCreditLimit() reads the signed-in user directly from Clerk's own
+  // server-side auth() — real plan status, not anything the client claims.
+  // Free: 1,000 credits/mo. Paid (has the PAID_PLAN_ID plan): 20,000/mo.
+  {
+    const limitCheck = await checkCreditLimit()
+    if (!limitCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: 'CREDIT_LIMIT_EXCEEDED',
+          message: "You've used all your credits for this month.",
+          creditsUsed: limitCheck.creditsUsed,
+          creditsLimit: limitCheck.creditsLimit,
+          isPaid: limitCheck.isPaid,
+        },
+        { status: 402 }
+      )
     }
   }
 

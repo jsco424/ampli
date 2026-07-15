@@ -5,6 +5,13 @@ import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { Check, Minus, Plus, Sparkles, Building2, Zap } from 'lucide-react'
+import { SignedIn, SignedOut, Show } from '@clerk/nextjs'
+import { CheckoutButton } from '@clerk/nextjs/experimental'
+
+// The Paid plan's Clerk Plan ID — created in Clerk's dashboard, $119/month.
+// Kept in sync with the same constant in src/lib/creditLimit.ts, which
+// checks this same plan for the credit-limit branch.
+const PAID_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
 
 // ── Enterprise seat pricing ──────────────────────────────────────────────
 // Blocks of 10 seats at $999/block. Within a block, seats beyond the block's
@@ -150,12 +157,23 @@ export default function PricingPage() {
                 </li>
               ))}
             </ul>
-            <Link
-              href="/sign-up"
-              className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
-            >
-              Start with Paid
-            </Link>
+            <SignedOut>
+              <Link
+                href="/sign-up"
+                className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
+              >
+                Sign Up to Start with Paid
+              </Link>
+            </SignedOut>
+            <SignedIn>
+              <Show when="signed-in">
+                <CheckoutButton planId={PAID_PLAN_ID} planPeriod="month">
+                  <button className="w-full text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors">
+                    Upgrade to Paid
+                  </button>
+                </CheckoutButton>
+              </Show>
+            </SignedIn>
             <p className={`text-[11px] mt-3 text-center ${muted}`}>
               Need more room? Additional credits available anytime.
             </p>
