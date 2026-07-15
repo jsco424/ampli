@@ -13,6 +13,7 @@ const NAV_LINKS = [
   { label: 'Crowd Insights', href: '/crowd' },
   { label: 'User Behaviors', href: '/trends' },
   { label: 'Research', href: '/dashboard#research' },
+  { label: 'Pricing', href: '/pricing' },
 ]
 
 export default function Navbar() {
