@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
+import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
@@ -59,6 +60,7 @@ export default function ProjectViewPage() {
   >([])
   const [analysisLoading, setAnalysisLoading] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [isCreditLimitError, setIsCreditLimitError] = useState(false)
   const [showSlideSelector, setShowSlideSelector] = useState(false)
 
   const [chartsGenerating, setChartsGenerating] = useState(false)
@@ -124,11 +126,22 @@ export default function ProjectViewPage() {
             projectId: data.id,
           }),
         })
-          .then((res) => {
+          .then(async (res) => {
+            if (res.status === 402) {
+              const limitInfo = await res.json()
+              setIsCreditLimitError(true)
+              setAnalysisError(
+                `You've used all ${limitInfo.creditsLimit} credits for this month. Upgrade to keep going.`
+              )
+              setAnalysisLoading(false)
+              return null
+            }
             if (!res.ok) throw new Error(`Analysis failed: ${res.status}`)
             return res.json()
           })
-          .then(({ analysis, assistantTurn }) => {
+          .then((result) => {
+            if (!result) return // credit limit hit, already handled above
+            const { analysis, assistantTurn } = result
             setAnalysisOutput(analysis)
             setConversationHistory([assistantTurn])
             supabase
@@ -232,9 +245,22 @@ export default function ProjectViewPage() {
             // every follow-up question would be wasteful and the context is
             // already part of conversationHistory Claude has access to.
             targetAudience: project.target_audience || null,
+            // Was missing entirely — meant follow-up questions were never
+            // counted against the credit limit at all, and never logged to
+            // token_usage_log's 'analyze_followup' route either.
+            projectId: project.id,
           }),
         })
 
+        if (res.status === 402) {
+          const limitInfo = await res.json()
+          setIsCreditLimitError(true)
+          setAnalysisError(
+            `You've used all ${limitInfo.creditsLimit} credits for this month. Upgrade to keep going.`
+          )
+          setAnalysisLoading(false)
+          return
+        }
         if (!res.ok) throw new Error(`Analysis failed: ${res.status}`)
         const { analysis, assistantTurn } = await res.json()
 
@@ -519,15 +545,24 @@ export default function ProjectViewPage() {
                 className={`p-5 rounded-2xl border mb-4 ${dark ? 'bg-red-950/20 border-red-900/30' : 'bg-red-50 border-red-200'}`}
               >
                 <p className="text-sm text-red-400 mb-3">{analysisError}</p>
-                <button
-                  onClick={() => {
-                    analysisTriggered.current = false
-                    window.location.reload()
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                >
-                  Try again
-                </button>
+                {isCreditLimitError ? (
+                  <Link
+                    href="/pricing"
+                    className="inline-block text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors"
+                  >
+                    View Plans
+                  </Link>
+                ) : (
+                  <button
+                    onClick={() => {
+                      analysisTriggered.current = false
+                      window.location.reload()
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                  >
+                    Try again
+                  </button>
+                )}
               </div>
             )}
 

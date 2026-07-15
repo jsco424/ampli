@@ -35,7 +35,7 @@ const FREE_FEATURES = [
 ]
 
 const PAID_FEATURES = [
-  'Everything in Free, unlimited monthly presentations*',
+  '~20,000 credits/month (roughly 30-40 presentations)',
   'Crowd-sourced industry benchmarking',
   'User Behaviors — public interest tracking',
   'Custom brand color & theme matching',
@@ -45,6 +45,7 @@ const PAID_FEATURES = [
 ]
 
 const ENTERPRISE_FEATURES = [
+  '~30,000 credits/seat/month (roughly 50-60 presentations per seat)',
   'Everything in Paid, for your whole team',
   'Centralized billing across all seats',
   'Dedicated onboarding',
@@ -156,7 +157,7 @@ export default function PricingPage() {
               Start with Paid
             </Link>
             <p className={`text-[11px] mt-3 text-center ${muted}`}>
-              *Subject to fair-use limits to keep the platform fast for everyone.
+              Need more room? Additional credits available anytime.
             </p>
           </div>
 

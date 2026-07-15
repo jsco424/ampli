@@ -11,11 +11,19 @@ import type {
 import type { DataSummary } from '@/lib/dataSummary'
 import { stripDashJoins } from '@/lib/textCleanup'
 import { logTokenUsage } from '@/lib/tokenUsage'
+import { checkCreditLimit } from '@/lib/creditLimit'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+// Service-role key, not anon — this is trusted first-party server code
+// making its own database writes (saving analysis results), not acting on
+// behalf of a specific user's browser session. Now that RLS is being
+// properly locked down on brand_settings/company_research/crowd_insights/
+// projects/user_settings, an anon-key client here would start failing its
+// own reads/writes the moment those policies go live, since a server-side
+// fetch has no Clerk token attached the way a browser request does.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 // ── System prompt ──────────────────────────────────────────────────────────
@@ -478,6 +486,34 @@ export async function POST(req: Request) {
     targetCompany?: string | null
     projectId?: string | null
   } = await req.json()
+
+  // ── Interim credit limit check ──────────────────────────────────────────
+  // Blanket Free-tier cap applied to every account right now, since there's
+  // no plan concept in the app yet (pending Clerk Billing). This is the
+  // stopgap that prevents unlimited usage on brand-new signups while real
+  // billing gets built — see src/lib/creditLimit.ts for the full reasoning.
+  if (projectId) {
+    const { data: projectRow } = await supabase
+      .from('projects')
+      .select('user_id')
+      .eq('id', projectId)
+      .single()
+
+    if (projectRow?.user_id) {
+      const limitCheck = await checkCreditLimit(projectRow.user_id)
+      if (!limitCheck.allowed) {
+        return NextResponse.json(
+          {
+            error: 'CREDIT_LIMIT_EXCEEDED',
+            message: "You've used all your credits for this month.",
+            creditsUsed: limitCheck.creditsUsed,
+            creditsLimit: limitCheck.creditsLimit,
+          },
+          { status: 402 }
+        )
+      }
+    }
+  }
 
   let summary: DataSummary | null = null
   let rawRows: Record<string, any>[] = []
