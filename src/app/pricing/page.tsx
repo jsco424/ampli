@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { Check, Minus, Plus, Sparkles, Building2, Zap } from 'lucide-react'
-import { SignedIn, SignedOut, Show } from '@clerk/nextjs'
+import { useUser } from '@clerk/nextjs'
 import { CheckoutButton } from '@clerk/nextjs/experimental'
 
 // The Paid plan's Clerk Plan ID — created in Clerk's dashboard, $119/month.
@@ -62,6 +62,7 @@ const ENTERPRISE_FEATURES = [
 
 export default function PricingPage() {
   const { dark } = useTheme()
+  const { isSignedIn } = useUser()
   const [enterpriseSeats, setEnterpriseSeats] = useState(10)
 
   const enterprisePrice = useMemo(
@@ -157,23 +158,20 @@ export default function PricingPage() {
                 </li>
               ))}
             </ul>
-            <SignedOut>
+            {!isSignedIn ? (
               <Link
                 href="/sign-up"
                 className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
               >
                 Sign Up to Start with Paid
               </Link>
-            </SignedOut>
-            <SignedIn>
-              <Show when="signed-in">
-                <CheckoutButton planId={PAID_PLAN_ID} planPeriod="month">
-                  <button className="w-full text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors">
-                    Upgrade to Paid
-                  </button>
-                </CheckoutButton>
-              </Show>
-            </SignedIn>
+            ) : (
+              <CheckoutButton planId={PAID_PLAN_ID} planPeriod="month">
+                <button className="w-full text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors">
+                  Upgrade to Paid
+                </button>
+              </CheckoutButton>
+            )}
             <p className={`text-[11px] mt-3 text-center ${muted}`}>
               Need more room? Additional credits available anytime.
             </p>
