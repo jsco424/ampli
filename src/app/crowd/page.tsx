@@ -42,10 +42,11 @@ import {
 import Link from 'next/link'
 import USStateHeatmap from '@/components/USStateHeatmap'
 
-// Same Plan ID checked in src/lib/creditLimit.ts and the pricing page —
-// Crowd Insights is Paid-and-above only, per James's decision that Free
-// users shouldn't get access to the pooled benchmark data.
-const PAID_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
+// Same slug used in src/lib/creditLimit.ts — has({ plan: ... }) needs the
+// plan's SLUG, not its raw ID (cplan_...). Using the ID here was the bug
+// that let a genuinely subscribed user still get blocked. Confirmed
+// against Clerk's dashboard (Plans → Plan Key column): 'business'.
+const BUSINESS_PLAN_SLUG = 'business'
 
 const INDUSTRY_ICONS: Record<
   string,
@@ -379,11 +380,11 @@ export default function CrowdInsightsPage() {
   if (!isLoaded || !user) return null
 
   // Plan gate — checked first, regardless of opt-in status. Crowd Insights
-  // is Paid-and-above only; a Free user who's opted in on a project still
-  // shouldn't see this data, since the two gates answer different
+  // is Business-and-above only; a Free user who's opted in on a project
+  // still shouldn't see this data, since the two gates answer different
   // questions ("have you contributed" vs. "are you on a paid plan").
-  const hasPaidPlan = has?.({ plan: PAID_PLAN_ID }) ?? false
-  if (!hasPaidPlan) {
+  const hasBusinessPlan = has?.({ plan: BUSINESS_PLAN_SLUG }) ?? false
+  if (!hasBusinessPlan) {
     return (
       <div className={`min-h-screen ${base}`}>
         <Navbar />
@@ -392,10 +393,11 @@ export default function CrowdInsightsPage() {
             <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
               <Lock size={24} className="text-blue-500" />
             </div>
-            <h1 className="text-xl font-bold mb-2">Crowd Insights is a Paid feature</h1>
+            <h1 className="text-xl font-bold mb-2">Crowd Insights is a Business feature</h1>
             <p className={`text-sm leading-relaxed mb-6 ${subtle}`}>
-              Industry benchmarking is available on Paid and Enterprise plans. Upgrade to unlock
-              anonymized aggregates across every industry contributing to the pool.
+              Industry benchmarking is available on Business and Enterprise plans — and requires
+              contributing at least one dataset to the pool, same as on any plan. Upgrade first,
+              then opt in on your next upload to unlock it.
             </p>
             <Link
               href="/pricing"
@@ -410,8 +412,9 @@ export default function CrowdInsightsPage() {
   }
 
   // Locked state — user has never opted in (still applies on top of the
-  // plan gate above; being Paid doesn't waive the "contribute to unlock"
-  // requirement, since the pool's value depends on real contributions)
+  // plan gate above; being on Business doesn't waive the "contribute to
+  // unlock" requirement, since the pool's value depends on real
+  // contributions)
   if (!hasOptedIn && !loading) {
     return (
       <div className={`min-h-screen ${base}`}>

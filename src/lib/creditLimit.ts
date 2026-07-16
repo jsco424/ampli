@@ -21,12 +21,16 @@ const supabaseAdmin = createClient(
 const CREDITS_PER_DOLLAR = 600 / 0.56
 
 const FREE_CREDIT_LIMIT = 1000
-const PAID_CREDIT_LIMIT = 20000
+const BUSINESS_CREDIT_LIMIT = 20000
 
-// The Paid plan's Clerk Plan ID — the actual thing being checked via
-// has({ plan: PAID_PLAN_ID }) below. Update this if the plan is ever
-// recreated in Clerk's dashboard (a new plan gets a new ID).
-const PAID_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
+// The Business plan's Clerk Plan ID and slug are two DIFFERENT identifiers
+// used for two different Clerk APIs — mixing them up is exactly what broke
+// the plan gate before this fix:
+//   - PLAN ID (cplan_...) — used for checkout (CheckoutButton's planId prop)
+//   - PLAN SLUG — used for has({ plan: ... }) authorization checks, per
+//     every example in Clerk's own docs (e.g. has({ plan: 'bronze' }))
+// Confirmed against Clerk's dashboard (Plans → Plan Key column): 'business'.
+const BUSINESS_PLAN_SLUG = 'business'
 
 export interface CreditLimitResult {
   allowed: boolean
@@ -49,8 +53,8 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
     return { allowed: false, creditsUsed: 0, creditsLimit: FREE_CREDIT_LIMIT, isPaid: false }
   }
 
-  const isPaid = has({ plan: PAID_PLAN_ID })
-  const creditsLimit = isPaid ? PAID_CREDIT_LIMIT : FREE_CREDIT_LIMIT
+  const isPaid = has({ plan: BUSINESS_PLAN_SLUG })
+  const creditsLimit = isPaid ? BUSINESS_CREDIT_LIMIT : FREE_CREDIT_LIMIT
 
   const monthStart = new Date()
   monthStart.setDate(1)

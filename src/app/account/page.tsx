@@ -82,7 +82,7 @@ export default function AccountPage() {
                         : 'bg-zinc-100 text-zinc-600'
                   }`}
                 >
-                  {status?.isPaid ? 'Paid' : 'Free'}
+                  {status?.isPaid ? 'Business' : 'Free'}
                 </span>
               </div>
 
@@ -91,7 +91,7 @@ export default function AccountPage() {
                   href="/pricing"
                   className="block text-center py-2.5 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
                 >
-                  Upgrade to Paid
+                  Upgrade to Business
                 </Link>
               )}
             </div>

@@ -8,10 +8,11 @@ import { Check, Minus, Plus, Sparkles, Building2, Zap } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { CheckoutButton } from '@clerk/nextjs/experimental'
 
-// The Paid plan's Clerk Plan ID — created in Clerk's dashboard, $119/month.
-// Kept in sync with the same constant in src/lib/creditLimit.ts, which
-// checks this same plan for the credit-limit branch.
-const PAID_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
+// The Business plan's Clerk Plan ID — used for checkout only (CheckoutButton's
+// planId prop needs the raw ID). Authorization checks elsewhere (creditLimit.ts,
+// crowd/page.tsx) use the plan's SLUG instead — a different identifier for a
+// different Clerk API. Don't mix these up; that was a real bug once already.
+const BUSINESS_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
 
 // ── Enterprise seat pricing ──────────────────────────────────────────────
 // Blocks of 10 seats at $999/block. Within a block, seats beyond the block's
@@ -31,7 +32,7 @@ function calculateEnterprisePrice(seats: number): number {
   return fullBlocks * ENTERPRISE_BLOCK_PRICE + remainder * ENTERPRISE_EXTRA_SEAT_PRICE
 }
 
-const PAID_PRICE_PER_SEAT = 119
+const BUSINESS_PRICE_PER_SEAT = 119
 
 const FREE_FEATURES = [
   '~1,000 credits/month (roughly 1-2 full presentations)',
@@ -41,9 +42,9 @@ const FREE_FEATURES = [
   'Standard Gamma themes',
 ]
 
-const PAID_FEATURES = [
+const BUSINESS_FEATURES = [
   '~20,000 credits/month (roughly 30-40 presentations)',
-  'Crowd-sourced industry benchmarking',
+  'Crowd-sourced industry benchmarking*',
   'User Behaviors — public interest tracking',
   'Custom brand color & theme matching',
   'Saved custom templates',
@@ -53,7 +54,7 @@ const PAID_FEATURES = [
 
 const ENTERPRISE_FEATURES = [
   '~30,000 credits/seat/month (roughly 50-60 presentations per seat)',
-  'Everything in Paid, for your whole team',
+  'Everything in Business, for your whole team',
   'Centralized billing across all seats',
   'Dedicated onboarding',
   'Custom template curation for your brand',
@@ -137,22 +138,24 @@ export default function PricingPage() {
             </p>
           </div>
 
-          {/* Paid */}
+          {/* Business */}
           <div className={`p-7 rounded-3xl border relative ${cardHighlight}`}>
             <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-blue-500 text-white text-[11px] font-semibold">
               Most Popular
             </div>
             <div className="flex items-center gap-2 mb-1">
               <Zap size={16} className="text-blue-400" />
-              <p className="font-semibold text-sm">Paid</p>
+              <p className="font-semibold text-sm">Business</p>
             </div>
-            <p className={`text-xs mb-5 ${muted}`}>For individual analysts and account managers</p>
+            <p className={`text-xs mb-5 ${muted}`}>
+              For small businesses, individual analysts, and account managers
+            </p>
             <div className="mb-6">
-              <span className="text-4xl font-black">${PAID_PRICE_PER_SEAT}</span>
+              <span className="text-4xl font-black">${BUSINESS_PRICE_PER_SEAT}</span>
               <span className={`text-sm ml-1 ${muted}`}>/seat/month</span>
             </div>
             <ul className="space-y-3 mb-8">
-              {PAID_FEATURES.map((f) => (
+              {BUSINESS_FEATURES.map((f) => (
                 <li key={f} className="flex items-start gap-2.5 text-sm">
                   <Check size={15} className="text-emerald-500 shrink-0 mt-0.5" />
                   <span className={dark ? 'text-zinc-300' : 'text-zinc-700'}>{f}</span>
@@ -163,7 +166,7 @@ export default function PricingPage() {
               <div
                 className={`p-4 rounded-xl text-center text-sm font-medium ${dark ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700'}`}
               >
-                🎉 Welcome to Paid! Your limit is now 20,000 credits/month, and Crowd Insights +
+                🎉 Welcome to Business! Your limit is now 20,000 credits/month, and Crowd Insights +
                 User Behaviors are unlocked.
               </div>
             ) : !isSignedIn ? (
@@ -171,21 +174,22 @@ export default function PricingPage() {
                 href="/sign-up"
                 className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
               >
-                Sign Up to Start with Paid
+                Sign Up to Start with Business
               </Link>
             ) : (
               <CheckoutButton
-                planId={PAID_PLAN_ID}
+                planId={BUSINESS_PLAN_ID}
                 planPeriod="month"
                 onSubscriptionComplete={() => setJustUpgraded(true)}
               >
                 <button className="w-full text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors">
-                  Upgrade to Paid
+                  Upgrade to Business
                 </button>
               </CheckoutButton>
             )}
             <p className={`text-[11px] mt-3 text-center ${muted}`}>
-              Need more room? Additional credits available anytime.
+              *Crowd Insights unlocks once you contribute at least one dataset — same requirement on
+              every plan.
             </p>
           </div>
 
@@ -211,11 +215,11 @@ export default function PricingPage() {
                   ${enterprisePerSeat.toFixed(2)}/seat effective
                 </span>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={() => adjustSeats(-1)}
                   disabled={enterpriseSeats <= MIN_ENTERPRISE_SEATS}
-                  className={`p-2 rounded-lg border transition-colors disabled:opacity-30 ${dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-100'}`}
+                  className={`w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border transition-colors disabled:opacity-30 ${dark ? 'border-white/15 hover:bg-white/5' : 'border-zinc-300 hover:bg-zinc-100'}`}
                 >
                   <Minus size={13} />
                 </button>
@@ -229,12 +233,12 @@ export default function PricingPage() {
                         Math.min(MAX_ENTERPRISE_SEATS, Math.max(MIN_ENTERPRISE_SEATS, v))
                       )
                   }}
-                  className="flex-1 text-center text-lg font-bold bg-transparent outline-none"
+                  className={`flex-1 h-9 text-center text-lg font-bold bg-transparent outline-none border rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${dark ? 'border-white/15' : 'border-zinc-300'}`}
                 />
                 <button
                   onClick={() => adjustSeats(1)}
                   disabled={enterpriseSeats >= MAX_ENTERPRISE_SEATS}
-                  className={`p-2 rounded-lg border transition-colors disabled:opacity-30 ${dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-100'}`}
+                  className={`w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border transition-colors disabled:opacity-30 ${dark ? 'border-white/15 hover:bg-white/5' : 'border-zinc-300 hover:bg-zinc-100'}`}
                 >
                   <Plus size={13} />
                 </button>
@@ -297,7 +301,7 @@ export default function PricingPage() {
                   <tr className={dark ? 'bg-white/[0.03]' : 'bg-zinc-50'}>
                     <th className="text-left px-5 py-4 font-semibold">Feature</th>
                     <th className="text-center px-5 py-4 font-semibold">Free</th>
-                    <th className="text-center px-5 py-4 font-semibold text-blue-500">Paid</th>
+                    <th className="text-center px-5 py-4 font-semibold text-blue-500">Business</th>
                     <th className="text-center px-5 py-4 font-semibold">Enterprise</th>
                   </tr>
                 </thead>
@@ -319,7 +323,7 @@ export default function PricingPage() {
                     { feature: 'Auto-generated visuals', free: true, paid: true, ent: true },
                     { feature: 'Export to PPTX / PDF', free: true, paid: true, ent: true },
                     { feature: 'Export history', free: false, paid: true, ent: true },
-                    { feature: 'Crowd Insights benchmarking', free: false, paid: true, ent: true },
+                    { feature: 'Crowd Insights benchmarking*', free: false, paid: true, ent: true },
                     { feature: 'User Behaviors tracking', free: false, paid: true, ent: true },
                     { feature: 'Custom brand color & theme', free: false, paid: true, ent: true },
                     { feature: 'Saved custom templates', free: false, paid: true, ent: true },
@@ -354,6 +358,9 @@ export default function PricingPage() {
               </table>
             </div>
           </div>
+          <p className={`text-[11px] text-center mt-3 ${muted}`}>
+            *Requires contributing at least one dataset to unlock, same as on every plan.
+          </p>
         </div>
       </main>
     </div>

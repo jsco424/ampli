@@ -48,7 +48,7 @@ const STEPS = [
       'Free gives you about 1,000 credits a month — roughly 1-2 full presentations, enough to see what ampli can do. Credits refresh automatically each month, and you can upgrade anytime for a lot more room plus access to Crowd Insights and User Behaviors.',
     tips: [
       '~1,000 credits/month ≈ 1-2 presentations',
-      'Paid unlocks ~20,000 credits/month (~30-40 presentations) plus industry benchmarking',
+      'Business unlocks ~20,000 credits/month (~30-40 presentations) plus industry benchmarking',
       'Find pricing anytime from the Pricing link in the navbar',
     ],
   },
