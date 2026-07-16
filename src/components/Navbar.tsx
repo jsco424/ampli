@@ -10,11 +10,17 @@ import { useState } from 'react'
 const NAV_LINKS = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Projects', href: '/projects' },
-  { label: 'Crowd Insights', href: '/crowd' },
-  { label: 'User Behaviors', href: '/trends' },
+  { label: 'Intelligence', href: '/intelligence' },
   { label: 'Research', href: '/dashboard#research' },
   { label: 'Pricing', href: '/pricing' },
 ]
+
+// Intelligence rolls up multiple existing pages (/trends, /crowd, and
+// eventually /intelligence/company-benchmarks) that weren't relocated
+// under /intelligence's URL — this map is what lets the nav link still
+// highlight as active on any of those pages, not just literally on
+// /intelligence itself.
+const INTELLIGENCE_PATHS = ['/intelligence', '/trends', '/crowd']
 
 export default function Navbar() {
   const { dark, toggle } = useTheme()
@@ -23,6 +29,7 @@ export default function Navbar() {
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard'
+    if (href === '/intelligence') return INTELLIGENCE_PATHS.some((p) => pathname.startsWith(p))
     return pathname.startsWith(href)
   }
 

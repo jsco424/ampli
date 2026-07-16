@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
+import IntelligenceSubNav from '@/components/IntelligenceSubNav'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import {
@@ -319,8 +320,9 @@ export default function TrendsPage() {
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
+      <IntelligenceSubNav />
 
-      <main className="pt-20 px-6 max-w-5xl mx-auto pb-20">
+      <main className="pt-8 px-6 max-w-5xl mx-auto pb-20">
         {/* Header */}
         <div className="mt-8 mb-4 flex items-start justify-between gap-4 flex-wrap">
           <div>
