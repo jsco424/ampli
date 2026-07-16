@@ -64,6 +64,7 @@ export default function PricingPage() {
   const { dark } = useTheme()
   const { isSignedIn } = useUser()
   const [enterpriseSeats, setEnterpriseSeats] = useState(10)
+  const [justUpgraded, setJustUpgraded] = useState(false)
 
   const enterprisePrice = useMemo(
     () => calculateEnterprisePrice(enterpriseSeats),
@@ -158,7 +159,14 @@ export default function PricingPage() {
                 </li>
               ))}
             </ul>
-            {!isSignedIn ? (
+            {justUpgraded ? (
+              <div
+                className={`p-4 rounded-xl text-center text-sm font-medium ${dark ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700'}`}
+              >
+                🎉 Welcome to Paid! Your limit is now 20,000 credits/month, and Crowd Insights +
+                User Behaviors are unlocked.
+              </div>
+            ) : !isSignedIn ? (
               <Link
                 href="/sign-up"
                 className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
@@ -166,7 +174,11 @@ export default function PricingPage() {
                 Sign Up to Start with Paid
               </Link>
             ) : (
-              <CheckoutButton planId={PAID_PLAN_ID} planPeriod="month">
+              <CheckoutButton
+                planId={PAID_PLAN_ID}
+                planPeriod="month"
+                onSubscriptionComplete={() => setJustUpgraded(true)}
+              >
                 <button className="w-full text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors">
                   Upgrade to Paid
                 </button>
@@ -270,6 +282,77 @@ export default function PricingPage() {
                 </p>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Feature comparison grid */}
+        <div className={`mt-14 pt-10 border-t ${divider}`}>
+          <p className={`text-xs font-semibold uppercase tracking-wide mb-6 text-center ${muted}`}>
+            Compare plans in detail
+          </p>
+          <div className={`rounded-2xl border overflow-hidden ${card}`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[640px]">
+                <thead>
+                  <tr className={dark ? 'bg-white/[0.03]' : 'bg-zinc-50'}>
+                    <th className="text-left px-5 py-4 font-semibold">Feature</th>
+                    <th className="text-center px-5 py-4 font-semibold">Free</th>
+                    <th className="text-center px-5 py-4 font-semibold text-blue-500">Paid</th>
+                    <th className="text-center px-5 py-4 font-semibold">Enterprise</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    {
+                      feature: 'Credits per month',
+                      free: '~1,000',
+                      paid: '~20,000',
+                      ent: '~30,000/seat',
+                    },
+                    {
+                      feature: '≈ Presentations per month',
+                      free: '1-2',
+                      paid: '30-40',
+                      ent: '50-60/seat',
+                    },
+                    { feature: 'Formula-verified analysis', free: true, paid: true, ent: true },
+                    { feature: 'Auto-generated visuals', free: true, paid: true, ent: true },
+                    { feature: 'Export to PPTX / PDF', free: true, paid: true, ent: true },
+                    { feature: 'Export history', free: false, paid: true, ent: true },
+                    { feature: 'Crowd Insights benchmarking', free: false, paid: true, ent: true },
+                    { feature: 'User Behaviors tracking', free: false, paid: true, ent: true },
+                    { feature: 'Custom brand color & theme', free: false, paid: true, ent: true },
+                    { feature: 'Saved custom templates', free: false, paid: true, ent: true },
+                    { feature: 'Priority processing', free: false, paid: true, ent: true },
+                    { feature: 'Centralized team billing', free: false, paid: false, ent: true },
+                    { feature: 'Dedicated onboarding', free: false, paid: false, ent: true },
+                    { feature: 'Priority support', free: false, paid: false, ent: true },
+                  ].map((row, i) => (
+                    <tr
+                      key={row.feature}
+                      className={`border-t ${divider} ${i % 2 === 1 ? (dark ? 'bg-white/[0.015]' : 'bg-zinc-50/50') : ''}`}
+                    >
+                      <td className={`px-5 py-3.5 ${dark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                        {row.feature}
+                      </td>
+                      {[row.free, row.paid, row.ent].map((val, ci) => (
+                        <td key={ci} className="text-center px-5 py-3.5">
+                          {typeof val === 'boolean' ? (
+                            val ? (
+                              <Check size={16} className="text-emerald-500 mx-auto" />
+                            ) : (
+                              <Minus size={14} className={`mx-auto ${muted}`} />
+                            )
+                          ) : (
+                            <span className={dark ? 'text-zinc-300' : 'text-zinc-700'}>{val}</span>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </main>

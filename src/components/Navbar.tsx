@@ -2,7 +2,7 @@
 
 import { UserButton } from '@clerk/nextjs'
 import { useTheme } from '@/hooks/useTheme'
-import { Moon, Sun, Menu, X, UploadCloud, Palette } from 'lucide-react'
+import { Moon, Sun, Menu, X, UploadCloud, Palette, CreditCard } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
@@ -102,6 +102,16 @@ export default function Navbar() {
               ${dark ? 'text-white/35 hover:text-white/70 hover:bg-white/6' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
           >
             <Palette size={15} />
+          </Link>
+
+          {/* Account & Billing */}
+          <Link
+            href="/account"
+            title="Account & Billing"
+            className={`p-1.5 rounded-lg transition-colors
+              ${dark ? 'text-white/35 hover:text-white/70 hover:bg-white/6' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
+          >
+            <CreditCard size={15} />
           </Link>
 
           {/* Dark mode toggle */}
