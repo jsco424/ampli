@@ -22,6 +22,7 @@ import {
   Presentation,
   Download,
 } from 'lucide-react'
+import IntelligencePreview from '@/components/IntelligencePreview'
 
 // Was a flat array of strings, with every item (including Pricing)
 // rendered as a same-page anchor scroll: href={`#${label}`}. That's why
@@ -493,6 +494,24 @@ export default function LandingPage() {
             )
           })}
         </div>
+      </section>
+
+      {/* ── Intelligence preview ─────────────────────────────────────────────── */}
+      <section className="px-6 py-24 max-w-5xl mx-auto">
+        <div className="text-center mb-12">
+          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 mb-3">
+            Intelligence
+          </p>
+          <h2 className="text-4xl font-black tracking-tight mb-4 text-zinc-900">
+            More than a deck builder —{' '}
+            <span className="text-blue-600">a research layer built in</span>
+          </h2>
+          <p className="text-zinc-500 text-lg max-w-xl mx-auto">
+            Public interest signals, your own performance history, and pooled industry benchmarks —
+            all in one place. Click a tab below to see what's inside.
+          </p>
+        </div>
+        <IntelligencePreview dark={false} variant="marketing" />
       </section>
 
       {/* ── Testimonials ───────────────────────────────────────────────────────
