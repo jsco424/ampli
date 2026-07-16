@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   X,
   Check,
+  Zap,
 } from 'lucide-react'
 
 interface Props {
@@ -28,8 +29,28 @@ const STEPS = [
     title: 'Welcome to amp-li',
     subtitle: 'stories, not spreadsheets',
     description:
-      "ampli transforms your raw data into compelling narratives tailored to the exact person you're pitching. Here's how to get the most out of it in 4 steps.",
+      "ampli transforms your raw data into compelling narratives tailored to the exact person you're pitching. Here's how to get the most out of it in a few steps.",
     visual: null,
+  },
+  {
+    // New — explains what tier a new signup is actually on, since the app
+    // previously dropped people straight into the product with zero
+    // context on credits or what upgrading unlocks. Placed right after
+    // Welcome, before the product walkthrough, so someone understands
+    // their limits before they start using the thing that consumes them.
+    id: 'plan',
+    icon: Zap,
+    color: 'text-zinc-400',
+    bg: 'bg-zinc-500/10',
+    title: "You're on the Free plan",
+    subtitle: 'Your account',
+    description:
+      'Free gives you about 1,000 credits a month — roughly 1-2 full presentations, enough to see what ampli can do. Credits refresh automatically each month, and you can upgrade anytime for a lot more room plus access to Crowd Insights and User Behaviors.',
+    tips: [
+      '~1,000 credits/month ≈ 1-2 presentations',
+      'Paid unlocks ~20,000 credits/month (~30-40 presentations) plus industry benchmarking',
+      'Find pricing anytime from the Pricing link in the navbar',
+    ],
   },
   {
     id: 'research',

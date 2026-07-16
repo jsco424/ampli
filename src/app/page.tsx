@@ -23,7 +23,23 @@ import {
   Download,
 } from 'lucide-react'
 
-const NAV_LINKS = ['Product', 'Use Cases', 'Pricing', 'Blog']
+// Was a flat array of strings, with every item (including Pricing)
+// rendered as a same-page anchor scroll: href={`#${label}`}. That's why
+// Pricing looked unclickable — it was trying to scroll to a #pricing
+// section that doesn't exist anywhere on this page. Now each item
+// explicitly says whether it's a same-page anchor or a real route, so
+// Pricing can correctly go to /pricing instead of nowhere.
+//
+// NOTE: 'Use Cases' and 'Blog' still point to anchors that don't exist on
+// this page either (#use-cases, #blog) — same underlying bug, just not
+// what was reported this time. Left as-is since only Pricing was raised,
+// but worth fixing the same way whenever those sections get built.
+const NAV_LINKS = [
+  { label: 'Product', href: '#product', type: 'anchor' as const },
+  { label: 'Use Cases', href: '#use-cases', type: 'anchor' as const },
+  { label: 'Pricing', href: '/pricing', type: 'route' as const },
+  { label: 'Blog', href: '#blog', type: 'anchor' as const },
+]
 
 const FEATURES = [
   {
@@ -36,22 +52,13 @@ const FEATURES = [
       'Drop in a CSV or Excel file. ampli reads the structure, identifies the story inside, and gets to work instantly.',
   },
   {
-    icon: Sparkles,
-    color: 'text-purple-600',
-    bg: 'bg-purple-50',
-    border: 'border-purple-200',
-    title: 'AI-generated narratives',
-    description:
-      "Get a full business narrative, key insight cards, and branded charts — framed for the exact person you're pitching.",
-  },
-  {
-    icon: Globe,
+    icon: Shield,
     color: 'text-emerald-600',
     bg: 'bg-emerald-50',
     border: 'border-emerald-200',
-    title: 'Company intelligence',
+    title: 'Formula-verified, not guessed',
     description:
-      'Research any company URL. Instant breakdown of products, competitors, and an audience map for every stakeholder.',
+      'Every hero number is checked against the raw data with a deterministic formula pass — see a "Show the math" breakdown on any finding, not just an AI\'s word for it.',
   },
   {
     icon: Target,
@@ -60,25 +67,61 @@ const FEATURES = [
     border: 'border-amber-200',
     title: 'Audience-aware framing',
     description:
-      'Select your target audience — CMO, VP of Data, Director of Analytics — and ampli tailors the entire story to their priorities.',
+      'Select your target audience — CMO, VP of Data, Director of Analytics — and ampli tailors which findings it leads with and how it frames them, not just the prose around them.',
   },
   {
-    icon: Presentation,
+    icon: Sparkles,
+    color: 'text-purple-600',
+    bg: 'bg-purple-50',
+    border: 'border-purple-200',
+    title: 'Dig deeper, conversationally',
+    description:
+      'Ask a follow-up question and get a real re-analysis, formula-verified the same as the original — not a canned response. Every thread stays selectable for your final deck.',
+  },
+  {
+    icon: BarChart2,
     color: 'text-red-600',
     bg: 'bg-red-50',
     border: 'border-red-200',
-    title: 'One-click pitch mode',
+    title: 'Crowd Insights benchmarking',
     description:
-      'Full-screen presentation built for screen sharing. Branded with your colors and logo. No PowerPoint required.',
+      'See how your numbers stack up against anonymized, pooled data across your industry — real aggregate benchmarks, not estimates.',
   },
   {
-    icon: Download,
+    icon: TrendingUp,
     color: 'text-cyan-600',
     bg: 'bg-cyan-50',
     border: 'border-cyan-200',
-    title: 'PDF export',
+    title: 'Real-time public interest',
     description:
-      'Select the slides you want, export a branded PDF in seconds. Leave-behinds that look like they took hours.',
+      'Pitching a specific company? ampli checks live public interest signals for them and their competitors, and weaves it in only where it genuinely strengthens your story.',
+  },
+  {
+    icon: Globe,
+    color: 'text-indigo-600',
+    bg: 'bg-indigo-50',
+    border: 'border-indigo-200',
+    title: 'Company intelligence',
+    description:
+      'Research any company URL. Instant breakdown of products, competitors, and an audience map for every stakeholder.',
+  },
+  {
+    icon: FileText,
+    color: 'text-pink-600',
+    bg: 'bg-pink-50',
+    border: 'border-pink-200',
+    title: 'Your brand, every export',
+    description:
+      'Match your exact colors and logo automatically, or pick from a full theme library — every exported deck looks like it came from your own design team.',
+  },
+  {
+    icon: Presentation,
+    color: 'text-orange-600',
+    bg: 'bg-orange-50',
+    border: 'border-orange-200',
+    title: 'Pitch mode or export',
+    description:
+      'Full-screen presentation built for screen sharing, or export straight to PPTX/PDF with full history — every past export saved and re-downloadable anytime.',
   },
 ]
 
@@ -87,22 +130,25 @@ const STEPS = [
     number: '01',
     title: 'Research your target',
     description:
-      'Paste any company URL. Get products, competitors, and a full audience map in seconds.',
+      'Paste any company URL. Get products, competitors, and a full audience map in seconds — plus real-time public interest signals for them and their competitors.',
   },
   {
     number: '02',
     title: 'Upload your data',
-    description: 'Drop in a CSV or Excel file and brief the AI on your angle, audience, and focus.',
+    description:
+      'Drop in a CSV or Excel file, pick your target audience, and brief the AI on your angle and focus.',
   },
   {
     number: '03',
-    title: 'Generate your story',
-    description: 'Narrative, insight cards, and charts — tailored to the exact person in the room.',
+    title: 'Get a verified story',
+    description:
+      'Formula-checked findings, industry benchmarks from Crowd Insights, and audience-tailored framing. Ask follow-up questions to dig deeper — every answer stays verified.',
   },
   {
     number: '04',
     title: 'Present or export',
-    description: 'Hit Pitch Mode for a branded presentation, or export a PDF leave-behind.',
+    description:
+      'Hit Pitch Mode for a branded presentation, or export to PPTX/PDF with full history saved for every past deck.',
   },
 ]
 
@@ -173,13 +219,13 @@ export default function LandingPage() {
 
         <div className="hidden md:flex items-center gap-1">
           {NAV_LINKS.map((link) => (
-            <a
-              key={link}
-              href={`#${link.toLowerCase().replace(' ', '-')}`}
+            <Link
+              key={link.label}
+              href={link.href}
               className="px-4 py-1.5 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-all"
             >
-              {link}
-            </a>
+              {link.label}
+            </Link>
           ))}
         </div>
 
@@ -449,34 +495,40 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Testimonials ───────────────────────────────────────────────────── */}
-      <section className="px-6 py-24 max-w-5xl mx-auto">
-        <div className="text-center mb-16">
-          <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 mb-3">
-            What analysts say
-          </p>
-          <h2 className="text-4xl font-black tracking-tight text-zinc-900">
-            Where analysts become storytellers
-          </h2>
-        </div>
+      {/* ── Testimonials ───────────────────────────────────────────────────────
+          Disabled for now — these were placeholder quotes from fictional
+          people, never real customers. Re-enable once there are genuine
+          testimonials to swap in: change `false &&` to `true &&` below,
+          or just delete the wrapper entirely once real content replaces it. */}
+      {false && (
+        <section className="px-6 py-24 max-w-5xl mx-auto">
+          <div className="text-center mb-16">
+            <p className="text-xs font-semibold uppercase tracking-widest text-blue-600 mb-3">
+              What analysts say
+            </p>
+            <h2 className="text-4xl font-black tracking-tight text-zinc-900">
+              Where analysts become storytellers
+            </h2>
+          </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {TESTIMONIALS.map((t, i) => (
-            <div key={i} className="p-6 rounded-2xl border border-zinc-200 bg-white shadow-sm">
-              <div className="flex gap-0.5 mb-4">
-                {[...Array(5)].map((_, j) => (
-                  <div key={j} className="w-3 h-3 rounded-sm bg-blue-500" />
-                ))}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {TESTIMONIALS.map((t, i) => (
+              <div key={i} className="p-6 rounded-2xl border border-zinc-200 bg-white shadow-sm">
+                <div className="flex gap-0.5 mb-4">
+                  {[...Array(5)].map((_, j) => (
+                    <div key={j} className="w-3 h-3 rounded-sm bg-blue-500" />
+                  ))}
+                </div>
+                <p className="text-sm text-zinc-600 leading-relaxed mb-5">"{t.quote}"</p>
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">{t.name}</p>
+                  <p className="text-xs text-zinc-400">{t.role}</p>
+                </div>
               </div>
-              <p className="text-sm text-zinc-600 leading-relaxed mb-5">"{t.quote}"</p>
-              <div>
-                <p className="text-sm font-semibold text-zinc-900">{t.name}</p>
-                <p className="text-xs text-zinc-400">{t.role}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ── CTA ────────────────────────────────────────────────────────────── */}
       <section className="px-6 py-24">
