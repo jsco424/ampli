@@ -42,7 +42,7 @@ const STEPS = [
     icon: Zap,
     color: 'text-zinc-400',
     bg: 'bg-zinc-500/10',
-    title: "You're on the Free plan",
+    title: "You're on the Starter plan",
     subtitle: 'Your account',
     description:
       'Free gives you about 1,000 credits a month — roughly 1-2 full presentations, enough to see what ampli can do. Credits refresh automatically each month, and you can upgrade anytime for a lot more room plus access to Crowd Insights and User Behaviors.',

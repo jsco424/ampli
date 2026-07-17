@@ -88,8 +88,8 @@ export default function AccountPage() {
                   {status?.tier === 'business'
                     ? 'Business'
                     : status?.tier === 'starter'
-                      ? 'Starter'
-                      : 'Free'}
+                      ? 'Pro'
+                      : 'Starter'}
                 </span>
               </div>
 

@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
-import { Check, Minus, Plus, Sparkles, Building2, Zap } from 'lucide-react'
+import { Check, Minus, Plus, Sparkles, Building2, Zap, Lightbulb } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { CheckoutButton } from '@clerk/nextjs/experimental'
 
@@ -124,11 +124,14 @@ export default function PricingPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-          {/* Free */}
+          {/* Display name "Starter" — underlying code (FREE_FEATURES,
+              FREE_CREDIT_LIMIT in creditLimit.ts, tier: 'free') is
+              unchanged. This is a display-only rename; the actual $0/free
+              plan logic, Clerk config, and credit limits are untouched. */}
           <div className={`p-7 rounded-3xl border ${card}`}>
             <div className="flex items-center gap-2 mb-1">
               <Sparkles size={16} className="text-zinc-400" />
-              <p className="font-semibold text-sm">Free</p>
+              <p className="font-semibold text-sm">Starter</p>
             </div>
             <p className={`text-xs mb-5 ${muted}`}>Try it out, no card required</p>
             <div className="mb-6">
@@ -145,11 +148,9 @@ export default function PricingPage() {
             </ul>
             <Link
               href="/sign-up"
-              className={`block text-center py-3 rounded-xl border text-sm font-semibold transition-colors ${
-                dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
-              }`}
+              className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
             >
-              Sign up free
+              Sign Up to Start with Starter
             </Link>
             <p className={`text-[11px] mt-3 text-center ${muted}`}>
               Once your monthly credits run out, upgrade anytime or wait for next month's refresh.
@@ -157,12 +158,15 @@ export default function PricingPage() {
           </div>
 
           {/* Starter */}
+          {/* Display name "Pro" — underlying code (STARTER_FEATURES,
+              STARTER_PLAN_ID, STARTER_CREDIT_LIMIT, tier: 'starter') is
+              unchanged. Display-only rename, same as the first card. */}
           <div className={`p-7 rounded-3xl border ${card}`}>
             <div className="flex items-center gap-2 mb-1">
-              <Zap size={16} className="text-amber-400" />
-              <p className="font-semibold text-sm">Starter</p>
+              <Lightbulb size={16} className="text-amber-400" />
+              <p className="font-semibold text-sm">Pro</p>
             </div>
-            <p className={`text-xs mb-5 ${muted}`}>A little more room than Free</p>
+            <p className={`text-xs mb-5 ${muted}`}>A little more room than Starter</p>
             <div className="mb-6">
               <span className="text-4xl font-black">${STARTER_PRICE_PER_MONTH}</span>
               <span className={`text-sm ml-1 ${muted}`}>/month</span>
@@ -179,16 +183,14 @@ export default function PricingPage() {
               <div
                 className={`p-4 rounded-xl text-center text-sm font-medium ${dark ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700'}`}
               >
-                🎉 Welcome to Starter! Your limit is now 5,000 credits/month.
+                🎉 Welcome to Pro! Your limit is now 5,000 credits/month.
               </div>
             ) : !isSignedIn ? (
               <Link
                 href="/sign-up"
-                className={`block text-center py-3 rounded-xl border text-sm font-semibold transition-colors ${
-                  dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
-                }`}
+                className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
               >
-                Sign Up to Start with Starter
+                Sign Up to Start with Pro
               </Link>
             ) : (
               <CheckoutButton
@@ -196,12 +198,8 @@ export default function PricingPage() {
                 planPeriod="month"
                 onSubscriptionComplete={() => setJustUpgradedStarter(true)}
               >
-                <button
-                  className={`w-full text-center py-3 rounded-xl border text-sm font-semibold transition-colors ${
-                    dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
-                  }`}
-                >
-                  Upgrade to Starter
+                <button className="w-full text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors">
+                  Upgrade to Pro
                 </button>
               </CheckoutButton>
             )}
@@ -329,11 +327,9 @@ export default function PricingPage() {
             </ul>
             <a
               href="mailto:sales@am-pli.com"
-              className={`block text-center py-3 rounded-xl border text-sm font-semibold transition-colors ${
-                dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
-              }`}
+              className="block text-center py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
             >
-              Contact sales
+              Contact Sales
             </a>
           </div>
         </div>
@@ -369,8 +365,8 @@ export default function PricingPage() {
                 <thead>
                   <tr className={dark ? 'bg-white/[0.03]' : 'bg-zinc-50'}>
                     <th className="text-left px-5 py-4 font-semibold">Feature</th>
-                    <th className="text-center px-5 py-4 font-semibold">Free</th>
                     <th className="text-center px-5 py-4 font-semibold">Starter</th>
+                    <th className="text-center px-5 py-4 font-semibold">Pro</th>
                     <th className="text-center px-5 py-4 font-semibold text-blue-500">Business</th>
                     <th className="text-center px-5 py-4 font-semibold">Enterprise</th>
                   </tr>
