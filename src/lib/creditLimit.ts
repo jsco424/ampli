@@ -25,11 +25,9 @@ const STARTER_CREDIT_LIMIT = 5000
 const BUSINESS_CREDIT_LIMIT = 20000
 
 // Same two-different-identifiers situation as Business — PLAN ID for
-// checkout, PLAN SLUG for has() checks. CONFIRM this against Clerk's
-// dashboard (Plans → Plan Key column) once the Starter plan is created —
-// this is a placeholder guess matching the pattern Business's real slug
-// turned out to follow ('business'), not yet verified.
-const STARTER_PLAN_SLUG = 'starter' // <- CONFIRM THIS against Clerk's dashboard once created
+// checkout, PLAN SLUG for has() checks. Confirmed against Clerk's
+// dashboard (Plans → Plan Key column): 'starter'.
+const STARTER_PLAN_SLUG = 'starter'
 
 // The Business plan's Clerk Plan ID and slug are two DIFFERENT identifiers
 // used for two different Clerk APIs — mixing them up is exactly what broke

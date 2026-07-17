@@ -14,9 +14,8 @@ import { CheckoutButton } from '@clerk/nextjs/experimental'
 // different Clerk API. Don't mix these up; that was a real bug once already.
 const BUSINESS_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
 
-// Starter's Plan ID — placeholder until the plan actually exists in Clerk's
-// dashboard. CONFIRM THIS once created, same as Business's ID was confirmed.
-const STARTER_PLAN_ID = 'cplan_REPLACE_WITH_REAL_STARTER_PLAN_ID'
+// Starter's Plan ID — confirmed from Clerk's dashboard.
+const STARTER_PLAN_ID = 'cplan_3Gc5iCs0nQsAsHZ09z3cxyohRjC'
 
 // ── Enterprise seat pricing ──────────────────────────────────────────────
 // Blocks of 10 seats at $999/block. Within a block, seats beyond the block's
