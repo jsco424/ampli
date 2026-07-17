@@ -302,7 +302,7 @@ export default function PricingPage() {
                         Math.min(MAX_ENTERPRISE_SEATS, Math.max(MIN_ENTERPRISE_SEATS, v))
                       )
                   }}
-                  className={`flex-1 h-9 text-center text-lg font-bold bg-transparent outline-none border rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${dark ? 'border-white/15' : 'border-zinc-300'}`}
+                  className={`flex-1 min-w-0 h-9 text-center text-lg font-bold bg-transparent outline-none border rounded-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${dark ? 'border-white/15' : 'border-zinc-300'}`}
                 />
                 <button
                   onClick={() => adjustSeats(1)}
