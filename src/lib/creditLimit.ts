@@ -21,7 +21,15 @@ const supabaseAdmin = createClient(
 const CREDITS_PER_DOLLAR = 600 / 0.56
 
 const FREE_CREDIT_LIMIT = 1000
+const STARTER_CREDIT_LIMIT = 5000
 const BUSINESS_CREDIT_LIMIT = 20000
+
+// Same two-different-identifiers situation as Business — PLAN ID for
+// checkout, PLAN SLUG for has() checks. CONFIRM this against Clerk's
+// dashboard (Plans → Plan Key column) once the Starter plan is created —
+// this is a placeholder guess matching the pattern Business's real slug
+// turned out to follow ('business'), not yet verified.
+const STARTER_PLAN_SLUG = 'starter' // <- CONFIRM THIS against Clerk's dashboard once created
 
 // The Business plan's Clerk Plan ID and slug are two DIFFERENT identifiers
 // used for two different Clerk APIs — mixing them up is exactly what broke
@@ -37,6 +45,9 @@ export interface CreditLimitResult {
   creditsUsed: number
   creditsLimit: number
   isPaid: boolean
+  // NEW — which specific tier, since isPaid alone can no longer
+  // distinguish Starter from Business now that there are two paid tiers.
+  tier: 'free' | 'starter' | 'business'
 }
 
 // Checks the CURRENT request's authenticated user (via Clerk's own
@@ -50,11 +61,32 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
   if (!userId) {
     // Not signed in — treat as most restrictive, though routes calling
     // this should generally already require auth before reaching here.
-    return { allowed: false, creditsUsed: 0, creditsLimit: FREE_CREDIT_LIMIT, isPaid: false }
+    return {
+      allowed: false,
+      creditsUsed: 0,
+      creditsLimit: FREE_CREDIT_LIMIT,
+      isPaid: false,
+      tier: 'free',
+    }
   }
 
-  const isPaid = has({ plan: BUSINESS_PLAN_SLUG })
-  const creditsLimit = isPaid ? BUSINESS_CREDIT_LIMIT : FREE_CREDIT_LIMIT
+  // Checked highest tier first — someone on Business also technically
+  // could pass a Starter check if Clerk plans are hierarchical, but
+  // checking in priority order avoids ever relying on that assumption.
+  const isBusiness = has({ plan: BUSINESS_PLAN_SLUG })
+  const isStarter = !isBusiness && has({ plan: STARTER_PLAN_SLUG })
+  const tier: 'free' | 'starter' | 'business' = isBusiness
+    ? 'business'
+    : isStarter
+      ? 'starter'
+      : 'free'
+  const isPaid = tier !== 'free'
+  const creditsLimit =
+    tier === 'business'
+      ? BUSINESS_CREDIT_LIMIT
+      : tier === 'starter'
+        ? STARTER_CREDIT_LIMIT
+        : FREE_CREDIT_LIMIT
 
   const monthStart = new Date()
   monthStart.setDate(1)
@@ -68,7 +100,7 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
 
   const projectIds = (userProjects || []).map((p) => p.id)
   if (projectIds.length === 0) {
-    return { allowed: true, creditsUsed: 0, creditsLimit, isPaid }
+    return { allowed: true, creditsUsed: 0, creditsLimit, isPaid, tier }
   }
 
   const { data: usageRows } = await supabaseAdmin
@@ -85,5 +117,6 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
     creditsUsed,
     creditsLimit,
     isPaid,
+    tier,
   }
 }

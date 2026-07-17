@@ -13,6 +13,7 @@ interface AccountStatus {
   creditsUsed: number
   creditsLimit: number
   isPaid: boolean
+  tier: 'free' | 'starter' | 'business'
 }
 
 export default function AccountPage() {
@@ -75,23 +76,29 @@ export default function AccountPage() {
                 </div>
                 <span
                   className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                    status?.isPaid
+                    status?.tier === 'business'
                       ? 'bg-blue-500/15 text-blue-400'
-                      : dark
-                        ? 'bg-white/10 text-white/60'
-                        : 'bg-zinc-100 text-zinc-600'
+                      : status?.tier === 'starter'
+                        ? 'bg-amber-500/15 text-amber-400'
+                        : dark
+                          ? 'bg-white/10 text-white/60'
+                          : 'bg-zinc-100 text-zinc-600'
                   }`}
                 >
-                  {status?.isPaid ? 'Business' : 'Free'}
+                  {status?.tier === 'business'
+                    ? 'Business'
+                    : status?.tier === 'starter'
+                      ? 'Starter'
+                      : 'Free'}
                 </span>
               </div>
 
-              {!status?.isPaid && (
+              {status?.tier !== 'business' && (
                 <Link
                   href="/pricing"
                   className="block text-center py-2.5 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
                 >
-                  Upgrade to Business
+                  {status?.tier === 'starter' ? 'Upgrade to Business' : 'View Plans'}
                 </Link>
               )}
             </div>

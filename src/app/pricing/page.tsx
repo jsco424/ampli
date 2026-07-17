@@ -14,6 +14,10 @@ import { CheckoutButton } from '@clerk/nextjs/experimental'
 // different Clerk API. Don't mix these up; that was a real bug once already.
 const BUSINESS_PLAN_ID = 'cplan_3GYI2J5bxqMj8uYihRR9WUsJbRs'
 
+// Starter's Plan ID — placeholder until the plan actually exists in Clerk's
+// dashboard. CONFIRM THIS once created, same as Business's ID was confirmed.
+const STARTER_PLAN_ID = 'cplan_REPLACE_WITH_REAL_STARTER_PLAN_ID'
+
 // ── Enterprise seat pricing ──────────────────────────────────────────────
 // Blocks of 10 seats at $999/block. Within a block, seats beyond the block's
 // first 10 cost $79 each — but hitting an exact multiple of 10 resets to a
@@ -32,10 +36,23 @@ function calculateEnterprisePrice(seats: number): number {
   return fullBlocks * ENTERPRISE_BLOCK_PRICE + remainder * ENTERPRISE_EXTRA_SEAT_PRICE
 }
 
+const STARTER_PRICE_PER_MONTH = 29
 const BUSINESS_PRICE_PER_SEAT = 119
 
 const FREE_FEATURES = [
   '~1,000 credits/month (roughly 1-2 full presentations)',
+  'Full data analysis with formula verification',
+  'Auto-generated visuals',
+  'Export to PPTX or PDF via Gamma',
+  'Standard Gamma themes',
+]
+
+// Starter is deliberately just "more room than Free" — same feature set,
+// higher credit ceiling. The real feature jump (Crowd Insights, User
+// Behaviors, brand customization) stays at Business, giving people a
+// genuine reason to upgrade past Starter rather than settling there.
+const STARTER_FEATURES = [
+  '~5,000 credits/month (roughly 8-10 presentations)',
   'Full data analysis with formula verification',
   'Auto-generated visuals',
   'Export to PPTX or PDF via Gamma',
@@ -66,6 +83,7 @@ export default function PricingPage() {
   const { isSignedIn } = useUser()
   const [enterpriseSeats, setEnterpriseSeats] = useState(10)
   const [justUpgraded, setJustUpgraded] = useState(false)
+  const [justUpgradedStarter, setJustUpgradedStarter] = useState(false)
 
   const enterprisePrice = useMemo(
     () => calculateEnterprisePrice(enterpriseSeats),
@@ -105,7 +123,7 @@ export default function PricingPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           {/* Free */}
           <div className={`p-7 rounded-3xl border ${card}`}>
             <div className="flex items-center gap-2 mb-1">
@@ -136,6 +154,57 @@ export default function PricingPage() {
             <p className={`text-[11px] mt-3 text-center ${muted}`}>
               Once your monthly credits run out, upgrade anytime or wait for next month's refresh.
             </p>
+          </div>
+
+          {/* Starter */}
+          <div className={`p-7 rounded-3xl border ${card}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <Zap size={16} className="text-amber-400" />
+              <p className="font-semibold text-sm">Starter</p>
+            </div>
+            <p className={`text-xs mb-5 ${muted}`}>A little more room than Free</p>
+            <div className="mb-6">
+              <span className="text-4xl font-black">${STARTER_PRICE_PER_MONTH}</span>
+              <span className={`text-sm ml-1 ${muted}`}>/month</span>
+            </div>
+            <ul className="space-y-3 mb-8">
+              {STARTER_FEATURES.map((f) => (
+                <li key={f} className="flex items-start gap-2.5 text-sm">
+                  <Check size={15} className="text-emerald-500 shrink-0 mt-0.5" />
+                  <span className={dark ? 'text-zinc-300' : 'text-zinc-700'}>{f}</span>
+                </li>
+              ))}
+            </ul>
+            {justUpgradedStarter ? (
+              <div
+                className={`p-4 rounded-xl text-center text-sm font-medium ${dark ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-700'}`}
+              >
+                🎉 Welcome to Starter! Your limit is now 5,000 credits/month.
+              </div>
+            ) : !isSignedIn ? (
+              <Link
+                href="/sign-up"
+                className={`block text-center py-3 rounded-xl border text-sm font-semibold transition-colors ${
+                  dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
+                }`}
+              >
+                Sign Up to Start with Starter
+              </Link>
+            ) : (
+              <CheckoutButton
+                planId={STARTER_PLAN_ID}
+                planPeriod="month"
+                onSubscriptionComplete={() => setJustUpgradedStarter(true)}
+              >
+                <button
+                  className={`w-full text-center py-3 rounded-xl border text-sm font-semibold transition-colors ${
+                    dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
+                  }`}
+                >
+                  Upgrade to Starter
+                </button>
+              </CheckoutButton>
+            )}
           </div>
 
           {/* Business */}
@@ -296,11 +365,12 @@ export default function PricingPage() {
           </p>
           <div className={`rounded-2xl border overflow-hidden ${card}`}>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[640px]">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className={dark ? 'bg-white/[0.03]' : 'bg-zinc-50'}>
                     <th className="text-left px-5 py-4 font-semibold">Feature</th>
                     <th className="text-center px-5 py-4 font-semibold">Free</th>
+                    <th className="text-center px-5 py-4 font-semibold">Starter</th>
                     <th className="text-center px-5 py-4 font-semibold text-blue-500">Business</th>
                     <th className="text-center px-5 py-4 font-semibold">Enterprise</th>
                   </tr>
@@ -310,27 +380,101 @@ export default function PricingPage() {
                     {
                       feature: 'Credits per month',
                       free: '~1,000',
+                      starter: '~5,000',
                       paid: '~20,000',
                       ent: '~30,000/seat',
                     },
                     {
                       feature: '≈ Presentations per month',
                       free: '1-2',
+                      starter: '8-10',
                       paid: '30-40',
                       ent: '50-60/seat',
                     },
-                    { feature: 'Formula-verified analysis', free: true, paid: true, ent: true },
-                    { feature: 'Auto-generated visuals', free: true, paid: true, ent: true },
-                    { feature: 'Export to PPTX / PDF', free: true, paid: true, ent: true },
-                    { feature: 'Export history', free: false, paid: true, ent: true },
-                    { feature: 'Crowd Insights benchmarking*', free: false, paid: true, ent: true },
-                    { feature: 'User Behaviors tracking', free: false, paid: true, ent: true },
-                    { feature: 'Custom brand color & theme', free: false, paid: true, ent: true },
-                    { feature: 'Saved custom templates', free: false, paid: true, ent: true },
-                    { feature: 'Priority processing', free: false, paid: true, ent: true },
-                    { feature: 'Centralized team billing', free: false, paid: false, ent: true },
-                    { feature: 'Dedicated onboarding', free: false, paid: false, ent: true },
-                    { feature: 'Priority support', free: false, paid: false, ent: true },
+                    {
+                      feature: 'Formula-verified analysis',
+                      free: true,
+                      starter: true,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Auto-generated visuals',
+                      free: true,
+                      starter: true,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Export to PPTX / PDF',
+                      free: true,
+                      starter: true,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Export history',
+                      free: false,
+                      starter: false,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Crowd Insights benchmarking*',
+                      free: false,
+                      starter: false,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'User Behaviors tracking',
+                      free: false,
+                      starter: false,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Custom brand color & theme',
+                      free: false,
+                      starter: false,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Saved custom templates',
+                      free: false,
+                      starter: false,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Priority processing',
+                      free: false,
+                      starter: false,
+                      paid: true,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Centralized team billing',
+                      free: false,
+                      starter: false,
+                      paid: false,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Dedicated onboarding',
+                      free: false,
+                      starter: false,
+                      paid: false,
+                      ent: true,
+                    },
+                    {
+                      feature: 'Priority support',
+                      free: false,
+                      starter: false,
+                      paid: false,
+                      ent: true,
+                    },
                   ].map((row, i) => (
                     <tr
                       key={row.feature}
@@ -339,7 +483,7 @@ export default function PricingPage() {
                       <td className={`px-5 py-3.5 ${dark ? 'text-zinc-300' : 'text-zinc-700'}`}>
                         {row.feature}
                       </td>
-                      {[row.free, row.paid, row.ent].map((val, ci) => (
+                      {[row.free, row.starter, row.paid, row.ent].map((val, ci) => (
                         <td key={ci} className="text-center px-5 py-3.5">
                           {typeof val === 'boolean' ? (
                             val ? (
