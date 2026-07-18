@@ -17,7 +17,7 @@ const SECTIONS = [
     label: 'Company Benchmarks',
     href: '/intelligence/company-benchmarks',
     icon: Building2,
-    active: false,
+    active: true,
   },
   { label: 'Crowd Insights', href: '/crowd', icon: Users, active: true },
 ]

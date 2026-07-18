@@ -1,9 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { auth, currentUser } from '@clerk/nextjs/server'
 import type { AnalysisOutput } from '@/lib/analysisTypes'
 import { stripDashJoins } from '@/lib/textCleanup'
 import { logTokenUsage } from '@/lib/tokenUsage'
+import { recordCompanyBenchmarks } from '@/lib/companyBenchmarks'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(
@@ -132,11 +134,15 @@ CHART TAKEAWAY RULE — read carefully, this is stricter than the general "don't
 For each chart, first check whether it corresponds to one of the Key Findings listed above. If it does, the chart's "takeaway" field MUST reuse that finding's interpretation directly — the same wording, or a close verbatim trim of it if length requires. Do NOT rewrite it into new sales narrative, do NOT add persuasive framing it doesn't already have, and do NOT paraphrase it into a different sentence structure. The interpretation text is already formula-verified and analyst-reviewed — treat it as fixed copy to reuse, not a fact to reference while writing something new. Only if a chart has no corresponding Key Finding above should you write an original takeaway, and even then it must be a single factual sentence describing exactly what that specific chart shows — no narrative flourish, no sales language, regardless of the overall tone setting below.`
   }
 
+  // parsedDataSummary is hoisted out of the try block below (rather than kept
+  // local to it) so it can be reused later for the Company Benchmarks trigger
+  // without re-parsing the same JSON string a second time.
+  let parsedDataSummary: Record<string, any> | null = null
   let chartVarietyHint = ''
   try {
-    const parsedSummary = dataSummary ? JSON.parse(dataSummary) : null
-    if (parsedSummary?.scatterPairs?.length > 0) {
-      const strongest = [...parsedSummary.scatterPairs].sort(
+    parsedDataSummary = dataSummary ? JSON.parse(dataSummary) : null
+    if (parsedDataSummary?.scatterPairs?.length > 0) {
+      const strongest = [...parsedDataSummary.scatterPairs].sort(
         (a: any, b: any) => Math.abs(b.correlation ?? 0) - Math.abs(a.correlation ?? 0)
       )[0]
       if (strongest && Math.abs(strongest.correlation ?? 0) >= 0.3) {
@@ -144,7 +150,7 @@ For each chart, first check whether it corresponds to one of the Key Findings li
 Notable relationship found: ${strongest.xMetric} vs ${strongest.yMetric} has a correlation of ${strongest.correlation}. Strongly consider a "scatter" chart for this instead of defaulting to bar/line.`
       }
     }
-    const wideDim = Object.entries(parsedSummary?.dimensions || {}).find(
+    const wideDim = Object.entries(parsedDataSummary?.dimensions || {}).find(
       ([, d]: any) => (d?.top?.length ?? 0) >= 6
     )
     if (wideDim) {
@@ -280,6 +286,27 @@ ${rawSample || ''}`,
           insights: coreResult.insights,
           narrative: coreResult.narrative,
         }),
+      }).catch(console.error)
+    }
+
+    // Company Benchmarks trigger — fire and forget, deliberately independent
+    // of the crowd opt-in above (own-history tracking vs. pooled industry
+    // data are two separate decisions). Uses the userId/email of whoever is
+    // signed in and running this generation, and the same parsed data
+    // summary already computed for chartVarietyHint. recordCompanyBenchmarks
+    // itself no-ops for personal email domains and never throws (it logs and
+    // swallows its own errors), so this can't block or fail the main
+    // generation response.
+    const { userId } = await auth()
+    if (userId) {
+      const user = await currentUser()
+      const userEmail =
+        user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null
+      recordCompanyBenchmarks({
+        userId,
+        userEmail,
+        projectId,
+        metrics: parsedDataSummary ?? undefined,
       }).catch(console.error)
     }
 
