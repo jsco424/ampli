@@ -141,7 +141,7 @@ For each chart, first check whether it corresponds to one of the Key Findings li
   let chartVarietyHint = ''
   try {
     parsedDataSummary = dataSummary ? JSON.parse(dataSummary) : null
-    if (parsedDataSummary?.scatterPairs?.length > 0) {
+    if (parsedDataSummary && parsedDataSummary.scatterPairs?.length > 0) {
       const strongest = [...parsedDataSummary.scatterPairs].sort(
         (a: any, b: any) => Math.abs(b.correlation ?? 0) - Math.abs(a.correlation ?? 0)
       )[0]
