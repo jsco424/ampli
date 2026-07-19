@@ -230,12 +230,21 @@ ${rawSample || ''}`,
       ],
     })
 
-    await logTokenUsage({
+    // Fire-and-forget, not awaited — token usage logging is a secondary
+    // concern and must never be able to block the actual chart save below.
+    // This used to be `await`ed here, BEFORE coreParsed/coreResult even
+    // existed: if the insert ever threw (e.g. a token_usage_log_project_id_fkey
+    // violation), execution jumped straight to the outer catch, the AI's
+    // response — already sitting in coreMessage — never got parsed or
+    // saved, and the project was marked status: 'failed' with charts still
+    // null. Same class of bug as the Company Benchmarks trigger isolation
+    // further down; same fix.
+    logTokenUsage({
       projectId: projectId || null,
       route: 'generate_core',
       inputTokens: coreMessage.usage.input_tokens,
       outputTokens: coreMessage.usage.output_tokens,
-    })
+    }).catch((err) => console.error('Failed to log token usage (non-fatal):', err))
 
     const coreRaw = coreMessage.content[0].type === 'text' ? coreMessage.content[0].text : ''
     const coreCleaned = coreRaw.replace(/```json|```/g, '').trim()
@@ -347,12 +356,21 @@ Return ONLY the JSON array, no markdown.`
         ],
       })
       .then(async (recoMessage) => {
-        await logTokenUsage({
-          projectId: projectId || null,
-          route: 'generate_recommendations',
-          inputTokens: recoMessage.usage.input_tokens,
-          outputTokens: recoMessage.usage.output_tokens,
-        })
+        // Isolated in its own try/catch — same reasoning as the generate_core
+        // call above, scaled to this call's lower stakes: without this, a
+        // logTokenUsage failure here would fall through to the .catch(console.error)
+        // at the end of this chain and skip the recommendations save below
+        // it entirely, not just the logging.
+        try {
+          await logTokenUsage({
+            projectId: projectId || null,
+            route: 'generate_recommendations',
+            inputTokens: recoMessage.usage.input_tokens,
+            outputTokens: recoMessage.usage.output_tokens,
+          })
+        } catch (err) {
+          console.error('Failed to log token usage (non-fatal):', err)
+        }
 
         const recoRaw = recoMessage.content[0].type === 'text' ? recoMessage.content[0].text : ''
         const recoCleaned = recoRaw.replace(/```json|```/g, '').trim()
