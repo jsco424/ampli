@@ -11,6 +11,7 @@ import {
   Download,
   Info,
 } from 'lucide-react'
+import ChartRenderer from '@/components/ChartRenderer'
 import type { AnalysisOutput, KeyFinding, InsightTable } from '@/lib/analysisTypes'
 
 // ── Chart type resolver ────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ function normalizeGeneratedChartType(rawType: string): ResolvedChartType {
 }
 
 const MAX_SLIDES = 10
+const DEFAULT_CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6']
 
 function directionColor(direction: string): string {
   return (
@@ -227,6 +229,11 @@ interface SlideSelectorProps {
   // component still works exactly as before wherever it's rendered without
   // a conversation history to pass.
   conversationEntries?: { question: string; analysis: AnalysisOutput }[]
+  // Colors for the real chart previews on Visuals cards (see below) — same
+  // brand palette the project page and AnalysisView already use elsewhere,
+  // so a chart looks the same here as it will in the final deck. Falls back
+  // to a generic palette if the caller doesn't pass one.
+  chartColors?: string[]
 }
 
 export default function SlideSelector({
@@ -239,11 +246,19 @@ export default function SlideSelector({
   onExport,
   onCancel,
   conversationEntries = [],
+  chartColors = DEFAULT_CHART_COLORS,
 }: SlideSelectorProps) {
   const [selected, setSelected] = useState<Record<string, SelectedFinding>>({})
-  // detailedMode: when true, selected cards expand to show editable fields.
-  // Toggling this at any time immediately affects ALL currently selected cards.
+  // detailedMode: a shortcut that force-expands EVERY currently selected
+  // card at once. Independent of manuallyExpanded below — a card can be
+  // open because of either one, and closing detailedMode doesn't close
+  // cards a user individually opened by clicking them.
   const [detailedMode, setDetailedMode] = useState(false)
+  // Per-card expand state, set by clicking a card's body (not its
+  // checkbox). This is what makes clicking a card open its editor
+  // immediately, without needing to flip the global Compact/Detailed
+  // toggle first.
+  const [manuallyExpanded, setManuallyExpanded] = useState<Set<string>>(new Set())
   // Which section is visible right now — independent of what's selected,
   // so switching back and forth never loses or resets your picks.
   const [activeSection, setActiveSection] = useState<Section>('visuals')
@@ -341,6 +356,52 @@ export default function SlideSelector({
     setSelected({ ...selected, [id]: { ...selected[id], ...patch } })
   }
 
+  // Clicking a card's body: if it isn't selected yet, select it AND open
+  // its editor immediately (matches "click it and it expands so you can
+  // edit"). If it's already selected, a body click just toggles that one
+  // card's expand state open/closed — selection itself doesn't change.
+  const handleCardClick = (
+    id: string,
+    isSelected: boolean,
+    disabled: boolean,
+    select: () => void
+  ) => {
+    if (disabled) return
+    if (!isSelected) {
+      select()
+      setManuallyExpanded((prev) => new Set(prev).add(id))
+    } else {
+      setManuallyExpanded((prev) => {
+        const next = new Set(prev)
+        next.has(id) ? next.delete(id) : next.add(id)
+        return next
+      })
+    }
+  }
+
+  // Clicking the checkbox/circle icon itself: select/deselect only, never
+  // expand. stopPropagation keeps this from also firing the card's own body
+  // click handler above. Deselecting also clears any manual expand state
+  // for that id, so it doesn't reappear pre-expanded if reselected later.
+  const handleCheckboxClick = (
+    e: React.MouseEvent,
+    id: string,
+    isSelected: boolean,
+    disabled: boolean,
+    select: () => void
+  ) => {
+    e.stopPropagation()
+    if (disabled) return
+    select()
+    if (isSelected) {
+      setManuallyExpanded((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   // Selection order — relies on JS preserving insertion order for string
   // object keys (guaranteed for non-integer-like keys, which all of ours
   // are, e.g. "finding-2" or "finding-t0-2"). No custom sort needed, and
@@ -348,11 +409,13 @@ export default function SlideSelector({
   const orderedSelections = useMemo(() => Object.values(selected), [selected])
 
   // ── Shared expanded editor ─────────────────────────────────────────────
-  // Rendered inside any selected card when detailedMode is true.
-  // showHeroStat covers both findings and visuals — tables never show it.
-  const renderDetailFields = (id: string, showHeroStat: boolean) => {
+  // Rendered inside a card whenever `expanded` is true for it — true when
+  // EITHER the global detailedMode shortcut is on, OR the card was
+  // individually opened via handleCardClick. showHeroStat covers both
+  // findings and visuals — tables never show it.
+  const renderDetailFields = (id: string, showHeroStat: boolean, expanded: boolean) => {
     const sel = selected[id]
-    if (!sel || !detailedMode) return null
+    if (!sel || !expanded) return null
     return (
       <div
         className={`px-4 pb-4 pt-3 space-y-2 border-t ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
@@ -488,7 +551,9 @@ export default function SlideSelector({
         />
         <div className="flex items-center gap-3">
           <p className={`text-xs ${subtle}`}>
-            {detailedMode ? 'Detailed — edit hero stat & takeaway' : 'Compact — tap to select'}
+            {detailedMode
+              ? 'Detailed — every selected card is expanded'
+              : 'Compact — click a card to expand and edit it'}
           </p>
           <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
         </div>
@@ -510,14 +575,24 @@ export default function SlideSelector({
                 const id = `visual-${idx}`
                 const isSelected = !!selected[id]
                 const disabled = !isSelected && atLimit
+                const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
                 return (
                   <div
                     key={idx}
                     className={cardBase(isSelected, disabled)}
-                    onClick={() => !disabled && toggleVisual(chart, idx)}
+                    onClick={() =>
+                      handleCardClick(id, isSelected, disabled, () => toggleVisual(chart, idx))
+                    }
                   >
                     <div className="p-4 flex items-start gap-3">
-                      <span className="mt-0.5 shrink-0">
+                      <span
+                        className="mt-0.5 shrink-0"
+                        onClick={(e) =>
+                          handleCheckboxClick(e, id, isSelected, disabled, () =>
+                            toggleVisual(chart, idx)
+                          )
+                        }
+                      >
                         {isSelected ? (
                           <CheckCircle2 size={15} className="text-blue-500" />
                         ) : (
@@ -539,7 +614,19 @@ export default function SlideSelector({
                         )}
                       </div>
                     </div>
-                    {isSelected && renderDetailFields(id, true)}
+                    {/* Real chart preview — always rendered, not gated
+                        behind selection. Previously a card only showed the
+                        title and hero stat as text, so there was no way to
+                        actually see a visual before picking it. This uses
+                        the same ChartRenderer as everywhere else so the
+                        preview matches what the deck will actually contain,
+                        not a re-derived approximation of it. Click-through
+                        is stopped from here so interacting with the chart
+                        itself (e.g. a tooltip) doesn't toggle selection. */}
+                    <div className="px-4 pb-4" onClick={(e) => e.stopPropagation()}>
+                      <ChartRenderer chart={chart} colors={chartColors} height={140} dark={dark} />
+                    </div>
+                    {renderDetailFields(id, true, isExpanded)}
                   </div>
                 )
               })}
@@ -567,14 +654,24 @@ export default function SlideSelector({
                   const id = `finding-${idx}`
                   const isSelected = !!selected[id]
                   const disabled = !isSelected && atLimit
+                  const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
                   return (
                     <div
                       key={idx}
                       className={cardBase(isSelected, disabled)}
-                      onClick={() => !disabled && toggleFinding(finding, idx)}
+                      onClick={() =>
+                        handleCardClick(id, isSelected, disabled, () => toggleFinding(finding, idx))
+                      }
                     >
                       <div className="p-4 flex items-start gap-3">
-                        <span className="mt-0.5 shrink-0">
+                        <span
+                          className="mt-0.5 shrink-0"
+                          onClick={(e) =>
+                            handleCheckboxClick(e, id, isSelected, disabled, () =>
+                              toggleFinding(finding, idx)
+                            )
+                          }
+                        >
                           {isSelected ? (
                             <CheckCircle2 size={15} className="text-blue-500" />
                           ) : (
@@ -592,7 +689,7 @@ export default function SlideSelector({
                           </p>
                         </div>
                       </div>
-                      {isSelected && renderDetailFields(id, true)}
+                      {renderDetailFields(id, true, isExpanded)}
                     </div>
                   )
                 })}
@@ -610,14 +707,24 @@ export default function SlideSelector({
                   const id = `table-${idx}`
                   const isSelected = !!selected[id]
                   const disabled = !isSelected && atLimit
+                  const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
                   return (
                     <div
                       key={idx}
                       className={cardBase(isSelected, disabled)}
-                      onClick={() => !disabled && toggleTable(table, idx)}
+                      onClick={() =>
+                        handleCardClick(id, isSelected, disabled, () => toggleTable(table, idx))
+                      }
                     >
                       <div className="p-4 flex items-start gap-3">
-                        <span className="mt-0.5 shrink-0">
+                        <span
+                          className="mt-0.5 shrink-0"
+                          onClick={(e) =>
+                            handleCheckboxClick(e, id, isSelected, disabled, () =>
+                              toggleTable(table, idx)
+                            )
+                          }
+                        >
                           {isSelected ? (
                             <CheckCircle2 size={15} className="text-blue-500" />
                           ) : (
@@ -632,7 +739,7 @@ export default function SlideSelector({
                           <p className="text-sm font-semibold truncate">{table.title}</p>
                         </div>
                       </div>
-                      {isSelected && renderDetailFields(id, false)}
+                      {renderDetailFields(id, false, isExpanded)}
                     </div>
                   )
                 })}
@@ -657,14 +764,26 @@ export default function SlideSelector({
                       const id = `finding-t${turnIndex}-${idx}`
                       const isSelected = !!selected[id]
                       const disabled = !isSelected && atLimit
+                      const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
                       return (
                         <div
                           key={idx}
                           className={cardBase(isSelected, disabled)}
-                          onClick={() => !disabled && toggleFinding(finding, idx, turnIndex)}
+                          onClick={() =>
+                            handleCardClick(id, isSelected, disabled, () =>
+                              toggleFinding(finding, idx, turnIndex)
+                            )
+                          }
                         >
                           <div className="p-4 flex items-start gap-3">
-                            <span className="mt-0.5 shrink-0">
+                            <span
+                              className="mt-0.5 shrink-0"
+                              onClick={(e) =>
+                                handleCheckboxClick(e, id, isSelected, disabled, () =>
+                                  toggleFinding(finding, idx, turnIndex)
+                                )
+                              }
+                            >
                               {isSelected ? (
                                 <CheckCircle2 size={15} className="text-blue-500" />
                               ) : (
@@ -682,7 +801,7 @@ export default function SlideSelector({
                               </p>
                             </div>
                           </div>
-                          {isSelected && renderDetailFields(id, true)}
+                          {renderDetailFields(id, true, isExpanded)}
                         </div>
                       )
                     })}
@@ -698,14 +817,26 @@ export default function SlideSelector({
                       const id = `table-t${turnIndex}-${idx}`
                       const isSelected = !!selected[id]
                       const disabled = !isSelected && atLimit
+                      const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
                       return (
                         <div
                           key={idx}
                           className={cardBase(isSelected, disabled)}
-                          onClick={() => !disabled && toggleTable(table, idx, turnIndex)}
+                          onClick={() =>
+                            handleCardClick(id, isSelected, disabled, () =>
+                              toggleTable(table, idx, turnIndex)
+                            )
+                          }
                         >
                           <div className="p-4 flex items-start gap-3">
-                            <span className="mt-0.5 shrink-0">
+                            <span
+                              className="mt-0.5 shrink-0"
+                              onClick={(e) =>
+                                handleCheckboxClick(e, id, isSelected, disabled, () =>
+                                  toggleTable(table, idx, turnIndex)
+                                )
+                              }
+                            >
                               {isSelected ? (
                                 <CheckCircle2 size={15} className="text-blue-500" />
                               ) : (
@@ -720,7 +851,7 @@ export default function SlideSelector({
                               <p className="text-sm font-semibold truncate">{table.title}</p>
                             </div>
                           </div>
-                          {isSelected && renderDetailFields(id, false)}
+                          {renderDetailFields(id, false, isExpanded)}
                         </div>
                       )
                     })}

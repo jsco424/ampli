@@ -295,19 +295,28 @@ ${rawSample || ''}`,
     // signed in and running this generation, and the same parsed data
     // summary already computed for chartVarietyHint. recordCompanyBenchmarks
     // itself no-ops for personal email domains and never throws (it logs and
-    // swallows its own errors), so this can't block or fail the main
-    // generation response.
-    const { userId } = await auth()
-    if (userId) {
-      const user = await currentUser()
-      const userEmail =
-        user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null
-      recordCompanyBenchmarks({
-        userId,
-        userEmail,
-        projectId,
-        metrics: parsedDataSummary ?? undefined,
-      }).catch(console.error)
+    // swallows its own errors) — but this whole block is ALSO wrapped in its
+    // own try/catch, because auth()/currentUser() themselves can throw (e.g.
+    // missing Clerk context on a given request), and the project row above
+    // has already been saved with status: 'completed' and real charts by
+    // this point. Without this isolation, a thrown error here would fall
+    // into the outer catch below and overwrite that already-successful save
+    // back to status: 'failed', even though generation actually succeeded.
+    try {
+      const { userId } = await auth()
+      if (userId) {
+        const user = await currentUser()
+        const userEmail =
+          user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null
+        recordCompanyBenchmarks({
+          userId,
+          userEmail,
+          projectId,
+          metrics: parsedDataSummary ?? undefined,
+        }).catch(console.error)
+      }
+    } catch (benchmarkErr) {
+      console.error('Company Benchmarks trigger failed (non-fatal):', benchmarkErr)
     }
 
     // Recommendations — background, fire and forget

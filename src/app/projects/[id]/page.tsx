@@ -8,7 +8,6 @@ import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import { useBrand } from '@/hooks/useBrand'
-import ChartRenderer from '@/components/ChartRenderer'
 import TagInput from '@/components/TagInput'
 import AnalysisView from '@/components/AnalysisView'
 import SlideSelector from '@/components/SlideSelector'
@@ -21,7 +20,6 @@ import {
   FileText,
   CheckCircle,
   ChevronRight,
-  Sparkles,
   Briefcase,
   Microscope,
   Newspaper,
@@ -33,7 +31,11 @@ const TONE_META: Record<string, { label: string; icon: any; color: string }> = {
   educational: { label: 'Educational & Informative', icon: Newspaper, color: 'text-emerald-400' },
 }
 
-type Tab = 'analysis' | 'visuals' | 'data' | 'notes'
+// 'visuals' removed — its chart grid now renders inline inside AnalysisView
+// (see the 'analysis' tab render below), between Anomalies and the
+// Follow-up Thread, instead of living behind a separate tab with its own
+// duplicate "Build Slides" button.
+type Tab = 'analysis' | 'data' | 'notes'
 
 export default function ProjectViewPage() {
   const { id } = useParams()
@@ -301,10 +303,8 @@ export default function ProjectViewPage() {
   const handleRequestSlides = useCallback(() => {
     setShowSlideSelector(true)
     setExportError(null)
-    // No longer forces the tab to 'analysis' — the selector now renders
-    // independent of which tab is active, so opening it from Visuals no
-    // longer redirects anywhere. The selector itself has its own internal
-    // Visuals / Findings & Tables toggle.
+    // Renders independent of which tab is active — the selector has its
+    // own internal Visuals / Findings & Tables toggle.
   }, [])
 
   const handleExport = useCallback(
@@ -484,7 +484,7 @@ export default function ProjectViewPage() {
         <div
           className={`flex gap-1 mb-6 p-1 rounded-xl w-fit ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
         >
-          {(['analysis', 'visuals', 'data', 'notes'] as Tab[]).map((t) => (
+          {(['analysis', 'data', 'notes'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -496,8 +496,8 @@ export default function ProjectViewPage() {
         </div>
 
         {/* Slide selector — rendered independent of the active tab, so
-            opening it from either Analysis or Visuals never redirects.
-            It has its own internal Visuals / Findings & Tables toggle. */}
+            opening it never redirects anywhere. It has its own internal
+            Visuals / Findings & Tables toggle. */}
         {showSlideSelector && analysisOutput && (
           <SlideSelector
             analysis={analysisOutput}
@@ -509,6 +509,7 @@ export default function ProjectViewPage() {
             onExport={handleExport}
             onCancel={() => setShowSlideSelector(false)}
             conversationEntries={conversationEntries}
+            chartColors={BRAND_COLORS}
           />
         )}
 
@@ -574,50 +575,11 @@ export default function ProjectViewPage() {
                 onBuildSlides={handleRequestSlides}
                 isLoading={analysisLoading}
                 conversationEntries={conversationEntries}
+                charts={project.charts || []}
+                chartsGenerating={chartsGenerating}
+                chartColors={BRAND_COLORS}
               />
             )}
-          </div>
-        )}
-
-        {!showSlideSelector && tab === 'visuals' && (
-          <div>
-            {project.charts?.length > 0 && (
-              <div className="flex justify-end mb-4">
-                <button
-                  onClick={handleRequestSlides}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
-                >
-                  <Sparkles size={13} /> Build Slides
-                </button>
-              </div>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {project.charts?.length > 0 ? (
-                project.charts.map((chart: any, i: number) => (
-                  <div key={i} className={`p-5 rounded-xl border ${card}`}>
-                    <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
-                    <p className={`text-xs mb-4 ${muted}`}>{chart.description}</p>
-                    <ChartRenderer chart={chart} colors={BRAND_COLORS} height={200} dark={dark} />
-                  </div>
-                ))
-              ) : (
-                <div className={`col-span-2 p-10 rounded-xl border text-center ${card}`}>
-                  {chartsGenerating || analysisLoading ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                      <p className={`text-sm ${muted}`}>
-                        AI is building your visuals — this happens automatically alongside your
-                        analysis.
-                      </p>
-                    </div>
-                  ) : (
-                    <p className={`text-sm ${muted}`}>
-                      Visuals will appear here automatically once your analysis completes.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         )}
 
