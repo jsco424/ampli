@@ -26,6 +26,7 @@ export type ResolvedChartType =
   | 'scatter'
   | 'composed'
   | 'table'
+  | 'hero_stat_only'
 
 // A single already-generated chart, as stored in project.charts.
 // Shape inferred from how pitch/page.tsx reads chart fields today.
@@ -137,6 +138,7 @@ function chartTypeLabel(type: ResolvedChartType): string {
       scatter: 'Scatter plot',
       composed: 'Dual-axis chart',
       table: 'Data table',
+      hero_stat_only: 'Hero number only (no chart)',
     }[type] || type
   )
 }
@@ -167,47 +169,6 @@ function CompactDetailedToggle({
         className={`px-2.5 py-1 rounded-md transition-colors ${value ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
       >
         Detailed
-      </button>
-    </div>
-  )
-}
-
-type Section = 'visuals' | 'analysis'
-
-// Lets the user flip between the Visuals grid and the Findings/Tables view
-// while building one shared selection — selections persist across both,
-// only the visible section changes.
-function SectionToggle({
-  value,
-  onChange,
-  dark,
-  visualsCount,
-  analysisCount,
-}: {
-  value: Section
-  onChange: (s: Section) => void
-  dark: boolean
-  visualsCount: number
-  analysisCount: number
-}) {
-  const base = 'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors'
-  const active = dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm'
-  const inactive = dark ? 'text-zinc-500' : 'text-zinc-400'
-  return (
-    <div
-      className={`flex items-center rounded-lg border p-0.5 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
-    >
-      <button
-        onClick={() => onChange('visuals')}
-        className={`${base} ${value === 'visuals' ? active : inactive}`}
-      >
-        Visuals ({visualsCount})
-      </button>
-      <button
-        onClick={() => onChange('analysis')}
-        className={`${base} ${value === 'analysis' ? active : inactive}`}
-      >
-        Findings & Tables ({analysisCount})
       </button>
     </div>
   )
@@ -259,9 +220,6 @@ export default function SlideSelector({
   // immediately, without needing to flip the global Compact/Detailed
   // toggle first.
   const [manuallyExpanded, setManuallyExpanded] = useState<Set<string>>(new Set())
-  // Which section is visible right now — independent of what's selected,
-  // so switching back and forth never loses or resets your picks.
-  const [activeSection, setActiveSection] = useState<Section>('visuals')
 
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const inputCls = dark
@@ -270,12 +228,6 @@ export default function SlideSelector({
 
   const selectedCount = Object.keys(selected).length
   const atLimit = selectedCount >= MAX_SLIDES
-  const followUpFindingsCount = conversationEntries.reduce(
-    (sum, entry) => sum + entry.analysis.keyFindings.length + entry.analysis.insightTables.length,
-    0
-  )
-  const analysisCount =
-    analysis.keyFindings.length + analysis.insightTables.length + followUpFindingsCount
 
   // turnIndex is undefined for the original analysis, a number for a
   // follow-up turn — this is what keeps IDs unique across all of them
@@ -472,6 +424,7 @@ export default function SlideSelector({
             >
               {(
                 [
+                  'hero_stat_only',
                   'bar',
                   'grouped_bar',
                   'line',
@@ -540,39 +493,114 @@ export default function SlideSelector({
         </div>
       </div>
 
-      {/* Section toggle + Compact/Detailed toggle, side by side */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <SectionToggle
-          value={activeSection}
-          onChange={setActiveSection}
-          dark={dark}
-          visualsCount={charts.length}
-          analysisCount={analysisCount}
-        />
-        <div className="flex items-center gap-3">
-          <p className={`text-xs ${subtle}`}>
-            {detailedMode
-              ? 'Detailed — every selected card is expanded'
-              : 'Compact — click a card to expand and edit it'}
-          </p>
-          <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
-        </div>
+      {/* Compact/Detailed toggle — the Visuals/Findings & Tables section
+          toggle that used to sit here was removed, since everything now
+          renders as one continuous list below and switching sections had
+          nothing left to do. */}
+      <div className="flex items-center justify-end gap-3">
+        <p className={`text-xs ${subtle}`}>
+          {detailedMode
+            ? 'Detailed — every selected card is expanded'
+            : 'Compact — click a card to expand and edit it'}
+        </p>
+        <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
       </div>
 
-      {/* Visuals section */}
-      {activeSection === 'visuals' && (
-        <div>
-          {chartsLoading ? (
-            <div
-              className={`p-6 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
-            >
-              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              <p className={`text-xs ${subtle}`}>AI is building your visuals...</p>
-            </div>
-          ) : charts.length > 0 ? (
+      {/* Visuals */}
+      <div>
+        {(charts.length > 0 || chartsLoading) && (
+          <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>Visuals</p>
+        )}
+        {chartsLoading ? (
+          <div
+            className={`p-6 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
+          >
+            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <p className={`text-xs ${subtle}`}>AI is building your visuals...</p>
+          </div>
+        ) : charts.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {charts.map((chart, idx) => {
+              const id = `visual-${idx}`
+              const isSelected = !!selected[id]
+              const disabled = !isSelected && atLimit
+              const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+              return (
+                <div
+                  key={idx}
+                  className={cardBase(isSelected, disabled)}
+                  onClick={() =>
+                    handleCardClick(id, isSelected, disabled, () => toggleVisual(chart, idx))
+                  }
+                >
+                  <div className="p-4 flex items-start gap-3">
+                    <span
+                      className="mt-0.5 shrink-0"
+                      onClick={(e) =>
+                        handleCheckboxClick(e, id, isSelected, disabled, () =>
+                          toggleVisual(chart, idx)
+                        )
+                      }
+                    >
+                      {isSelected ? (
+                        <CheckCircle2 size={15} className="text-blue-500" />
+                      ) : (
+                        <Circle size={15} className={subtle} />
+                      )}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <BarChart3 size={11} className={subtle} />
+                        <p className={`text-[11px] ${subtle}`}>
+                          {chartTypeLabel(normalizeGeneratedChartType(chart.type))}
+                        </p>
+                      </div>
+                      <p className="text-sm font-semibold truncate mb-1">{chart.title}</p>
+                      {chart.hero_stat && (
+                        <p className="text-xl font-black leading-none text-blue-400">
+                          {chart.hero_stat}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {/* Real chart preview — always rendered, not gated
+                        behind selection. Previously a card only showed the
+                        title and hero stat as text, so there was no way to
+                        actually see a visual before picking it. This uses
+                        the same ChartRenderer as everywhere else so the
+                        preview matches what the deck will actually contain,
+                        not a re-derived approximation of it. Click-through
+                        is stopped from here so interacting with the chart
+                        itself (e.g. a tooltip) doesn't toggle selection. */}
+                  <div className="px-4 pb-4" onClick={(e) => e.stopPropagation()}>
+                    <ChartRenderer chart={chart} colors={chartColors} height={140} dark={dark} />
+                  </div>
+                  {renderDetailFields(id, true, isExpanded)}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div
+            className={`p-5 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
+          >
+            <p className={`text-xs ${subtle}`}>No visuals available for this analysis yet.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Findings & Tables — Key Findings, Computed Tables, and any
+          follow-up ("Dig deeper") turns, all rendered together with Visuals
+          above as one continuous list. */}
+      <div className="space-y-6">
+        {analysis.keyFindings.length > 0 && (
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
+              Key Findings
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {charts.map((chart, idx) => {
-                const id = `visual-${idx}`
+              {analysis.keyFindings.map((finding, idx) => {
+                const id = `finding-${idx}`
                 const isSelected = !!selected[id]
                 const disabled = !isSelected && atLimit
                 const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
@@ -581,7 +609,7 @@ export default function SlideSelector({
                     key={idx}
                     className={cardBase(isSelected, disabled)}
                     onClick={() =>
-                      handleCardClick(id, isSelected, disabled, () => toggleVisual(chart, idx))
+                      handleCardClick(id, isSelected, disabled, () => toggleFinding(finding, idx))
                     }
                   >
                     <div className="p-4 flex items-start gap-3">
@@ -589,7 +617,60 @@ export default function SlideSelector({
                         className="mt-0.5 shrink-0"
                         onClick={(e) =>
                           handleCheckboxClick(e, id, isSelected, disabled, () =>
-                            toggleVisual(chart, idx)
+                            toggleFinding(finding, idx)
+                          )
+                        }
+                      >
+                        {isSelected ? (
+                          <CheckCircle2 size={15} className="text-blue-500" />
+                        ) : (
+                          <Circle size={15} className={subtle} />
+                        )}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
+                          {finding.label}
+                        </p>
+                        <p
+                          className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
+                        >
+                          {finding.value}
+                        </p>
+                      </div>
+                    </div>
+                    {renderDetailFields(id, true, isExpanded)}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {analysis.insightTables.length > 0 && (
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
+              Computed Tables
+            </p>
+            <div className="space-y-3">
+              {analysis.insightTables.map((table, idx) => {
+                const id = `table-${idx}`
+                const isSelected = !!selected[id]
+                const disabled = !isSelected && atLimit
+                const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                return (
+                  <div
+                    key={idx}
+                    className={cardBase(isSelected, disabled)}
+                    onClick={() =>
+                      handleCardClick(id, isSelected, disabled, () => toggleTable(table, idx))
+                    }
+                  >
+                    <div className="p-4 flex items-start gap-3">
+                      <span
+                        className="mt-0.5 shrink-0"
+                        onClick={(e) =>
+                          handleCheckboxClick(e, id, isSelected, disabled, () =>
+                            toggleTable(table, idx)
                           )
                         }
                       >
@@ -601,267 +682,134 @@ export default function SlideSelector({
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 mb-0.5">
-                          <BarChart3 size={11} className={subtle} />
-                          <p className={`text-[11px] ${subtle}`}>
-                            {chartTypeLabel(normalizeGeneratedChartType(chart.type))}
-                          </p>
+                          <Table2 size={11} className={subtle} />
+                          <p className={`text-[11px] ${subtle}`}>Data Table</p>
                         </div>
-                        <p className="text-sm font-semibold truncate mb-1">{chart.title}</p>
-                        {chart.hero_stat && (
-                          <p className="text-xl font-black leading-none text-blue-400">
-                            {chart.hero_stat}
-                          </p>
-                        )}
+                        <p className="text-sm font-semibold truncate">{table.title}</p>
                       </div>
                     </div>
-                    {/* Real chart preview — always rendered, not gated
-                        behind selection. Previously a card only showed the
-                        title and hero stat as text, so there was no way to
-                        actually see a visual before picking it. This uses
-                        the same ChartRenderer as everywhere else so the
-                        preview matches what the deck will actually contain,
-                        not a re-derived approximation of it. Click-through
-                        is stopped from here so interacting with the chart
-                        itself (e.g. a tooltip) doesn't toggle selection. */}
-                    <div className="px-4 pb-4" onClick={(e) => e.stopPropagation()}>
-                      <ChartRenderer chart={chart} colors={chartColors} height={140} dark={dark} />
-                    </div>
-                    {renderDetailFields(id, true, isExpanded)}
+                    {renderDetailFields(id, false, isExpanded)}
                   </div>
                 )
               })}
             </div>
-          ) : (
-            <div
-              className={`p-5 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
-            >
-              <p className={`text-xs ${subtle}`}>No visuals available for this analysis yet.</p>
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Findings & Tables section */}
-      {activeSection === 'analysis' && (
-        <div className="space-y-6">
-          {analysis.keyFindings.length > 0 && (
-            <div>
-              <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
-                Key Findings
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {analysis.keyFindings.map((finding, idx) => {
-                  const id = `finding-${idx}`
-                  const isSelected = !!selected[id]
-                  const disabled = !isSelected && atLimit
-                  const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
-                  return (
-                    <div
-                      key={idx}
-                      className={cardBase(isSelected, disabled)}
-                      onClick={() =>
-                        handleCardClick(id, isSelected, disabled, () => toggleFinding(finding, idx))
-                      }
-                    >
-                      <div className="p-4 flex items-start gap-3">
-                        <span
-                          className="mt-0.5 shrink-0"
-                          onClick={(e) =>
-                            handleCheckboxClick(e, id, isSelected, disabled, () =>
-                              toggleFinding(finding, idx)
-                            )
-                          }
-                        >
-                          {isSelected ? (
-                            <CheckCircle2 size={15} className="text-blue-500" />
-                          ) : (
-                            <Circle size={15} className={subtle} />
-                          )}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
-                            {finding.label}
-                          </p>
-                          <p
-                            className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
-                          >
-                            {finding.value}
-                          </p>
-                        </div>
-                      </div>
-                      {renderDetailFields(id, true, isExpanded)}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {analysis.insightTables.length > 0 && (
-            <div>
-              <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
-                Computed Tables
-              </p>
-              <div className="space-y-3">
-                {analysis.insightTables.map((table, idx) => {
-                  const id = `table-${idx}`
-                  const isSelected = !!selected[id]
-                  const disabled = !isSelected && atLimit
-                  const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
-                  return (
-                    <div
-                      key={idx}
-                      className={cardBase(isSelected, disabled)}
-                      onClick={() =>
-                        handleCardClick(id, isSelected, disabled, () => toggleTable(table, idx))
-                      }
-                    >
-                      <div className="p-4 flex items-start gap-3">
-                        <span
-                          className="mt-0.5 shrink-0"
-                          onClick={(e) =>
-                            handleCheckboxClick(e, id, isSelected, disabled, () =>
-                              toggleTable(table, idx)
-                            )
-                          }
-                        >
-                          {isSelected ? (
-                            <CheckCircle2 size={15} className="text-blue-500" />
-                          ) : (
-                            <Circle size={15} className={subtle} />
-                          )}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <Table2 size={11} className={subtle} />
-                            <p className={`text-[11px] ${subtle}`}>Data Table</p>
-                          </div>
-                          <p className="text-sm font-semibold truncate">{table.title}</p>
-                        </div>
-                      </div>
-                      {renderDetailFields(id, false, isExpanded)}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Follow-up "Dig deeper" findings — previously had no way to
+        {/* Follow-up "Dig deeper" findings — previously had no way to
               reach the selector at all. Each turn gets its own labeled
               group so it's clear which follow-up question a finding came
               from, but selecting one works exactly like an original finding. */}
-          {conversationEntries.map((entry, turnIndex) => (
-            <div key={turnIndex} className="space-y-4">
-              {entry.analysis.keyFindings.length > 0 && (
-                <div>
-                  <p className={`text-xs font-semibold uppercase tracking-wide mb-1 ${subtle}`}>
-                    Follow-up · "{entry.question}"
-                  </p>
-                  <p className={`text-[11px] mb-3 ${subtle}`}>Key Findings</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {entry.analysis.keyFindings.map((finding, idx) => {
-                      const id = `finding-t${turnIndex}-${idx}`
-                      const isSelected = !!selected[id]
-                      const disabled = !isSelected && atLimit
-                      const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
-                      return (
-                        <div
-                          key={idx}
-                          className={cardBase(isSelected, disabled)}
-                          onClick={() =>
-                            handleCardClick(id, isSelected, disabled, () =>
-                              toggleFinding(finding, idx, turnIndex)
-                            )
-                          }
-                        >
-                          <div className="p-4 flex items-start gap-3">
-                            <span
-                              className="mt-0.5 shrink-0"
-                              onClick={(e) =>
-                                handleCheckboxClick(e, id, isSelected, disabled, () =>
-                                  toggleFinding(finding, idx, turnIndex)
-                                )
-                              }
+        {conversationEntries.map((entry, turnIndex) => (
+          <div key={turnIndex} className="space-y-4">
+            {entry.analysis.keyFindings.length > 0 && (
+              <div>
+                <p className={`text-xs font-semibold uppercase tracking-wide mb-1 ${subtle}`}>
+                  Follow-up · "{entry.question}"
+                </p>
+                <p className={`text-[11px] mb-3 ${subtle}`}>Key Findings</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {entry.analysis.keyFindings.map((finding, idx) => {
+                    const id = `finding-t${turnIndex}-${idx}`
+                    const isSelected = !!selected[id]
+                    const disabled = !isSelected && atLimit
+                    const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                    return (
+                      <div
+                        key={idx}
+                        className={cardBase(isSelected, disabled)}
+                        onClick={() =>
+                          handleCardClick(id, isSelected, disabled, () =>
+                            toggleFinding(finding, idx, turnIndex)
+                          )
+                        }
+                      >
+                        <div className="p-4 flex items-start gap-3">
+                          <span
+                            className="mt-0.5 shrink-0"
+                            onClick={(e) =>
+                              handleCheckboxClick(e, id, isSelected, disabled, () =>
+                                toggleFinding(finding, idx, turnIndex)
+                              )
+                            }
+                          >
+                            {isSelected ? (
+                              <CheckCircle2 size={15} className="text-blue-500" />
+                            ) : (
+                              <Circle size={15} className={subtle} />
+                            )}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
+                              {finding.label}
+                            </p>
+                            <p
+                              className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
                             >
-                              {isSelected ? (
-                                <CheckCircle2 size={15} className="text-blue-500" />
-                              ) : (
-                                <Circle size={15} className={subtle} />
-                              )}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <p className={`text-[11px] font-medium mb-0.5 truncate ${subtle}`}>
-                                {finding.label}
-                              </p>
-                              <p
-                                className={`text-2xl font-black leading-none ${directionColor(finding.direction)}`}
-                              >
-                                {finding.value}
-                              </p>
-                            </div>
+                              {finding.value}
+                            </p>
                           </div>
-                          {renderDetailFields(id, true, isExpanded)}
                         </div>
-                      )
-                    })}
-                  </div>
+                        {renderDetailFields(id, true, isExpanded)}
+                      </div>
+                    )
+                  })}
                 </div>
-              )}
+              </div>
+            )}
 
-              {entry.analysis.insightTables.length > 0 && (
-                <div>
-                  <p className={`text-[11px] mb-3 ${subtle}`}>Computed Tables</p>
-                  <div className="space-y-3">
-                    {entry.analysis.insightTables.map((table, idx) => {
-                      const id = `table-t${turnIndex}-${idx}`
-                      const isSelected = !!selected[id]
-                      const disabled = !isSelected && atLimit
-                      const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
-                      return (
-                        <div
-                          key={idx}
-                          className={cardBase(isSelected, disabled)}
-                          onClick={() =>
-                            handleCardClick(id, isSelected, disabled, () =>
-                              toggleTable(table, idx, turnIndex)
-                            )
-                          }
-                        >
-                          <div className="p-4 flex items-start gap-3">
-                            <span
-                              className="mt-0.5 shrink-0"
-                              onClick={(e) =>
-                                handleCheckboxClick(e, id, isSelected, disabled, () =>
-                                  toggleTable(table, idx, turnIndex)
-                                )
-                              }
-                            >
-                              {isSelected ? (
-                                <CheckCircle2 size={15} className="text-blue-500" />
-                              ) : (
-                                <Circle size={15} className={subtle} />
-                              )}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 mb-0.5">
-                                <Table2 size={11} className={subtle} />
-                                <p className={`text-[11px] ${subtle}`}>Data Table</p>
-                              </div>
-                              <p className="text-sm font-semibold truncate">{table.title}</p>
+            {entry.analysis.insightTables.length > 0 && (
+              <div>
+                <p className={`text-[11px] mb-3 ${subtle}`}>Computed Tables</p>
+                <div className="space-y-3">
+                  {entry.analysis.insightTables.map((table, idx) => {
+                    const id = `table-t${turnIndex}-${idx}`
+                    const isSelected = !!selected[id]
+                    const disabled = !isSelected && atLimit
+                    const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                    return (
+                      <div
+                        key={idx}
+                        className={cardBase(isSelected, disabled)}
+                        onClick={() =>
+                          handleCardClick(id, isSelected, disabled, () =>
+                            toggleTable(table, idx, turnIndex)
+                          )
+                        }
+                      >
+                        <div className="p-4 flex items-start gap-3">
+                          <span
+                            className="mt-0.5 shrink-0"
+                            onClick={(e) =>
+                              handleCheckboxClick(e, id, isSelected, disabled, () =>
+                                toggleTable(table, idx, turnIndex)
+                              )
+                            }
+                          >
+                            {isSelected ? (
+                              <CheckCircle2 size={15} className="text-blue-500" />
+                            ) : (
+                              <Circle size={15} className={subtle} />
+                            )}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <Table2 size={11} className={subtle} />
+                              <p className={`text-[11px] ${subtle}`}>Data Table</p>
                             </div>
+                            <p className="text-sm font-semibold truncate">{table.title}</p>
                           </div>
-                          {renderDetailFields(id, false, isExpanded)}
                         </div>
-                      )
-                    })}
-                  </div>
+                        {renderDetailFields(id, false, isExpanded)}
+                      </div>
+                    )
+                  })}
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
 
       {/* Sticky footer CTA — direct export, no intermediate slide build.
           Reflects the TOTAL selected count across both sections, regardless

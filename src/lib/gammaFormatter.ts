@@ -23,7 +23,9 @@ function defaultAudience(tone?: string): string {
 // Chart type is a SOFT SIGNAL only — Gamma has no per-card "render as X"
 // parameter in its generation API, so this can only ever be a text hint
 // inside additionalInstructions, not a guarantee. Returns null for types
-// that don't map to a meaningful visual suggestion (e.g. 'table').
+// that don't map to a meaningful visual suggestion (e.g. 'table', or
+// 'hero_stat_only' — that one is handled separately below, since it means
+// the opposite of a chart suggestion: no visual at all).
 function chartTypeHint(type: string | undefined, cardLabel: string): string | null {
   if (!type) return null
   const phrase: Record<string, string> = {
@@ -95,6 +97,12 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   // Collected alongside sections — soft chart-type suggestions per card,
   // folded into additionalInstructions below. Never a guarantee.
   const chartHints: string[] = []
+  // Cards where the user explicitly picked "Hero number only (no chart)"
+  // in SlideSelector. Kept separate from chartHints since this is the
+  // opposite instruction — omit a visual entirely — not a preference among
+  // visual types, so it needs its own sentence rather than being folded
+  // into the "suggested chart types" phrasing.
+  const heroOnlyCards: string[] = []
 
   // ── Card 1: Title + executive summary ─────────────────────────────────
   const titleLine = targetCompany ? `# ${projectName} — ${targetCompany}` : `# ${projectName}`
@@ -152,6 +160,9 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
       // sel.heroStat / sel.takeaway (set via SlideSelector's Detailed mode).
       // Gamma only ever receives text here, same as findings — the actual
       // chart image isn't sent, Gamma builds its own visual from the outline.
+      // This holds true even for hero_stat_only selections below — the card
+      // content itself (heroStat/label/takeaway) doesn't change, only the
+      // instruction about whether Gamma should add a visual for it.
       const label = sel.chart.title || ''
       const heroStat = sel.heroStat || sel.chart.hero_stat || ''
       const takeaway = cleanForSlide(
@@ -168,8 +179,12 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
           .filter((l) => l !== undefined)
           .join('\n')
       )
-      const visualHint = chartTypeHint(sel.chartType, label)
-      if (visualHint) chartHints.push(visualHint)
+      if (sel.chartType === 'hero_stat_only') {
+        heroOnlyCards.push(heroStat ? `"${heroStat}" (${label})` : `"${label}"`)
+      } else {
+        const visualHint = chartTypeHint(sel.chartType, label)
+        if (visualHint) chartHints.push(visualHint)
+      }
       continue
     }
 
@@ -199,8 +214,12 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
         .filter((l) => l !== undefined)
         .join('\n')
     )
-    const findingHint = chartTypeHint(sel.chartType, label)
-    if (findingHint) chartHints.push(findingHint)
+    if (sel.chartType === 'hero_stat_only') {
+      heroOnlyCards.push(heroStat ? `"${heroStat}" (${label})` : `"${label}"`)
+    } else {
+      const findingHint = chartTypeHint(sel.chartType, label)
+      if (findingHint) chartHints.push(findingHint)
+    }
   }
 
   // ── Anomaly card — max 3, critical first, short descriptions only ──────
@@ -282,6 +301,14 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
     // should still use its own judgment on what best represents each card.
     chartHints.length > 0
       ? `For visual/chart cards, these are suggested (not required) chart types based on the user's preference: ${chartHints.join('; ')}. Use your own judgment if a different visual better represents the data.`
+      : null,
+    // A separate, more direct instruction from chartHints above — this is
+    // an explicit opt-out of a visual entirely, not a preference among
+    // visual types, so it's phrased as a directive rather than a
+    // suggestion. Still not a hard guarantee (no Gamma API field enforces
+    // this), but stronger wording than the "suggested chart type" phrasing.
+    heroOnlyCards.length > 0
+      ? `For these specific cards, do not add any chart, graph, or visual at all — just the large hero number and a short callout beneath it, same as a plain stat card: ${heroOnlyCards.join('; ')}.`
       : null,
   ]
     .filter(Boolean)
