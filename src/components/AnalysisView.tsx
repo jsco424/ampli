@@ -17,7 +17,9 @@ import {
   PresentationIcon,
   RefreshCw,
   BarChart2,
+  BarChart3,
 } from 'lucide-react'
+import ChartRenderer from '@/components/ChartRenderer'
 import type {
   AnalysisOutput,
   KeyFinding,
@@ -329,6 +331,17 @@ interface ConversationEntry {
   analysis: AnalysisOutput
 }
 
+// Loosely typed to match project.charts as stored — same shape ChartRenderer
+// and the old Visuals tab already expected (title, description, type, data,
+// plus whatever chart-specific fields like hero_stat/takeaway/layout).
+interface AnalysisChart {
+  title: string
+  description?: string
+  type: string
+  data: Record<string, any>[]
+  [key: string]: any
+}
+
 interface AnalysisViewProps {
   analysis: AnalysisOutput
   dark?: boolean
@@ -336,7 +349,17 @@ interface AnalysisViewProps {
   onBuildSlides: () => void
   isLoading?: boolean
   conversationEntries?: ConversationEntry[]
+  // Visuals — merged in from what used to be a separate "Visuals" tab on
+  // the project page. Rendered as its own section below, between Anomalies
+  // and the Follow-up Thread, so the read order is: findings -> tables ->
+  // anomalies -> visuals -> follow-ups -> build slides, all in one scroll
+  // instead of a tab switch partway through reviewing the analysis.
+  charts?: AnalysisChart[]
+  chartsGenerating?: boolean
+  chartColors?: string[]
 }
+
+const DEFAULT_CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6']
 
 export default function AnalysisView({
   analysis,
@@ -345,6 +368,9 @@ export default function AnalysisView({
   onBuildSlides,
   isLoading = false,
   conversationEntries = [],
+  charts = [],
+  chartsGenerating = false,
+  chartColors = DEFAULT_CHART_COLORS,
 }: AnalysisViewProps) {
   const [followUpInput, setFollowUpInput] = useState('')
   const [showAnomalies, setShowAnomalies] = useState(false)
@@ -522,6 +548,40 @@ export default function AnalysisView({
             <div className="space-y-2">
               {analysis.anomalies.map((a, i) => (
                 <AnomalyItem key={i} anomaly={a} dark={dark} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Visuals — merged in from the old standalone Visuals tab. Shows
+          exactly once analysis + charts both exist, or a generating state
+          while charts are still being built in the background. */}
+      {(charts.length > 0 || chartsGenerating) && (
+        <div>
+          <p
+            className={`text-[11px] font-semibold uppercase tracking-wide mb-3 flex items-center gap-1.5 ${subtler}`}
+          >
+            <BarChart3 size={11} />
+            Visuals
+          </p>
+          {chartsGenerating ? (
+            <div className={`p-6 rounded-2xl border text-center ${card}`}>
+              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              <p className={`text-xs ${subtle}`}>
+                AI is building your visuals — this happens automatically alongside your analysis.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {charts.map((chart, i) => (
+                <div key={i} className={`p-4 rounded-2xl border ${card}`}>
+                  <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
+                  {chart.description && (
+                    <p className={`text-xs mb-3 ${subtle}`}>{chart.description}</p>
+                  )}
+                  <ChartRenderer chart={chart} colors={chartColors} height={180} dark={dark} />
+                </div>
               ))}
             </div>
           )}
