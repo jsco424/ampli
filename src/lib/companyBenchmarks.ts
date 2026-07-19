@@ -21,7 +21,25 @@ const PERSONAL_EMAIL_DOMAINS = new Set([
   'protonmail.com',
 ])
 
+// Dev-only override so local testing doesn't require signing in with a real
+// company email domain. Set DEV_COMPANY_KEY in .env.local (e.g.
+// DEV_COMPANY_KEY=test-company.dev) to force every signed-in user to
+// resolve to that single company key while developing, regardless of their
+// actual email. Gated on NODE_ENV so this can never fire in production even
+// if the env var were accidentally left set — Vercel production builds run
+// with NODE_ENV=production regardless of what's in .env.local locally.
+// Both recordCompanyBenchmarks() (the write side) and the /api/company-benchmarks
+// read route call deriveCompanyKey(), so this one override covers writing
+// test data and reading it back in the dashboard consistently.
+function devCompanyKeyOverride(): string | null {
+  if (process.env.NODE_ENV === 'production') return null
+  return process.env.DEV_COMPANY_KEY || null
+}
+
 export function deriveCompanyKey(email: string | null | undefined): string | null {
+  const devOverride = devCompanyKeyOverride()
+  if (devOverride) return devOverride
+
   if (!email || !email.includes('@')) return null
   const domain = email.split('@')[1]?.toLowerCase().trim()
   if (!domain || PERSONAL_EMAIL_DOMAINS.has(domain)) return null
@@ -33,13 +51,6 @@ export function deriveCompanyKey(email: string | null | undefined): string | nul
 // running average (that's what crowd_insights does for the shared pool;
 // Company Benchmarks needs each project to stay its own point in time so
 // it can be charted as a real trend).
-//
-// NOT YET WIRED to a trigger point — this function is ready to call, but
-// nothing calls it yet. The natural hook is wherever a project's analysis
-// completes (likely inside /api/generate/route.ts, which already has
-// access to the parsed dataSummary and the project's user), independent
-// of whether the user has opted into crowd-sourcing — those are two
-// separate decisions and this one shouldn't depend on the other.
 export async function recordCompanyBenchmarks(params: {
   userId: string
   userEmail: string | null
