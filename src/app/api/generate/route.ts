@@ -230,15 +230,17 @@ ${rawSample || ''}`,
       ],
     })
 
-    // Fire-and-forget, not awaited — token usage logging is a secondary
-    // concern and must never be able to block the actual chart save below.
-    // This used to be `await`ed here, BEFORE coreParsed/coreResult even
-    // existed: if the insert ever threw (e.g. a token_usage_log_project_id_fkey
-    // violation), execution jumped straight to the outer catch, the AI's
-    // response — already sitting in coreMessage — never got parsed or
-    // saved, and the project was marked status: 'failed' with charts still
-    // null. Same class of bug as the Company Benchmarks trigger isolation
-    // further down; same fix.
+    // Fire-and-forget, not awaited — a small latency win, not a bug fix.
+    // CORRECTION: an earlier version of this comment claimed a thrown
+    // logTokenUsage() error (e.g. a token_usage_log_project_id_fkey
+    // violation) was jumping to the outer catch and preventing charts from
+    // being saved. That's wrong — logTokenUsage() already wraps its own
+    // insert in try/catch and never throws (see its own doc comment in
+    // tokenUsage.ts), so awaiting it here was never actually capable of
+    // reaching the outer catch. The .catch() below is redundant with that
+    // internal handling but kept anyway as defense in depth. The real cause
+    // of a run coming back with charts: null is still being diagnosed —
+    // see the project overview doc's "Still open" note.
     logTokenUsage({
       projectId: projectId || null,
       route: 'generate_core',
@@ -286,7 +288,20 @@ ${rawSample || ''}`,
       .eq('id', projectId)
 
     if (optIn) {
-      fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/crowd`, {
+      // Falls back through NEXT_PUBLIC_APP_URL, then Vercel's own
+      // auto-populated VERCEL_URL (no protocol, hence the manual https://),
+      // and only reaches localhost:3000 in actual local dev. The old
+      // fallback chain went straight from NEXT_PUBLIC_APP_URL to
+      // localhost:3000 — meaning if that env var was ever unset in
+      // production, this fetch would try to reach localhost inside the
+      // serverless function itself and fail with ECONNREFUSED on every
+      // single run, silently (already .catch()-isolated below, so it
+      // never affected chart generation, just meant every opted-in
+      // Crowd Insights contribution was quietly lost).
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+      fetch(`${appUrl}/api/crowd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -356,11 +371,11 @@ Return ONLY the JSON array, no markdown.`
         ],
       })
       .then(async (recoMessage) => {
-        // Isolated in its own try/catch — same reasoning as the generate_core
-        // call above, scaled to this call's lower stakes: without this, a
-        // logTokenUsage failure here would fall through to the .catch(console.error)
-        // at the end of this chain and skip the recommendations save below
-        // it entirely, not just the logging.
+        // Redundant defense-in-depth, not an active bug fix — logTokenUsage()
+        // already never throws (see the correction on the generate_core call
+        // above), so this try/catch can't actually be catching anything in
+        // practice. Left in place since it costs nothing and documents the
+        // intent clearly if that internal handling ever changes.
         try {
           await logTokenUsage({
             projectId: projectId || null,
