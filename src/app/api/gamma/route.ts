@@ -3,9 +3,29 @@ import { createClient } from '@supabase/supabase-js'
 import { formatForGamma } from '@/lib/gammaFormatter'
 import type { AnalysisHandoff } from '@/lib/analysisTypes'
 
+// This route polls Gamma for up to 2 minutes (POLL_INTERVAL_MS * POLL_MAX_ATTEMPTS
+// below), then downloads and re-hosts the resulting file — comfortably past
+// Vercel's default timeout, and past the 60s used for generate/route.ts too.
+// IMPORTANT: 300s is only actually honored on Vercel Pro (or with Fluid
+// Compute enabled) — Hobby plan hard-caps maxDuration at 60s regardless of
+// what's set here, which would mean any export that takes Gamma longer than
+// 60s to generate will still time out on Hobby no matter what this value is.
+// Worth confirming which plan this project is on.
+export const maxDuration = 300
+
+// Service-role client, not anon. Same fix as generate/route.ts: server-side
+// routes have no window.Clerk to attach a session via the accessToken
+// callback in src/lib/supabase.ts, so an anon client here has zero auth
+// token. Under RLS, that meant the project lookup below silently came back
+// empty — not an error, just no visible row — which this route's own
+// `if (error || !project)` check correctly treated as "not found" and
+// returned a 404 for. Same underlying bug as the chart-generation issue,
+// just surfacing as an explicit 404 here instead of a silent no-op, because
+// this route happens to check for a missing row where generate/route.ts's
+// .update() call didn't.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 // Service-role client — needed to write to Storage and project_exports
