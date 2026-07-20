@@ -284,6 +284,10 @@ ${rawSample || ''}`,
         charts: coreResult.charts,
         tone: tone || 'executive',
         status: 'completed',
+        // Clears any error message from a previous failed run on this same
+        // project, so a stale error can't sit there looking current after
+        // a retry actually succeeds.
+        generation_error: null,
       })
       .eq('id', projectId)
 
@@ -405,8 +409,16 @@ Return ONLY the JSON array, no markdown.`
 
     return NextResponse.json({ success: true })
   } catch (err: any) {
-    console.error('GENERATE ERROR:', err?.message || err)
-    await supabase.from('projects').update({ status: 'failed' }).eq('id', projectId)
-    return NextResponse.json({ error: err?.message || 'Generation failed' }, { status: 500 })
+    // This is the message that would otherwise only exist for as long as
+    // Vercel's log retention allows — persisting it directly on the project
+    // row means it's checkable anytime afterward in Supabase's Table Editor,
+    // no live log stream or precise timing required.
+    const errorMessage = err?.message || String(err)
+    console.error('GENERATE ERROR:', errorMessage)
+    await supabase
+      .from('projects')
+      .update({ status: 'failed', generation_error: errorMessage })
+      .eq('id', projectId)
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }
