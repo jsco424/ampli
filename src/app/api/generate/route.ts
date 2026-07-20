@@ -435,13 +435,14 @@ Return ONLY the JSON array, no markdown.`
       } catch (err: any) {
         const errorMessage = err?.message || String(err)
         console.error('RECOMMENDATIONS ERROR:', errorMessage)
-        await supabase
-          .from('projects')
-          .update({ recommendations_error: errorMessage })
-          .eq('id', projectId)
-          .catch((updateErr) =>
-            console.error('Also failed to persist recommendations_error:', updateErr)
-          )
+        try {
+          await supabase
+            .from('projects')
+            .update({ recommendations_error: errorMessage })
+            .eq('id', projectId)
+        } catch (updateErr) {
+          console.error('Also failed to persist recommendations_error:', updateErr)
+        }
       }
     })()
 
