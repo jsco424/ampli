@@ -389,50 +389,61 @@ The "stat" must be grounded in the data summary — never invent a precise figur
 Writing style — hard rule: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen. Use a period, comma, or connecting word instead. Word-internal hyphens (e.g. "high-revenue") are fine. Write like a sharp human analyst.
 Return ONLY the JSON array, no markdown.`
 
-    client.messages
-      .create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1500,
-        system: `${recoPrompt}\n\n${toneInstruction}\n\n${dataFramingInstruction}\n\n${dataGroundingInstruction}${confirmedAnalysis ? `\n\n${confirmedAnalysisInstruction}` : ''}`,
-        messages: [
-          {
-            role: 'user',
-            content: `Project: ${projectName}\n\nNarrative:\n${coreResult.narrative.slice(0, 400)}\n\nInsights:\n${JSON.stringify(coreResult.insights)}\n\nData summary (for grounding any stat you cite):\n${dataSummary || 'No summary available.'}\n\n${prompt ? `Focus: ${prompt}` : ''}`,
-          },
-        ],
-      })
-      .then(async (recoMessage) => {
-        // Redundant defense-in-depth, not an active bug fix — logTokenUsage()
-        // already never throws (see the correction on the generate_core call
-        // above), so this try/catch can't actually be catching anything in
-        // practice. Left in place since it costs nothing and documents the
-        // intent clearly if that internal handling ever changes.
-        try {
-          await logTokenUsage({
-            projectId: projectId || null,
-            route: 'generate_recommendations',
-            inputTokens: recoMessage.usage.input_tokens,
-            outputTokens: recoMessage.usage.output_tokens,
-          })
-        } catch (err) {
-          console.error('Failed to log token usage (non-fatal):', err)
-        }
+    // Converted from a .then()/.catch() chain to an async IIFE so every
+    // failure path can be captured with the real error and persisted to
+    // recommendations_error — same reasoning as generation_error on the
+    // main charts save: an empty `catch { console.error('Failed to parse
+    // recommendations') }` with no error object logged, and an outer
+    // `.catch(console.error)` that never touched the DB, meant a failure
+    // here was invisible in the exact same way the chart-generation
+    // failures were before that fix. Still fire-and-forget from the main
+    // handler's perspective — not awaited below, so it can't block or
+    // delay the success response.
+    ;(async () => {
+      try {
+        const recoMessage = await client.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1500,
+          system: `${recoPrompt}\n\n${toneInstruction}\n\n${dataFramingInstruction}\n\n${dataGroundingInstruction}${confirmedAnalysis ? `\n\n${confirmedAnalysisInstruction}` : ''}`,
+          messages: [
+            {
+              role: 'user',
+              content: `Project: ${projectName}\n\nNarrative:\n${coreResult.narrative.slice(0, 400)}\n\nInsights:\n${JSON.stringify(coreResult.insights)}\n\nData summary (for grounding any stat you cite):\n${dataSummary || 'No summary available.'}\n\n${prompt ? `Focus: ${prompt}` : ''}`,
+            },
+          ],
+        })
+
+        logTokenUsage({
+          projectId: projectId || null,
+          route: 'generate_recommendations',
+          inputTokens: recoMessage.usage.input_tokens,
+          outputTokens: recoMessage.usage.output_tokens,
+        }).catch((err) => console.error('Failed to log token usage (non-fatal):', err))
 
         const recoRaw = recoMessage.content[0].type === 'text' ? recoMessage.content[0].text : ''
         const recoCleaned = recoRaw.replace(/```json|```/g, '').trim()
-        try {
-          const recommendationsParsed = JSON.parse(recoCleaned)
-          const recommendations = (recommendationsParsed || []).map((rec: any) => ({
-            ...rec,
-            title: stripDashJoins(rec.title),
-            description: stripDashJoins(rec.description),
-          }))
-          await supabase.from('projects').update({ recommendations }).eq('id', projectId)
-        } catch {
-          console.error('Failed to parse recommendations')
-        }
-      })
-      .catch(console.error)
+        const recommendationsParsed = JSON.parse(recoCleaned)
+        const recommendations = (recommendationsParsed || []).map((rec: any) => ({
+          ...rec,
+          title: stripDashJoins(rec.title),
+          description: stripDashJoins(rec.description),
+        }))
+        await supabase
+          .from('projects')
+          .update({ recommendations, recommendations_error: null })
+          .eq('id', projectId)
+      } catch (err: any) {
+        const errorMessage = err?.message || String(err)
+        console.error('RECOMMENDATIONS ERROR:', errorMessage)
+        await supabase
+          .from('projects')
+          .update({ recommendations_error: errorMessage })
+          .eq('id', projectId)
+          .catch((updateErr) =>
+            console.error('Also failed to persist recommendations_error:', updateErr)
+          )
+      }
+    })()
 
     return NextResponse.json({ success: true })
   } catch (err: any) {

@@ -41,13 +41,25 @@ export interface GeneratedChart {
   [key: string]: any
 }
 
+// A single already-generated recommendation, as stored in
+// project.recommendations. Matches the shape generate/route.ts's
+// recommendations background call produces.
+export interface Recommendation {
+  number?: string
+  title: string
+  description: string
+  stat?: string
+  stat_label?: string
+}
+
 export interface SelectedFinding {
-  type: 'finding' | 'table' | 'visual'
+  type: 'finding' | 'table' | 'visual' | 'recommendation'
   id: string
   finding?: KeyFinding
   table?: InsightTable
   chart?: GeneratedChart
   chartIndex?: number // original index into project.charts, for visuals
+  recommendation?: Recommendation
   heroStat: string
   takeaway: string
   chartType: ResolvedChartType
@@ -195,6 +207,12 @@ interface SlideSelectorProps {
   // so a chart looks the same here as it will in the final deck. Falls back
   // to a generic palette if the caller doesn't pass one.
   chartColors?: string[]
+  // AI-generated recommendations from project.recommendations. Previously
+  // these were invisible in the UI entirely — auto-stuffed into the deck
+  // server-side (gammaFormatter.ts took up to 3 automatically) with no way
+  // to see, choose, or edit them before export. Now rendered as its own
+  // selectable/editable section, same as findings.
+  recommendations?: Recommendation[]
 }
 
 export default function SlideSelector({
@@ -208,6 +226,7 @@ export default function SlideSelector({
   onCancel,
   conversationEntries = [],
   chartColors = DEFAULT_CHART_COLORS,
+  recommendations = [],
 }: SlideSelectorProps) {
   const [selected, setSelected] = useState<Record<string, SelectedFinding>>({})
   // detailedMode: a shortcut that force-expands EVERY currently selected
@@ -298,6 +317,34 @@ export default function SlideSelector({
           takeaway: chart.takeaway || chart.description || '',
           chartType: normalizeGeneratedChartType(chart.type),
           chartData: chart.data,
+        },
+      })
+    }
+  }
+
+  // heroStat comes from `stat` (e.g. "57%"), takeaway from `description` —
+  // same generic heroStat/takeaway fields every other card type uses, so
+  // renderDetailFields below works for recommendations with zero new code.
+  // chartType is set to 'table' just to reuse the "no chart type dropdown"
+  // rendering path (showHeroStat=true still shows the Hero Stat field,
+  // chartType itself is irrelevant for a recommendation card).
+  const toggleRecommendation = (rec: Recommendation, idx: number) => {
+    const id = `recommendation-${idx}`
+    if (selected[id]) {
+      const next = { ...selected }
+      delete next[id]
+      setSelected(next)
+    } else {
+      if (atLimit) return
+      setSelected({
+        ...selected,
+        [id]: {
+          type: 'recommendation',
+          id,
+          recommendation: rec,
+          heroStat: rec.stat || '',
+          takeaway: rec.description || '',
+          chartType: 'table',
         },
       })
     }
@@ -689,6 +736,73 @@ export default function SlideSelector({
                       </div>
                     </div>
                     {renderDetailFields(id, false, isExpanded)}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Recommendations — previously invisible in the UI entirely.
+              gammaFormatter.ts used to auto-include up to 3 of these
+              server-side regardless of any user choice, with no way to see,
+              pick a count, or edit them before export. Now selectable and
+              editable exactly like Key Findings, reusing the same card
+              shell and renderDetailFields editor. */}
+        {recommendations.length > 0 && (
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
+              Recommendations
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {recommendations.map((rec, idx) => {
+                const id = `recommendation-${idx}`
+                const isSelected = !!selected[id]
+                const disabled = !isSelected && atLimit
+                const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                return (
+                  <div
+                    key={idx}
+                    className={cardBase(isSelected, disabled)}
+                    onClick={() =>
+                      handleCardClick(id, isSelected, disabled, () =>
+                        toggleRecommendation(rec, idx)
+                      )
+                    }
+                  >
+                    <div className="p-4 flex items-start gap-3">
+                      <span
+                        className="mt-0.5 shrink-0"
+                        onClick={(e) =>
+                          handleCheckboxClick(e, id, isSelected, disabled, () =>
+                            toggleRecommendation(rec, idx)
+                          )
+                        }
+                      >
+                        {isSelected ? (
+                          <CheckCircle2 size={15} className="text-blue-500" />
+                        ) : (
+                          <Circle size={15} className={subtle} />
+                        )}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-[11px] font-medium mb-0.5 ${subtle}`}>
+                          {rec.number ? `${rec.number} · ` : ''}
+                          {rec.title}
+                        </p>
+                        {rec.stat && (
+                          <p className="text-2xl font-black leading-none text-blue-400">
+                            {rec.stat}
+                            {rec.stat_label && (
+                              <span className={`text-xs font-medium ml-1.5 ${subtle}`}>
+                                {rec.stat_label}
+                              </span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {renderDetailFields(id, true, isExpanded)}
                   </div>
                 )
               })}

@@ -528,6 +528,7 @@ export default function ProjectViewPage() {
             onCancel={() => setShowSlideSelector(false)}
             conversationEntries={conversationEntries}
             chartColors={BRAND_COLORS}
+            recommendations={project.recommendations || []}
           />
         )}
 

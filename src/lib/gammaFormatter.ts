@@ -84,7 +84,11 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   const {
     confirmedAnalysis,
     selectedFindings,
-    projectRecommendations,
+    // projectRecommendations intentionally NOT destructured — recommendations
+    // now come through selectedFindings (sel.type === 'recommendation') like
+    // every other selectable item, not as a separate auto-included list.
+    // Left in the input type/callers for backward compatibility, just unused
+    // here now.
     projectName,
     tone,
     targetCompany,
@@ -103,6 +107,12 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   // visual types, so it needs its own sentence rather than being folded
   // into the "suggested chart types" phrasing.
   const heroOnlyCards: string[] = []
+  // How many recommendation cards actually got built from explicit user
+  // selections in the loop below — used further down to decide whether the
+  // suggestedFollowUps fallback should fire (only when the user selected
+  // zero recommendations, not "whenever project.recommendations is empty"
+  // like the old logic did).
+  let selectedRecommendationCount = 0
 
   // ── Card 1: Title + executive summary ─────────────────────────────────
   const titleLine = targetCompany ? `# ${projectName} — ${targetCompany}` : `# ${projectName}`
@@ -150,6 +160,31 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
           .filter(Boolean)
           .join('\n')
       )
+      continue
+    }
+
+    if (sel.type === 'recommendation' && sel.recommendation) {
+      // Recommendations were previously invisible in the UI and
+      // auto-included wholesale (up to 3) regardless of any user choice —
+      // see the old "Recommendations card" block this replaced, further
+      // down. Now each selected recommendation gets its own card here,
+      // same shape as a finding card: stat as the H1 hero number (if the
+      // rec has one — not all do), title as H2, description as the body.
+      const label = sel.recommendation.title || ''
+      const heroStat = sel.heroStat || sel.recommendation.stat || ''
+      const takeaway = cleanForSlide(sel.takeaway || sel.recommendation.description || '')
+
+      sections.push(
+        [
+          heroStat ? `# ${heroStat}` : `# ${label}`,
+          heroStat && label ? `## ${label}` : '',
+          '',
+          takeaway,
+        ]
+          .filter((l) => l !== undefined)
+          .join('\n')
+      )
+      selectedRecommendationCount++
       continue
     }
 
@@ -248,31 +283,16 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
     )
   }
 
-  // ── Recommendations card — from project.recommendations (AI-generated
-  // action recs), NOT suggestedFollowUps which are analytical questions.
-  // Falls back to suggestedFollowUps only if no project recommendations exist.
-  const recs =
-    projectRecommendations && projectRecommendations.length > 0 ? projectRecommendations : null
-
-  if (recs && recs.length > 0) {
-    sections.push(
-      [
-        '# Recommended Next Steps',
-        '',
-        ...recs
-          .slice(0, 3)
-          .map((r: any, i: number) =>
-            [
-              `**${r.number || String(i + 1).padStart(2, '0')} ${r.title || ''}**`,
-              r.description ? cleanForSlide(r.description).slice(0, 200) : '',
-              r.stat ? `**${r.stat}** ${r.stat_label || ''}` : '',
-            ]
-              .filter(Boolean)
-              .join('\n')
-          ),
-      ].join('\n\n')
-    )
-  } else if (confirmedAnalysis.suggestedFollowUps.length > 0) {
+  // ── Recommendations fallback ────────────────────────────────────────────
+  // Recommendations themselves are now built as individual cards in the main
+  // selection loop above (sel.type === 'recommendation'), same as findings —
+  // no longer auto-included wholesale here regardless of what the user
+  // picked. This fallback only fires when the user selected NONE (not
+  // "whenever project.recommendations happens to be empty", which was the
+  // old trigger condition) — a safety net so a deck isn't missing a "next
+  // steps" card entirely just because nobody touched that section, not a
+  // substitute for the user's actual choice when they made one.
+  if (selectedRecommendationCount === 0 && confirmedAnalysis.suggestedFollowUps.length > 0) {
     // Reframe analytical follow-ups as action items for the deck context
     sections.push(
       [
