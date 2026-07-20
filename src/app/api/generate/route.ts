@@ -7,6 +7,20 @@ import { stripDashJoins } from '@/lib/textCleanup'
 import { logTokenUsage } from '@/lib/tokenUsage'
 import { recordCompanyBenchmarks } from '@/lib/companyBenchmarks'
 
+// Without this, Vercel's default function timeout applies — as short as
+// 5-10s on Hobby, 15s default on Pro. A max_tokens: 6000 Claude call,
+// especially one generating a full chart deck, can easily take longer than
+// that. If Vercel kills the function on a platform-level timeout, it does
+// so BEFORE our own try/catch below ever gets a chance to run — meaning
+// neither the success path nor the catch block's generation_error write
+// ever executes. This is consistent with everything observed after the
+// 406 fix: the request reaches the server (no client-side block anymore),
+// but nothing lands in the DB and no error gets recorded, because the
+// function was killed externally, not by a JS error we could catch.
+// 60s is valid on every Vercel plan without additional Fluid Compute
+// configuration; raise it further if this still isn't enough headroom.
+export const maxDuration = 60
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
