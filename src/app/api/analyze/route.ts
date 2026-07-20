@@ -26,6 +26,24 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Same tone → guidance mapping generate/route.ts uses for the deck-building
+// pass. Previously tone reached this route only as a bare label appended to
+// the user message (`## Tone\nexecutive`) with nothing in SYSTEM_PROMPT
+// telling Claude what that means — so it shaped the narrative prose built
+// later in /api/generate, but not the actual analytical framing (which
+// findings get surfaced, how they're ranked, how they're interpreted) done
+// in this pass. Kept as a plain object, not baked into the module-level
+// SYSTEM_PROMPT constant, since it's injected per-request into the user
+// message alongside audienceInstruction below.
+const TONE_INSTRUCTIONS: Record<string, string> = {
+  executive:
+    'Tone: Executive & Concise. Be punchy and direct. Lead with the single most important number in each finding. Minimal context or setup — get straight to business impact. Short sentences. No fluff.',
+  analytical:
+    'Tone: Analytical & Detailed. Be methodical. Explain the "why" behind each insight, not just the "what". Reference the underlying data patterns. Write for a technical or skeptical audience that wants rigor.',
+  educational:
+    'Tone: Educational & Informative. Write like a neutral news brief reporting findings. No persuasive framing, no sales language, no urgency. Simply inform the reader of what the data shows.',
+}
+
 // ── System prompt ──────────────────────────────────────────────────────────
 // Rewritten to be data-type-first, not formula-first.
 // The old prompt listed specific formulas (lift, T vs C, ROI) as things
@@ -468,6 +486,13 @@ export async function POST(req: Request) {
     // interest fetch below. Optional — analysis works exactly as before
     // if these aren't passed (e.g. a project with no target company set).
     targetCompany,
+    // NEW — was previously only sent to /api/generate, meaning the initial
+    // executive summary and key findings could describe prospecting/
+    // benchmark data as though it were the target company's own historical
+    // performance, with the "this isn't actually their data" framing only
+    // kicking in later at deck-build time. Now applied here too, at the
+    // point where the findings themselves get written.
+    dataSourceType,
     projectId,
   }: {
     dataSummaryJson: string
@@ -484,6 +509,7 @@ export async function POST(req: Request) {
       avoid?: string
     } | null
     targetCompany?: string | null
+    dataSourceType?: string | null
     projectId?: string | null
   } = await req.json()
 
@@ -529,6 +555,20 @@ export async function POST(req: Request) {
   const dimensionColumns = summary.columns.filter((c) => c.role === 'dimension').map((c) => c.name)
   const sampledRows = sampleRows(rawRows)
 
+  // Computed here (rather than just before the Anthropic call, where it
+  // used to live) so it can gate the public-interest fetch below —
+  // targetCompany is now sent on follow-up calls too (needed for
+  // dataFramingInstruction), but the fetch itself should still only run
+  // once, on the initial analysis, same as before.
+  const isFollowUp = Array.isArray(conversationHistory) && conversationHistory.length > 0
+
+  // ── Tone interpretation ─────────────────────────────────────────────────
+  // Previously tone reached this route only as a bare label with nothing in
+  // SYSTEM_PROMPT explaining what it means — real guidance (see
+  // TONE_INSTRUCTIONS above) only existed in generate/route.ts, so tone
+  // shaped the deck's prose but not the actual analytical framing done here.
+  const toneInstruction = tone ? TONE_INSTRUCTIONS[tone] || TONE_INSTRUCTIONS.executive : ''
+
   // ── Audience tailoring ──────────────────────────────────────────────────
   // Shapes the actual findings/hero numbers/interpretations, not just the
   // narrative wrapper built later in /api/generate. Mirrors the same
@@ -545,6 +585,21 @@ ${targetAudience.avoid ? `Avoid: ${targetAudience.avoid}.` : ''}
 This shapes which findings you rank highest and how you interpret them — it never changes what the data actually says, only which true things you choose to lead with and how you frame them.`
   }
 
+  // ── Data source framing ─────────────────────────────────────────────────
+  // Mirrors generate/route.ts's dataFramingInstruction, applied here too so
+  // the initial findings/executive summary get this right from the start
+  // instead of only being corrected later at deck-build time. Only fires
+  // for the prospecting_benchmark case — client_actual data needs no special
+  // framing since it genuinely is the target company's own performance.
+  // Deliberately NOT gated on !isFollowUp — a follow-up question about
+  // prospecting/benchmark data needs this framing just as much as the
+  // initial pass does, unlike the fetch below.
+  let dataFramingInstruction = ''
+  if (dataSourceType === 'prospecting_benchmark' && targetCompany) {
+    dataFramingInstruction = `
+CRITICAL — data attribution: this dataset does NOT belong to ${targetCompany}. It is being used to build a case for why ${targetCompany} should become a client, not to report on their own performance. Never phrase the executive summary, any key finding, interpretation, or anomaly as though these specific numbers are ${targetCompany}'s own historical results. Instead, frame findings around what this trajectory demonstrates is POSSIBLE or ACHIEVABLE for a company like ${targetCompany}.`
+  }
+
   // ── On-demand public interest fetch (Crowd Insights + User Behaviors) ──
   // Synchronous, not gated behind the daily Trends cron — a target company
   // being pitched right now almost certainly isn't already one of the
@@ -553,8 +608,11 @@ This shapes which findings you rank highest and how you interpret them — it ne
   // trend_topics/trend_signals so it's tracked going forward too, per the
   // decision to let ampli's tracked list grow organically. Explicitly
   // supplementary — instructed below to confirm the story, never drive it.
+  // Gated on !isFollowUp now that targetCompany is sent on follow-ups too
+  // (for dataFramingInstruction above) — without this, every follow-up
+  // question would redundantly re-run the same Wikipedia/YouTube fetch.
   let publicInterestInstruction = ''
-  if (targetCompany) {
+  if (targetCompany && !isFollowUp) {
     try {
       // Same lookup pattern generate/route.ts already uses for
       // competitorInstruction — kept server-side so the caller doesn't
@@ -659,8 +717,9 @@ This is real-time public interest data, separate from the uploaded dataset. Use 
     `Metric columns: ${metricColumns.join(', ') || 'none detected'}`,
     `Dimension columns: ${dimensionColumns.join(', ') || 'none detected'}`,
     prompt ? `\n## User Focus\n${prompt}` : '',
-    tone ? `\n## Tone\n${tone}` : '',
+    toneInstruction ? `\n## Tone\n${toneInstruction}` : '',
     audienceInstruction ? `\n${audienceInstruction}` : '',
+    dataFramingInstruction ? `\n${dataFramingInstruction}` : '',
     publicInterestInstruction ? `\n${publicInterestInstruction}` : '',
     '',
     `## Raw Rows Sample (${sampledRows.length} of ${summary.rowCount} rows — for pattern recognition only, not arithmetic)`,
@@ -671,7 +730,6 @@ This is real-time public interest data, separate from the uploaded dataset. Use 
     'Identify the data type, apply the right analytical frame, and find what matters. Use the verified group comparisons above for any numerical claims about segment differences.',
   ].join('\n')
 
-  const isFollowUp = Array.isArray(conversationHistory) && conversationHistory.length > 0
   const messages: { role: 'user' | 'assistant'; content: string }[] = isFollowUp
     ? [{ role: 'user', content: userMessage }, ...conversationHistory]
     : [{ role: 'user', content: userMessage }]

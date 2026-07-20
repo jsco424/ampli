@@ -143,6 +143,13 @@ export default function ProjectViewPage() {
             // fetch when a target company is set.
             targetAudience: data.target_audience || null,
             targetCompany: data.target_company || null,
+            // Was previously only sent to /api/generate — meant the initial
+            // executive summary and key findings could describe prospecting/
+            // benchmark data as though it were the target company's own
+            // performance, with the "this isn't actually their data" framing
+            // only applying later at deck-build time. Now applied from the
+            // first pass onward.
+            dataSourceType: data.data_source_type || null,
             projectId: data.id,
           }),
         })
@@ -259,12 +266,16 @@ export default function ProjectViewPage() {
             prompt: project.prompt || null,
             tone: project.tone || 'executive',
             industry: project.industry || null,
-            // Audience tailoring carries through follow-ups too. targetCompany
-            // is deliberately omitted here — the on-demand public interest
-            // fetch already ran once on the initial analysis; re-fetching on
-            // every follow-up question would be wasteful and the context is
-            // already part of conversationHistory Claude has access to.
             targetAudience: project.target_audience || null,
+            // Now sent on follow-ups too — needed for dataFramingInstruction
+            // (the "this isn't the target company's own data" framing) to
+            // apply on follow-up questions, not just the initial analysis.
+            // Previously omitted specifically to avoid re-triggering the
+            // on-demand public interest fetch on every follow-up; that fetch
+            // is now separately gated on !isFollowUp in analyze/route.ts, so
+            // sending targetCompany here no longer re-runs it.
+            targetCompany: project.target_company || null,
+            dataSourceType: project.data_source_type || null,
             // Was missing entirely — meant follow-up questions were never
             // counted against the credit limit at all, and never logged to
             // token_usage_log's 'analyze_followup' route either.

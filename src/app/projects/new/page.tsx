@@ -193,7 +193,18 @@ export default function NewProjectPage() {
           status: 'processing',
           opt_in_crowd: optIn && piiResult?.riskLevel !== 'high',
           target_company: selectedCompany?.company_name || null,
-          target_audience: selectedAudience?.role || null,
+          // Was `selectedAudience?.role || null` — saved only the role
+          // STRING, but analyze/route.ts and generate/route.ts both expect
+          // a full object ({role, seniority, cares_about, narrative_style,
+          // avoid}). A string in that spot meant every property except
+          // .role silently evaluated to undefined downstream — harmless in
+          // analyze/route.ts (the tailoring block just contributed nothing),
+          // actively broken in generate/route.ts (interpolated "undefined"
+          // literally into the prompt sent to Gamma). Now saves the whole
+          // selected audience object, matching what target_audience is
+          // actually declared as (jsonb, per the migration that went with
+          // this fix) and what both consumers already expected.
+          target_audience: selectedAudience || null,
           data_source_type: resolvedDataSourceType,
           industry: null,
           created_at: new Date().toISOString(),
