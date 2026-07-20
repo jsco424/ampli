@@ -39,7 +39,7 @@ type Tab = 'analysis' | 'data' | 'notes'
 
 export default function ProjectViewPage() {
   const { id } = useParams()
-  const { user } = useUser()
+  const { user, isLoaded } = useUser()
   const { dark } = useTheme()
   const { brand } = useBrand()
   const router = useRouter()
@@ -74,7 +74,25 @@ export default function ProjectViewPage() {
   const analysisTriggered = useRef(false)
 
   useEffect(() => {
-    if (!id) return
+    // Waits for Clerk to finish loading before firing ANY Supabase query.
+    // This was the actual root cause of a 406 (Not Acceptable) on this
+    // exact fetch: Supabase's accessToken callback in src/lib/supabase.ts
+    // calls window.Clerk.session.getToken() on every request, but this
+    // effect previously fired as soon as `id` was available — with no
+    // guard on Clerk having actually finished initializing. On a hard
+    // reload, Clerk needs real time to bootstrap (verify cookies, load the
+    // session), especially on development keys, which are documented as
+    // slower than production keys. If this query raced ahead of that,
+    // window.Clerk.session didn't exist yet, the accessToken callback
+    // returned null, and with no token attached, RLS filtered the row out
+    // entirely — Postgres returned zero rows, and PostgREST turned that
+    // into exactly this 406. With `data` then null, `project` state never
+    // got set, which meant the chart-generation effect further down
+    // (gated on `if (!project || !analysisOutput) return`) never fired
+    // either — so /api/generate was never even called client-side. That's
+    // consistent with everything observed: zero server logs, no
+    // generation_error recorded, charts stuck null indefinitely.
+    if (!id || !isLoaded) return
 
     supabase
       .from('projects')
@@ -176,7 +194,7 @@ export default function ProjectViewPage() {
           setAllTags(t)
         })
     }
-  }, [id])
+  }, [id, isLoaded])
 
   useEffect(() => {
     if (!project || !analysisOutput) return
