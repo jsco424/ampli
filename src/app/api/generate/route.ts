@@ -22,9 +22,22 @@ import { recordCompanyBenchmarks } from '@/lib/companyBenchmarks'
 export const maxDuration = 60
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+// Service-role client, not anon. The accessToken callback in src/lib/supabase.ts
+// that attaches a Clerk session only works in the browser (it calls
+// window.Clerk.session.getToken()) — there's no window in this server-side
+// route, so the anon client that used to live here had no session token at
+// all. If RLS on `projects` requires a matching authenticated JWT (it does),
+// every .update() from an unauthenticated anon client silently affects ZERO
+// rows — Postgres doesn't error on that, it just does nothing. This is the
+// actual root cause of the entire "visuals not rendering" investigation:
+// status never flipping to 'completed'/'failed', generation_error never
+// populating even after a clean 200 response, charts staying null regardless
+// of whether the AI call itself succeeded. Matches the pattern already used
+// everywhere else server-side in this app (companyBenchmarks.ts,
+// tokenUsage.ts, the Gamma route's supabaseAdmin).
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 export async function POST(req: Request) {
