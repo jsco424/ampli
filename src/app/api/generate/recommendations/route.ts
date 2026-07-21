@@ -67,6 +67,32 @@ export async function POST(req: Request) {
   const tone = project.tone || 'executive'
   const toneInstruction = TONE_INSTRUCTIONS[tone] || TONE_INSTRUCTIONS.executive
 
+  // Recommendations previously had NO audience tailoring at all — not a
+  // regression from today's refactor, this gap existed in the original
+  // background call too. Adding it now since James flagged this as
+  // probably the most important piece to get right for recommendations
+  // specifically: the audience is who's actually going to read and act on
+  // these, so which 3 recommendations get surfaced (and how they're
+  // framed) should reflect what that person cares about, same tailoring
+  // analyze/route.ts already applies to findings.
+  const targetAudience: {
+    role?: string
+    seniority?: string
+    cares_about?: string[]
+    narrative_style?: string
+    avoid?: string
+  } | null = project.target_audience || null
+  let audienceInstruction = ''
+  if (targetAudience) {
+    audienceInstruction = `
+AUDIENCE TAILORING:
+These recommendations are being built for: ${targetAudience.role || 'a business stakeholder'}${targetAudience.seniority ? ` (${targetAudience.seniority})` : ''}.
+${targetAudience.cares_about?.length ? `They care about: ${targetAudience.cares_about.join(', ')}. Prioritize which 3 recommendations you surface, and how you frame each one, around these specifically over ones that don't speak to them.` : ''}
+${targetAudience.narrative_style ? `Match this narrative style throughout: ${targetAudience.narrative_style}.` : ''}
+${targetAudience.avoid ? `Avoid: ${targetAudience.avoid}.` : ''}
+This shapes which actions you recommend and how you frame them — it never changes what the data actually supports, only which true, grounded recommendations you choose to lead with.`
+  }
+
   // Same framing rule as generate/route.ts and analyze/route.ts — kept
   // identical wording across all three so the model gets a consistent
   // instruction regardless of which stage is generating text.
@@ -114,7 +140,7 @@ Return ONLY the JSON array, no markdown.`
     const recoMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: `${recoPrompt}\n\n${toneInstruction}\n\n${dataFramingInstruction}\n\n${dataGroundingInstruction}${confirmedAnalysisInstruction ? `\n\n${confirmedAnalysisInstruction}` : ''}`,
+      system: `${recoPrompt}\n\n${toneInstruction}\n\n${audienceInstruction}\n\n${dataFramingInstruction}\n\n${dataGroundingInstruction}${confirmedAnalysisInstruction ? `\n\n${confirmedAnalysisInstruction}` : ''}`,
       messages: [
         {
           role: 'user',
