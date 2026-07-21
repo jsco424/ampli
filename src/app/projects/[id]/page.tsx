@@ -497,7 +497,15 @@ export default function ProjectViewPage() {
                 <span
                   className={`text-xs font-medium ${dark ? 'text-purple-400' : 'text-purple-600'}`}
                 >
-                  {project.target_audience}
+                  {/* target_audience is now the full object saved by
+                      new/page.tsx ({role, seniority, cares_about,
+                      narrative_style, avoid}), not a plain string — this
+                      used to render the raw string directly, and rendering
+                      the whole object here threw React error #31 ("Objects
+                      are not valid as a React child"). Only .role belongs
+                      in this compact metadata bar; the rest of the object
+                      is used server-side for tailoring, not displayed here. */}
+                  {project.target_audience.role || 'Custom audience'}
                 </span>
               </div>
             )}

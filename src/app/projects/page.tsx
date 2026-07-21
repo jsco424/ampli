@@ -547,7 +547,14 @@ export default function ProjectsPage() {
                               <span
                                 className={`text-xs px-2 py-0.5 rounded-full ${dark ? 'bg-purple-500/10 text-purple-400' : 'bg-purple-50 text-purple-600'}`}
                               >
-                                {p.target_audience}
+                                {/* target_audience is the full object saved by
+                                    new/page.tsx ({role, seniority,
+                                    cares_about, narrative_style, avoid}), not
+                                    a plain string — rendering it directly
+                                    here threw React error #31 ("Objects are
+                                    not valid as a React child"). Only .role
+                                    belongs in this compact card badge. */}
+                                {p.target_audience.role || 'Custom audience'}
                               </span>
                             )}
                             {p.folder && (
