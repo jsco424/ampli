@@ -124,14 +124,12 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   // visual types, so it needs its own sentence rather than being folded
   // into the "suggested chart types" phrasing.
   const heroOnlyCards: string[] = []
-  // How many recommendation cards actually got built from explicit user
-  // selections in the loop below — used further down to decide whether the
-  // suggestedFollowUps fallback should fire (only when the user selected
-  // zero recommendations, not "whenever project.recommendations is empty"
-  // like the old logic did). Also doubles as the source data for the one
-  // combined "Recommended Next Steps" card built after the loop — James
-  // wants all selected recommendations on one slide, not one slide each.
-  const selectedRecommendations: any[] = []
+  // Recommendations are now a single combined selection in SlideSelector
+  // (one slide, one slot in the 10-slide budget, holding the FULL set of
+  // recommendations) rather than one selection per recommendation — so
+  // this only ever gets set once, not accumulated across multiple loop
+  // iterations like it briefly was.
+  let recommendationsSelection: any | null = null
   // ── Card 1: Title + executive summary ─────────────────────────────────
   const titleLine = targetCompany ? `# ${projectName} — ${targetCompany}` : `# ${projectName}`
 
@@ -181,13 +179,11 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
       continue
     }
 
-    if (sel.type === 'recommendation' && sel.recommendation) {
-      // James wants selected recommendations combined into ONE slide on
-      // export, not one slide per recommendation (unlike findings/tables/
-      // visuals, which each get their own card). Collected here instead of
-      // pushed immediately — the combined card gets built once, after this
-      // loop, from everything gathered in selectedRecommendations.
-      selectedRecommendations.push(sel)
+    if (sel.type === 'recommendation' && sel.recommendations) {
+      // Recommendations are one combined selection now — captured here,
+      // the actual "Recommended Next Steps" card gets built once, after
+      // this loop, directly from sel.recommendations.
+      recommendationsSelection = sel
       continue
     }
 
@@ -308,26 +304,23 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   }
 
   // ── Recommendations card ────────────────────────────────────────────────
-  // Every selected recommendation is combined into ONE "Recommended Next
-  // Steps" card here — not one slide per recommendation, unlike findings/
-  // tables/visuals, which each get their own card. This still respects the
-  // user's actual selection (only recommendations they picked go in, and
-  // in the order they were selected), it's just rendered as one shared
-  // card rather than N separate ones. The suggestedFollowUps fallback
-  // below only fires when the user selected NONE (not "whenever
-  // project.recommendations happens to be empty," which was the old
-  // trigger condition) — a safety net so a deck isn't missing a "next
+  // Recommendations are one combined selection in SlideSelector — selecting
+  // "Recommendations" includes the FULL set as a single slide, one slot in
+  // the 10-slide budget (not one slide per recommendation, unlike findings/
+  // tables/visuals, which each get their own card). The fallback below only
+  // fires when the user didn't select the Recommendations card at all (not
+  // "whenever project.recommendations happens to be empty," which was the
+  // old trigger condition) — a safety net so a deck isn't missing a "next
   // steps" card entirely just because nobody touched that section.
-  if (selectedRecommendations.length > 0) {
+  if (recommendationsSelection?.recommendations?.length > 0) {
     sections.push(
       [
         '# Recommended Next Steps',
         '',
-        ...selectedRecommendations.map((sel, i) => {
-          const rec = sel.recommendation
+        ...recommendationsSelection.recommendations.map((rec: any, i: number) => {
           const title = rec.title || ''
-          const description = cleanForSlide(sel.takeaway || rec.description || '')
-          const stat = sel.heroStat || rec.stat || ''
+          const description = cleanForSlide(rec.description || '')
+          const stat = rec.stat || ''
           return [
             `**${rec.number || String(i + 1).padStart(2, '0')} ${title}**`,
             description,

@@ -60,7 +60,11 @@ export interface SelectedFinding {
   table?: InsightTable
   chart?: GeneratedChart
   chartIndex?: number // original index into project.charts, for visuals
-  recommendation?: Recommendation
+  // The FULL set of recommendations, not one per selection — recommendations
+  // are a single selectable unit (one slide, one slot in the 10-slide
+  // budget) that bundles all of them together, unlike findings/tables/
+  // visuals which are each their own separate selection.
+  recommendations?: Recommendation[]
   heroStat: string
   takeaway: string
   chartType: ResolvedChartType
@@ -335,28 +339,28 @@ export default function SlideSelector({
     }
   }
 
-  // heroStat comes from `stat` (e.g. "57%"), takeaway from `description` —
-  // same generic heroStat/takeaway fields every other card type uses, so
-  // renderDetailFields below works for recommendations with zero new code.
-  // chartType is set to 'table' just to reuse the "no chart type dropdown"
-  // rendering path (showHeroStat=true still shows the Hero Stat field,
-  // chartType itself is irrelevant for a recommendation card).
-  const toggleRecommendation = (rec: Recommendation, idx: number) => {
-    const id = `recommendation-${idx}`
-    if (selected[id]) {
+  // All recommendations are ONE selectable unit, not one per recommendation
+  // — selecting/deselecting the whole set counts as a single slot in the
+  // 10-slide budget, and exports as one combined "Recommended Next Steps"
+  // slide (see gammaFormatter.ts). A single fixed id since there's only
+  // ever one such selection possible per project, unlike findings/tables/
+  // visuals which each get their own id.
+  const RECOMMENDATIONS_ID = 'recommendations-all'
+  const toggleRecommendations = () => {
+    if (selected[RECOMMENDATIONS_ID]) {
       const next = { ...selected }
-      delete next[id]
+      delete next[RECOMMENDATIONS_ID]
       setSelected(next)
     } else {
       if (atLimit) return
       setSelected({
         ...selected,
-        [id]: {
+        [RECOMMENDATIONS_ID]: {
           type: 'recommendation',
-          id,
-          recommendation: rec,
-          heroStat: rec.stat || '',
-          takeaway: rec.description || '',
+          id: RECOMMENDATIONS_ID,
+          recommendations,
+          heroStat: '',
+          takeaway: '',
           chartType: 'table',
         },
       })
@@ -817,70 +821,69 @@ export default function SlideSelector({
           </div>
         )}
 
-        {/* Recommendations — previously invisible in the UI entirely.
-              gammaFormatter.ts used to auto-include up to 3 of these
-              server-side regardless of any user choice, with no way to see,
-              pick a count, or edit them before export. Now selectable and
-              editable exactly like Key Findings, reusing the same card
-              shell and renderDetailFields editor. */}
+        {/* Recommendations — ONE selectable unit for the whole set, not
+              one per recommendation. Previously each recommendation was
+              independently selectable and used its own slot in the
+              10-slide budget, which contradicted how they actually export:
+              gammaFormatter.ts combines every selected recommendation into
+              a single "Recommended Next Steps" slide regardless. This card
+              now matches that — selecting it uses exactly 1 of 10 slides
+              and includes all of them together. No per-item editing here
+              (unlike Key Findings) since editing one field on a bundle of
+              3 recommendations doesn't map cleanly to the generic
+              heroStat/takeaway fields every other card type uses — this
+              is a preview-and-include decision, not an edit-each surface. */}
         {recommendations.length > 0 && (
           <div>
             <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
               Recommendations
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {recommendations.map((rec, idx) => {
-                const id = `recommendation-${idx}`
-                const isSelected = !!selected[id]
-                const disabled = !isSelected && atLimit
-                const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
-                return (
-                  <div
-                    key={idx}
-                    className={cardBase(isSelected, disabled)}
-                    onClick={() =>
-                      handleCardClick(id, isSelected, disabled, () =>
-                        toggleRecommendation(rec, idx)
-                      )
-                    }
-                  >
-                    <div className="p-4 flex items-start gap-3">
-                      <span
-                        className="mt-0.5 shrink-0"
-                        onClick={(e) =>
-                          handleCheckboxClick(e, id, isSelected, disabled, () =>
-                            toggleRecommendation(rec, idx)
-                          )
-                        }
-                      >
-                        {isSelected ? (
-                          <CheckCircle2 size={15} className="text-blue-500" />
-                        ) : (
-                          <Circle size={15} className={subtle} />
-                        )}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-[11px] font-medium mb-0.5 ${subtle}`}>
-                          {rec.number ? `${rec.number} · ` : ''}
-                          {rec.title}
-                        </p>
-                        {rec.stat && (
-                          <p className="text-2xl font-black leading-none text-blue-400">
-                            {rec.stat}
-                            {rec.stat_label && (
-                              <span className={`text-xs font-medium ml-1.5 ${subtle}`}>
-                                {rec.stat_label}
+            {(() => {
+              const isSelected = !!selected[RECOMMENDATIONS_ID]
+              const disabled = !isSelected && atLimit
+              return (
+                <div
+                  className={cardBase(isSelected, disabled)}
+                  onClick={() => !disabled && toggleRecommendations()}
+                >
+                  <div className="p-4 flex items-start gap-3">
+                    <span
+                      className="mt-0.5 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!disabled) toggleRecommendations()
+                      }}
+                    >
+                      {isSelected ? (
+                        <CheckCircle2 size={15} className="text-blue-500" />
+                      ) : (
+                        <Circle size={15} className={subtle} />
+                      )}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-[11px] font-medium mb-2 ${subtle}`}>
+                        All {recommendations.length} recommendations, on one slide
+                      </p>
+                      <div className="space-y-2">
+                        {recommendations.map((rec, idx) => (
+                          <div key={idx} className="flex items-baseline gap-2">
+                            {rec.stat && (
+                              <span className="text-sm font-black text-blue-400 shrink-0">
+                                {rec.stat}
                               </span>
                             )}
-                          </p>
-                        )}
+                            <span className={`text-xs ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}>
+                              {rec.number ? `${rec.number} · ` : ''}
+                              {rec.title}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                    {renderDetailFields(id, true, isExpanded)}
                   </div>
-                )
-              })}
-            </div>
+                </div>
+              )
+            })()}
           </div>
         )}
 
