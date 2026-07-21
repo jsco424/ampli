@@ -844,8 +844,15 @@ export default function AnalysisView({
         </div>
       </div>
 
+      {/* Sticky at the bottom of the viewport, same pattern as SlideSelector's
+          own export footer — visible and clickable no matter how far down
+          the page someone has scrolled, instead of only reachable by
+          scrolling all the way to the end of the analysis. Needs a solid
+          background (not the original transparent dashed-border look) plus
+          a shadow, since content now scrolls underneath it. */}
       <div
-        className={`p-5 rounded-2xl border-2 border-dashed flex items-center justify-between gap-4 ${dark ? 'border-zinc-700' : 'border-zinc-300'}`}
+        className={`sticky bottom-4 p-5 rounded-2xl border-2 border-dashed flex items-center justify-between gap-4 shadow-xl ${dark ? 'bg-zinc-900/95 border-zinc-700' : 'bg-white/95 border-zinc-300'}`}
+        style={{ backdropFilter: 'blur(12px)' }}
       >
         <div>
           <p className="font-semibold text-sm">Ready to build slides?</p>

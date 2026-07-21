@@ -679,19 +679,48 @@ export default function ProjectViewPage() {
               className={`p-4 border-b flex items-center justify-between ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
             >
               <span className="text-sm font-medium">Raw Data Summary</span>
-              <button
-                onClick={() => {
-                  const blob = new Blob([project.raw_data || ''], { type: 'application/json' })
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = `${project.file_name}_summary.json`
-                  a.click()
-                }}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors"
-              >
-                Download JSON
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    // project.charts already has every chart's real data
+                    // array — no computation needed, just download what's
+                    // already there. Downloads all charts at once, no
+                    // per-chart selection, matching the same "no options,
+                    // just get the file" simplicity as the summary download
+                    // right next to it.
+                    const chartData = (project.charts || []).map((c: any) => ({
+                      title: c.title,
+                      type: c.type,
+                      data: c.data,
+                    }))
+                    const blob = new Blob([JSON.stringify(chartData, null, 2)], {
+                      type: 'application/json',
+                    })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `${project.file_name}_charts.json`
+                    a.click()
+                  }}
+                  disabled={!project.charts || project.charts.length === 0}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Download Chart Data
+                </button>
+                <button
+                  onClick={() => {
+                    const blob = new Blob([project.raw_data || ''], { type: 'application/json' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `${project.file_name}_summary.json`
+                    a.click()
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors"
+                >
+                  Download JSON
+                </button>
+              </div>
             </div>
             <pre
               className={`p-4 text-xs overflow-auto max-h-96 ${dark ? 'text-white/50' : 'text-zinc-600'}`}

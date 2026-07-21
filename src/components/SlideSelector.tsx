@@ -168,35 +168,6 @@ function chartTypeLabel(type: ResolvedChartType): string {
 
 // ── Toggle components ──────────────────────────────────────────────────────
 
-function CompactDetailedToggle({
-  value,
-  onChange,
-  dark,
-}: {
-  value: boolean
-  onChange: (v: boolean) => void
-  dark: boolean
-}) {
-  return (
-    <div
-      className={`flex items-center rounded-lg border p-0.5 text-xs shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
-    >
-      <button
-        onClick={() => onChange(false)}
-        className={`px-2.5 py-1 rounded-md transition-colors ${!value ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-      >
-        Compact
-      </button>
-      <button
-        onClick={() => onChange(true)}
-        className={`px-2.5 py-1 rounded-md transition-colors ${value ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-      >
-        Detailed
-      </button>
-    </div>
-  )
-}
-
 // ── Main component ─────────────────────────────────────────────────────────
 
 interface SlideSelectorProps {
@@ -240,15 +211,10 @@ export default function SlideSelector({
   recommendations = [],
 }: SlideSelectorProps) {
   const [selected, setSelected] = useState<Record<string, SelectedFinding>>({})
-  // detailedMode: a shortcut that force-expands EVERY currently selected
-  // card at once. Independent of manuallyExpanded below — a card can be
-  // open because of either one, and closing detailedMode doesn't close
-  // cards a user individually opened by clicking them.
-  const [detailedMode, setDetailedMode] = useState(false)
   // Per-card expand state, set by clicking a card's body (not its
-  // checkbox). This is what makes clicking a card open its editor
-  // immediately, without needing to flip the global Compact/Detailed
-  // toggle first.
+  // checkbox). Clicking a card always opens its editor directly now — the
+  // global Compact/Detailed toggle that used to force-expand everything at
+  // once was removed since it was redundant with per-card click-to-expand.
   const [manuallyExpanded, setManuallyExpanded] = useState<Set<string>>(new Set())
   // Which Visuals cards (by chart index) are currently toggled to show
   // indexed-to-100 values instead of absolute ones — same toggle as
@@ -372,6 +338,21 @@ export default function SlideSelector({
     setSelected({ ...selected, [id]: { ...selected[id], ...patch } })
   }
 
+  // Updates one field of one recommendation within the bundled
+  // Recommendations selection — the equivalent of updateSelected for a
+  // single card's heroStat/takeaway, just addressed by index since this
+  // one selection holds an array instead of a single set of fields.
+  const updateRecommendationField = (
+    idx: number,
+    field: 'title' | 'stat' | 'description',
+    value: string
+  ) => {
+    const sel = selected[RECOMMENDATIONS_ID]
+    if (!sel?.recommendations) return
+    const updated = sel.recommendations.map((r, i) => (i === idx ? { ...r, [field]: value } : r))
+    updateSelected(RECOMMENDATIONS_ID, { recommendations: updated })
+  }
+
   // Clicking a card's body: if it isn't selected yet, select it AND open
   // its editor immediately (matches "click it and it expands so you can
   // edit"). If it's already selected, a body click just toggles that one
@@ -442,9 +423,8 @@ export default function SlideSelector({
 
   // ── Shared expanded editor ─────────────────────────────────────────────
   // Rendered inside a card whenever `expanded` is true for it — true when
-  // EITHER the global detailedMode shortcut is on, OR the card was
-  // individually opened via handleCardClick. showHeroStat covers both
-  // findings and visuals — tables never show it.
+  // the card was opened via handleCardClick (clicking its body). showHeroStat
+  // covers both findings and visuals — tables never show it.
   const renderDetailFields = (id: string, showHeroStat: boolean, expanded: boolean) => {
     const sel = selected[id]
     if (!sel || !expanded) return null
@@ -573,19 +553,6 @@ export default function SlideSelector({
         </div>
       </div>
 
-      {/* Compact/Detailed toggle — the Visuals/Findings & Tables section
-          toggle that used to sit here was removed, since everything now
-          renders as one continuous list below and switching sections had
-          nothing left to do. */}
-      <div className="flex items-center justify-end gap-3">
-        <p className={`text-xs ${subtle}`}>
-          {detailedMode
-            ? 'Detailed — every selected card is expanded'
-            : 'Compact — click a card to expand and edit it'}
-        </p>
-        <CompactDetailedToggle value={detailedMode} onChange={setDetailedMode} dark={dark} />
-      </div>
-
       {/* Visuals */}
       <div>
         {(charts.length > 0 || chartsLoading) && (
@@ -604,7 +571,7 @@ export default function SlideSelector({
               const id = `visual-${idx}`
               const isSelected = !!selected[id]
               const disabled = !isSelected && atLimit
-              const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+              const isExpanded = isSelected && manuallyExpanded.has(id)
               const canIndex = INDEXABLE_CHART_TYPES.has(chart.type) && chart.data.length >= 2
               const isIndexed = canIndex && indexedVisuals.has(idx)
               const previewData = isIndexed ? indexToFirstValue(chart.data) : chart.data
@@ -728,7 +695,7 @@ export default function SlideSelector({
                 const id = `finding-${idx}`
                 const isSelected = !!selected[id]
                 const disabled = !isSelected && atLimit
-                const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                const isExpanded = isSelected && manuallyExpanded.has(id)
                 return (
                   <div
                     key={idx}
@@ -781,7 +748,7 @@ export default function SlideSelector({
                 const id = `table-${idx}`
                 const isSelected = !!selected[id]
                 const disabled = !isSelected && atLimit
-                const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                const isExpanded = isSelected && manuallyExpanded.has(id)
                 return (
                   <div
                     key={idx}
@@ -827,12 +794,12 @@ export default function SlideSelector({
               10-slide budget, which contradicted how they actually export:
               gammaFormatter.ts combines every selected recommendation into
               a single "Recommended Next Steps" slide regardless. This card
-              now matches that — selecting it uses exactly 1 of 10 slides
-              and includes all of them together. No per-item editing here
-              (unlike Key Findings) since editing one field on a bundle of
-              3 recommendations doesn't map cleanly to the generic
-              heroStat/takeaway fields every other card type uses — this
-              is a preview-and-include decision, not an edit-each surface. */}
+              matches that — selecting it uses exactly 1 of 10 slides and
+              includes all of them together. Clicking the card expands it
+              for editing, same as every other card type — editable fields
+              cover all recommendations in the bundle at once (Stat/Title/
+              Description per recommendation), not just one shared
+              heroStat/takeaway like a single-item card. */}
         {recommendations.length > 0 && (
           <div>
             <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
@@ -841,18 +808,27 @@ export default function SlideSelector({
             {(() => {
               const isSelected = !!selected[RECOMMENDATIONS_ID]
               const disabled = !isSelected && atLimit
+              const isExpanded = isSelected && manuallyExpanded.has(RECOMMENDATIONS_ID)
+              const currentRecs = selected[RECOMMENDATIONS_ID]?.recommendations || recommendations
               return (
                 <div
                   className={cardBase(isSelected, disabled)}
-                  onClick={() => !disabled && toggleRecommendations()}
+                  onClick={() =>
+                    handleCardClick(RECOMMENDATIONS_ID, isSelected, disabled, toggleRecommendations)
+                  }
                 >
                   <div className="p-4 flex items-start gap-3">
                     <span
                       className="mt-0.5 shrink-0"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!disabled) toggleRecommendations()
-                      }}
+                      onClick={(e) =>
+                        handleCheckboxClick(
+                          e,
+                          RECOMMENDATIONS_ID,
+                          isSelected,
+                          disabled,
+                          toggleRecommendations
+                        )
+                      }
                     >
                       {isSelected ? (
                         <CheckCircle2 size={15} className="text-blue-500" />
@@ -881,6 +857,75 @@ export default function SlideSelector({
                       </div>
                     </div>
                   </div>
+                  {isExpanded && (
+                    <div
+                      className={`px-4 pb-4 pt-3 space-y-4 border-t ${dark ? 'border-zinc-800' : 'border-zinc-100'}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {currentRecs.map((rec, idx) => (
+                        <div
+                          key={idx}
+                          className={
+                            idx > 0
+                              ? `pt-3 border-t ${dark ? 'border-zinc-800' : 'border-zinc-100'}`
+                              : ''
+                          }
+                        >
+                          <p
+                            className={`text-[10px] font-semibold uppercase tracking-wide mb-2 ${subtle}`}
+                          >
+                            {rec.number ? `${rec.number} · ` : ''}Recommendation {idx + 1}
+                          </p>
+                          <div className="space-y-2">
+                            <div>
+                              <label
+                                className={`text-[10px] font-semibold uppercase tracking-wide mb-1 block ${subtle}`}
+                              >
+                                Title
+                              </label>
+                              <input
+                                value={rec.title}
+                                onChange={(e) =>
+                                  updateRecommendationField(idx, 'title', e.target.value)
+                                }
+                                className={`w-full text-sm px-3 py-2 rounded-lg border outline-none ${inputCls}`}
+                              />
+                            </div>
+                            <div>
+                              <label
+                                className={`text-[10px] font-semibold uppercase tracking-wide mb-1 block ${subtle}`}
+                              >
+                                Stat
+                              </label>
+                              <input
+                                value={rec.stat || ''}
+                                onChange={(e) =>
+                                  updateRecommendationField(idx, 'stat', e.target.value)
+                                }
+                                className={`w-full text-sm px-3 py-2 rounded-lg border outline-none ${inputCls}`}
+                                placeholder="+2.8%"
+                              />
+                            </div>
+                            <div>
+                              <label
+                                className={`text-[10px] font-semibold uppercase tracking-wide mb-1 block ${subtle}`}
+                              >
+                                Description
+                              </label>
+                              <textarea
+                                value={rec.description}
+                                onChange={(e) =>
+                                  updateRecommendationField(idx, 'description', e.target.value)
+                                }
+                                rows={2}
+                                className={`w-full text-xs px-3 py-2 rounded-lg border outline-none resize-none ${inputCls}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })()}
@@ -904,7 +949,7 @@ export default function SlideSelector({
                     const id = `finding-t${turnIndex}-${idx}`
                     const isSelected = !!selected[id]
                     const disabled = !isSelected && atLimit
-                    const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                    const isExpanded = isSelected && manuallyExpanded.has(id)
                     return (
                       <div
                         key={idx}
@@ -957,7 +1002,7 @@ export default function SlideSelector({
                     const id = `table-t${turnIndex}-${idx}`
                     const isSelected = !!selected[id]
                     const disabled = !isSelected && atLimit
-                    const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+                    const isExpanded = isSelected && manuallyExpanded.has(id)
                     return (
                       <div
                         key={idx}
