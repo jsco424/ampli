@@ -12,6 +12,7 @@ import {
   Info,
 } from 'lucide-react'
 import ChartRenderer from '@/components/ChartRenderer'
+import { INDEXABLE_CHART_TYPES, indexToFirstValue } from '@/lib/chartMath'
 import type { AnalysisOutput, KeyFinding, InsightTable } from '@/lib/analysisTypes'
 
 // ── Chart type resolver ────────────────────────────────────────────────────
@@ -64,6 +65,12 @@ export interface SelectedFinding {
   takeaway: string
   chartType: ResolvedChartType
   chartData?: Record<string, any>[]
+  // Whether chartData holds indexed-to-100 values rather than absolute
+  // ones — set at export time based on the Visuals card's current
+  // Absolute/Indexed toggle. gammaFormatter.ts uses this to decide whether
+  // to embed the actual indexed numbers as a data table in the exported
+  // card, since Gamma has no other way to receive real chart data.
+  isIndexed?: boolean
 }
 
 function resolveChartType(finding: KeyFinding): ResolvedChartType {
@@ -239,6 +246,12 @@ export default function SlideSelector({
   // immediately, without needing to flip the global Compact/Detailed
   // toggle first.
   const [manuallyExpanded, setManuallyExpanded] = useState<Set<string>>(new Set())
+  // Which Visuals cards (by chart index) are currently toggled to show
+  // indexed-to-100 values instead of absolute ones — same toggle as
+  // AnalysisView's preview, kept independently here since a chart might be
+  // browsed as Absolute but exported as Indexed (or vice versa); this is
+  // the state actually read at export time.
+  const [indexedVisuals, setIndexedVisuals] = useState<Set<number>>(new Set())
 
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const inputCls = dark
@@ -407,6 +420,22 @@ export default function SlideSelector({
   // none would work reliably across both ID formats anyway.
   const orderedSelections = useMemo(() => Object.values(selected), [selected])
 
+  // Reads the CURRENT Absolute/Indexed toggle state for each visual
+  // selection at the moment of export, rather than freezing it at whatever
+  // it was when the card was first selected — someone can select a chart,
+  // keep browsing, flip a couple of toggles, then export, and this should
+  // reflect the final state they left each one in.
+  const buildExportSelections = (): SelectedFinding[] =>
+    orderedSelections.map((sel) => {
+      if (sel.type !== 'visual' || sel.chartIndex === undefined || !sel.chart) return sel
+      const isIndexed = indexedVisuals.has(sel.chartIndex)
+      return {
+        ...sel,
+        chartData: isIndexed ? indexToFirstValue(sel.chart.data) : sel.chart.data,
+        isIndexed,
+      }
+    })
+
   // ── Shared expanded editor ─────────────────────────────────────────────
   // Rendered inside a card whenever `expanded` is true for it — true when
   // EITHER the global detailedMode shortcut is on, OR the card was
@@ -572,6 +601,9 @@ export default function SlideSelector({
               const isSelected = !!selected[id]
               const disabled = !isSelected && atLimit
               const isExpanded = isSelected && (detailedMode || manuallyExpanded.has(id))
+              const canIndex = INDEXABLE_CHART_TYPES.has(chart.type) && chart.data.length >= 2
+              const isIndexed = canIndex && indexedVisuals.has(idx)
+              const previewData = isIndexed ? indexToFirstValue(chart.data) : chart.data
               return (
                 <div
                   key={idx}
@@ -596,11 +628,44 @@ export default function SlideSelector({
                       )}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <BarChart3 size={11} className={subtle} />
-                        <p className={`text-[11px] ${subtle}`}>
-                          {chartTypeLabel(normalizeGeneratedChartType(chart.type))}
-                        </p>
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <BarChart3 size={11} className={subtle} />
+                          <p className={`text-[11px] ${subtle}`}>
+                            {chartTypeLabel(normalizeGeneratedChartType(chart.type))}
+                          </p>
+                        </div>
+                        {canIndex && (
+                          <div
+                            className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              onClick={() =>
+                                setIndexedVisuals((prev) => {
+                                  const next = new Set(prev)
+                                  next.delete(idx)
+                                  return next
+                                })
+                              }
+                              className={`px-2 py-1 rounded-md transition-colors ${!isIndexed ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                            >
+                              Absolute
+                            </button>
+                            <button
+                              onClick={() =>
+                                setIndexedVisuals((prev) => {
+                                  const next = new Set(prev)
+                                  next.add(idx)
+                                  return next
+                                })
+                              }
+                              className={`px-2 py-1 rounded-md transition-colors ${isIndexed ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                            >
+                              Indexed
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <p className="text-sm font-semibold truncate mb-1">{chart.title}</p>
                       {chart.hero_stat && (
@@ -618,9 +683,18 @@ export default function SlideSelector({
                         preview matches what the deck will actually contain,
                         not a re-derived approximation of it. Click-through
                         is stopped from here so interacting with the chart
-                        itself (e.g. a tooltip) doesn't toggle selection. */}
+                        itself (e.g. a tooltip) doesn't toggle selection.
+                        Reflects the current Absolute/Indexed toggle above —
+                        this IS what gets exported if the toggle is left on
+                        Indexed when this card is selected, see isIndexed
+                        below and gammaFormatter.ts's handling of it. */}
                   <div className="px-4 pb-4" onClick={(e) => e.stopPropagation()}>
-                    <ChartRenderer chart={chart} colors={chartColors} height={140} dark={dark} />
+                    <ChartRenderer
+                      chart={{ ...chart, data: previewData }}
+                      colors={chartColors}
+                      height={140}
+                      dark={dark}
+                    />
                   </div>
                   {renderDetailFields(id, true, isExpanded)}
                 </div>
@@ -949,7 +1023,7 @@ export default function SlideSelector({
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => onExport('pptx', orderedSelections)}
+              onClick={() => onExport('pptx', buildExportSelections())}
               disabled={isExporting}
               className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors disabled:opacity-40 ${dark ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
             >
@@ -961,7 +1035,7 @@ export default function SlideSelector({
               PPTX
             </button>
             <button
-              onClick={() => onExport('pdf', orderedSelections)}
+              onClick={() => onExport('pdf', buildExportSelections())}
               disabled={isExporting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shrink-0 disabled:opacity-40"
             >

@@ -80,6 +80,23 @@ function cleanForSlide(text: string): string {
     .trim()
 }
 
+// Turns an indexed chart's data array into a real markdown table — the
+// one case where Gamma receives actual chart numbers instead of just a
+// text description. Column headers come from the data's own keys
+// (everything except "name"), turned into a readable label the same way
+// chart series names are elsewhere in the app (underscores -> spaces).
+function buildIndexedDataTable(data: Record<string, any>[]): string {
+  if (data.length === 0) return ''
+  const seriesKeys = Object.keys(data[0]).filter((k) => k !== 'name')
+  if (seriesKeys.length === 0) return ''
+
+  const headerLabels = seriesKeys.map((k) => `${k.replace(/_/g, ' ')} (indexed)`)
+  const header = `| Period | ${headerLabels.join(' | ')} |`
+  const divider = `| --- | ${seriesKeys.map(() => '---').join(' | ')} |`
+  const rows = data.map((row) => `| ${row.name} | ${seriesKeys.map((k) => row[k]).join(' | ')} |`)
+  return [header, divider, ...rows].join('\n')
+}
+
 export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput {
   const {
     confirmedAnalysis,
@@ -204,12 +221,33 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
         sel.takeaway || sel.chart.takeaway || sel.chart.description || ''
       )
 
+      // When the user exported this chart with Indexed active (see
+      // SlideSelector's Absolute/Indexed toggle), embed the actual indexed
+      // numbers as a real markdown data table — this is the one case where
+      // Gamma DOES receive real chart data, rather than just a text
+      // description. Reasoning: Gamma has no per-card data-input field at
+      // all normally (every other chart here is text-only, soft-suggested
+      // chart type), and asking it to independently re-derive the indexing
+      // math itself would be even less reliable than the existing
+      // chart-type hints. Embedding the real computed values sidesteps
+      // that entirely — Gamma just has the numbers to plot or reference
+      // directly. Absolute (non-indexed) exports are unaffected and keep
+      // the existing text-only behavior.
+      const indexedTable =
+        sel.isIndexed && sel.chartData && sel.chartData.length > 0
+          ? buildIndexedDataTable(sel.chartData)
+          : ''
+
       sections.push(
         [
           heroStat ? `# ${heroStat}` : `# ${label}`,
           heroStat && label ? `## ${label}` : '',
           '',
           takeaway,
+          indexedTable ? `\n${indexedTable}` : '',
+          indexedTable
+            ? `\n*Values above are indexed to each series' own starting point (=100), since the series' actual units differ too much to share one scale. Build the chart from these indexed figures directly, not the original units.*`
+            : '',
         ]
           .filter((l) => l !== undefined)
           .join('\n')

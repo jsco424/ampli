@@ -31,87 +31,101 @@ const TONE_INSTRUCTIONS: Record<string, string> = {
 }
 
 export async function POST(req: Request) {
-  const { projectId }: { projectId: string } = await req.json()
+  let projectId: string | undefined
 
-  if (!projectId) {
-    return NextResponse.json({ error: 'projectId required' }, { status: 400 })
-  }
+  // Wraps the ENTIRE route body, not just the Anthropic call. Previously
+  // the project fetch and instruction-building steps below sat outside any
+  // try/catch — if anything there threw (a transient Supabase error, a
+  // malformed request body, anything), Next.js returned its own default
+  // HTML error page instead of JSON. The client's `res.json()` call then
+  // choked on that HTML with exactly "Unexpected token '<', <!DOCTYPE...
+  // is not valid JSON" — a real crash, not a cosmetic one. This guarantees
+  // a JSON response comes back no matter what fails.
+  try {
+    const body = await req.json()
+    projectId = body.projectId
 
-  // Fetch the project fresh, rather than trusting anything the client sends
-  // — this route only needs an id, everything else (narrative, insights,
-  // tone, target company, confirmed analysis) comes from what's already
-  // saved on the row.
-  const { data: project, error: fetchError } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('id', projectId)
-    .single()
+    if (!projectId) {
+      return NextResponse.json({ error: 'projectId required' }, { status: 400 })
+    }
 
-  if (fetchError || !project) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-  }
+    // Fetch the project fresh, rather than trusting anything the client
+    // sends — this route only needs an id, everything else (narrative,
+    // insights, tone, target company, confirmed analysis) comes from
+    // what's already saved on the row.
+    const { data: project, error: fetchError } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single()
 
-  // Recommendations reference the narrative/insights that Build Visuals
-  // produces — without them there's nothing grounded to recommend against.
-  // This is the dependency that makes "Build Visuals" a prerequisite step
-  // before "Build Recommendations" in the UI, not just a suggested order.
-  if (!project.narrative) {
-    return NextResponse.json(
-      {
-        error: 'Build Visuals first — recommendations need the narrative and insights it produces.',
-      },
-      { status: 400 }
-    )
-  }
+    if (fetchError || !project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    }
 
-  const tone = project.tone || 'executive'
-  const toneInstruction = TONE_INSTRUCTIONS[tone] || TONE_INSTRUCTIONS.executive
+    // Recommendations reference the narrative/insights that Build Visuals
+    // produces — without them there's nothing grounded to recommend
+    // against. This is the dependency that makes "Build Visuals" a
+    // prerequisite step before "Build Recommendations" in the UI, not just
+    // a suggested order.
+    if (!project.narrative) {
+      return NextResponse.json(
+        {
+          error:
+            'Build Visuals first — recommendations need the narrative and insights it produces.',
+        },
+        { status: 400 }
+      )
+    }
 
-  // Recommendations previously had NO audience tailoring at all — not a
-  // regression from today's refactor, this gap existed in the original
-  // background call too. Adding it now since James flagged this as
-  // probably the most important piece to get right for recommendations
-  // specifically: the audience is who's actually going to read and act on
-  // these, so which 3 recommendations get surfaced (and how they're
-  // framed) should reflect what that person cares about, same tailoring
-  // analyze/route.ts already applies to findings.
-  const targetAudience: {
-    role?: string
-    seniority?: string
-    cares_about?: string[]
-    narrative_style?: string
-    avoid?: string
-  } | null = project.target_audience || null
-  let audienceInstruction = ''
-  if (targetAudience) {
-    audienceInstruction = `
+    const tone = project.tone || 'executive'
+    const toneInstruction = TONE_INSTRUCTIONS[tone] || TONE_INSTRUCTIONS.executive
+
+    // Recommendations previously had NO audience tailoring at all — not a
+    // regression from today's refactor, this gap existed in the original
+    // background call too. Adding it now since James flagged this as
+    // probably the most important piece to get right for recommendations
+    // specifically: the audience is who's actually going to read and act
+    // on these, so which 3 recommendations get surfaced (and how they're
+    // framed) should reflect what that person cares about, same tailoring
+    // analyze/route.ts already applies to findings.
+    const targetAudience: {
+      role?: string
+      seniority?: string
+      cares_about?: string[]
+      narrative_style?: string
+      avoid?: string
+    } | null = project.target_audience || null
+    let audienceInstruction = ''
+    if (targetAudience) {
+      audienceInstruction = `
 AUDIENCE TAILORING:
 These recommendations are being built for: ${targetAudience.role || 'a business stakeholder'}${targetAudience.seniority ? ` (${targetAudience.seniority})` : ''}.
 ${targetAudience.cares_about?.length ? `They care about: ${targetAudience.cares_about.join(', ')}. Prioritize which 3 recommendations you surface, and how you frame each one, around these specifically over ones that don't speak to them.` : ''}
 ${targetAudience.narrative_style ? `Match this narrative style throughout: ${targetAudience.narrative_style}.` : ''}
 ${targetAudience.avoid ? `Avoid: ${targetAudience.avoid}.` : ''}
 This shapes which actions you recommend and how you frame them — it never changes what the data actually supports, only which true, grounded recommendations you choose to lead with.`
-  }
+    }
 
-  // Same framing rule as generate/route.ts and analyze/route.ts — kept
-  // identical wording across all three so the model gets a consistent
-  // instruction regardless of which stage is generating text.
-  let dataFramingInstruction = ''
-  if (project.data_source_type === 'prospecting_benchmark' && project.target_company) {
-    dataFramingInstruction = `
+    // Same framing rule as generate/route.ts and analyze/route.ts — kept
+    // identical wording across all three so the model gets a consistent
+    // instruction regardless of which stage is generating text.
+    let dataFramingInstruction = ''
+    if (project.data_source_type === 'prospecting_benchmark' && project.target_company) {
+      dataFramingInstruction = `
 CRITICAL — data attribution: this dataset does NOT belong to ${project.target_company}. It is being used to build a case for why ${project.target_company} should become a client, not to report on their own performance. Never phrase a recommendation as though these specific numbers are ${project.target_company}'s own historical results. Instead, frame recommendations around what this trajectory demonstrates is POSSIBLE or ACHIEVABLE for a company like ${project.target_company}.`
-  }
+    }
 
-  const dataGroundingInstruction = `
+    const dataGroundingInstruction = `
 CRITICAL — data grounding: the data summary provided was computed deterministically in code from the complete dataset — it is verified, not estimated. Every recommendation stat you produce MUST trace directly back to a number present in that summary or the confirmed analysis below. NEVER invent, estimate, or extrapolate a number that isn't directly there.`
 
-  const confirmedAnalysis: AnalysisOutput | null = project.analysis || null
-  let confirmedAnalysisInstruction = ''
-  if (confirmedAnalysis) {
-    const findingsSummary = confirmedAnalysis.keyFindings
-      .map((f) => `• ${f.label}: ${f.value} — ${f.interpretation}`)
-      .join('\n')
-    confirmedAnalysisInstruction = `
+    const confirmedAnalysis: AnalysisOutput | null = project.analysis || null
+    let confirmedAnalysisInstruction = ''
+    if (confirmedAnalysis) {
+      const findingsSummary = confirmedAnalysis.keyFindings
+        .map((f) => `• ${f.label}: ${f.value} — ${f.interpretation}`)
+        .join('\n')
+      confirmedAnalysisInstruction = `
 CONFIRMED ANALYSIS — USER VERIFIED:
 The following findings were confirmed by the user through a conversational analysis session. Recommendations MUST be grounded in these, not conclusions absent from them.
 
@@ -120,9 +134,9 @@ ${confirmedAnalysis.executiveSummary}
 
 Key Findings:
 ${findingsSummary}`
-  }
+    }
 
-  const recoPrompt = `You are a strategic analyst. Based on the data analysis, return ONLY a valid JSON array of exactly 3 recommendations:
+    const recoPrompt = `You are a strategic analyst. Based on the data analysis, return ONLY a valid JSON array of exactly 3 recommendations:
 [
   {
     "number": "01",
@@ -136,7 +150,6 @@ The "stat" must be grounded in the data summary — never invent a precise figur
 Writing style — hard rule: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen. Use a period, comma, or connecting word instead. Word-internal hyphens (e.g. "high-revenue") are fine. Write like a sharp human analyst.
 Return ONLY the JSON array, no markdown.`
 
-  try {
     const recoMessage = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
@@ -174,13 +187,17 @@ Return ONLY the JSON array, no markdown.`
   } catch (err: any) {
     const errorMessage = err?.message || String(err)
     console.error('RECOMMENDATIONS ERROR:', errorMessage)
-    try {
-      await supabase
-        .from('projects')
-        .update({ recommendations_error: errorMessage })
-        .eq('id', projectId)
-    } catch (updateErr) {
-      console.error('Also failed to persist recommendations_error:', updateErr)
+    // projectId may be undefined if req.json() itself failed before we ever
+    // got it — guard against trying to update a row we don't have an id for.
+    if (projectId) {
+      try {
+        await supabase
+          .from('projects')
+          .update({ recommendations_error: errorMessage })
+          .eq('id', projectId)
+      } catch (updateErr) {
+        console.error('Also failed to persist recommendations_error:', updateErr)
+      }
     }
     return NextResponse.json({ error: errorMessage }, { status: 500 })
   }

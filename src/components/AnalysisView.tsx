@@ -21,6 +21,7 @@ import {
   Lightbulb,
 } from 'lucide-react'
 import ChartRenderer from '@/components/ChartRenderer'
+import { INDEXABLE_CHART_TYPES, indexToFirstValue } from '@/lib/chartMath'
 import type {
   AnalysisOutput,
   KeyFinding,
@@ -404,6 +405,12 @@ export default function AnalysisView({
   recommendationsError = null,
 }: AnalysisViewProps) {
   const [followUpInput, setFollowUpInput] = useState('')
+  // Which Visuals cards (by index) are currently showing indexed-to-100
+  // values instead of absolute ones. Per-card, not global — some charts
+  // read better as absolute (e.g. plain counts), others as indexed (e.g.
+  // two series on very different scales, like spend vs. ROAS, where the
+  // smaller one becomes invisible next to the larger one in absolute terms).
+  const [indexedCharts, setIndexedCharts] = useState<Set<number>>(new Set())
   const [showAnomalies, setShowAnomalies] = useState(false)
 
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
@@ -606,15 +613,63 @@ export default function AnalysisView({
           </div>
         ) : charts.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {charts.map((chart, i) => (
-              <div key={i} className={`p-4 rounded-2xl border ${card}`}>
-                <h3 className="font-semibold text-sm mb-1">{chart.title}</h3>
-                {chart.description && (
-                  <p className={`text-xs mb-3 ${subtle}`}>{chart.description}</p>
-                )}
-                <ChartRenderer chart={chart} colors={chartColors} height={180} dark={dark} />
-              </div>
-            ))}
+            {charts.map((chart, i) => {
+              const canIndex = INDEXABLE_CHART_TYPES.has(chart.type) && chart.data.length >= 2
+              const isIndexed = canIndex && indexedCharts.has(i)
+              const displayData = isIndexed ? indexToFirstValue(chart.data) : chart.data
+              return (
+                <div key={i} className={`p-4 rounded-2xl border ${card}`}>
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <h3 className="font-semibold text-sm">{chart.title}</h3>
+                    {canIndex && (
+                      <div
+                        className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+                      >
+                        <button
+                          onClick={() =>
+                            setIndexedCharts((prev) => {
+                              const next = new Set(prev)
+                              next.delete(i)
+                              return next
+                            })
+                          }
+                          className={`px-2 py-1 rounded-md transition-colors ${!isIndexed ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                        >
+                          Absolute
+                        </button>
+                        <button
+                          onClick={() =>
+                            setIndexedCharts((prev) => {
+                              const next = new Set(prev)
+                              next.add(i)
+                              return next
+                            })
+                          }
+                          className={`px-2 py-1 rounded-md transition-colors ${isIndexed ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                        >
+                          Indexed
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {chart.description && (
+                    <p className={`text-xs mb-3 ${subtle}`}>{chart.description}</p>
+                  )}
+                  {isIndexed && (
+                    <p className={`text-[10px] mb-2 ${subtle}`}>
+                      Each line indexed to its own first value = 100, so both trends are comparable
+                      on one scale regardless of their actual units.
+                    </p>
+                  )}
+                  <ChartRenderer
+                    chart={{ ...chart, data: displayData }}
+                    colors={chartColors}
+                    height={180}
+                    dark={dark}
+                  />
+                </div>
+              )
+            })}
           </div>
         ) : (
           <div className={`p-6 rounded-2xl border text-center ${card}`}>
