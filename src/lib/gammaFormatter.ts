@@ -403,7 +403,16 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
     inputText,
     title: projectName,
     tone: mapTone(tone),
-    audience: targetAudience || defaultAudience(tone),
+    // Guarded with typeof, not just `|| defaultAudience(tone)` — a truthy
+    // non-string value (e.g. the target_audience tailoring OBJECT, which
+    // is what caused this exact bug: Gamma's API rejected the request with
+    // "textOptions.audience must be a string" when an object slipped
+    // through here) would otherwise still pass the `||` check and reach
+    // Gamma's API unchanged. This is Gamma's own hard requirement — a
+    // simple string ≤500 chars — so it's worth enforcing right at this
+    // boundary, not just trusting every caller to always pass a string.
+    audience:
+      typeof targetAudience === 'string' && targetAudience ? targetAudience : defaultAudience(tone),
     additionalInstructions: instructions,
     themeInstructions,
     numCards: sections.length,

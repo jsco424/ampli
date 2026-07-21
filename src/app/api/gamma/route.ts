@@ -274,7 +274,17 @@ export async function POST(req: Request) {
     projectName: project.name || project.pitch_title || 'Untitled',
     tone: project.tone || 'executive',
     targetCompany: project.target_company || null,
-    targetAudience: project.target_audience || null,
+    // target_audience is the full tailoring object ({role, seniority,
+    // cares_about, narrative_style, avoid}) since the jsonb migration —
+    // but formatForGamma's targetAudience param is a much simpler concept:
+    // a brief string description for Gamma's own textOptions.audience API
+    // field (e.g. "CMO"), not our rich internal tailoring structure. This
+    // is the third regression from that migration (after the two React
+    // error #31 spots earlier) — passing the raw object here meant Gamma's
+    // API rejected the request outright: "textOptions.audience must be a
+    // string". Extracting just .role restores the pre-migration behavior,
+    // where target_audience was already just this same string.
+    targetAudience: project.target_audience?.role || null,
     primaryColor: resolvedPrimaryColor,
     logoUrl: resolvedLogoUrl,
   })
