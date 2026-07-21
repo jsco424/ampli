@@ -397,7 +397,16 @@ export async function POST(req: Request) {
     if (!res.ok) {
       const errBody = await res.text()
       console.error('Gamma generation request failed:', res.status, errBody)
-      return NextResponse.json({ error: `Gamma API error: ${res.status}` }, { status: res.status })
+      // Previously only the status code reached the client ("Gamma API
+      // error: 400") — the actual reason Gamma rejected the request only
+      // existed in Vercel's logs, same class of problem as every other
+      // "real error hidden behind a generic message" bug fixed this
+      // session. Truncated to a reasonable length in case Gamma's error
+      // body is unexpectedly large.
+      return NextResponse.json(
+        { error: `Gamma API error: ${res.status} — ${errBody.slice(0, 500)}` },
+        { status: res.status }
+      )
     }
 
     const data = await res.json()

@@ -128,9 +128,10 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   // selections in the loop below — used further down to decide whether the
   // suggestedFollowUps fallback should fire (only when the user selected
   // zero recommendations, not "whenever project.recommendations is empty"
-  // like the old logic did).
-  let selectedRecommendationCount = 0
-
+  // like the old logic did). Also doubles as the source data for the one
+  // combined "Recommended Next Steps" card built after the loop — James
+  // wants all selected recommendations on one slide, not one slide each.
+  const selectedRecommendations: any[] = []
   // ── Card 1: Title + executive summary ─────────────────────────────────
   const titleLine = targetCompany ? `# ${projectName} — ${targetCompany}` : `# ${projectName}`
 
@@ -181,27 +182,12 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
     }
 
     if (sel.type === 'recommendation' && sel.recommendation) {
-      // Recommendations were previously invisible in the UI and
-      // auto-included wholesale (up to 3) regardless of any user choice —
-      // see the old "Recommendations card" block this replaced, further
-      // down. Now each selected recommendation gets its own card here,
-      // same shape as a finding card: stat as the H1 hero number (if the
-      // rec has one — not all do), title as H2, description as the body.
-      const label = sel.recommendation.title || ''
-      const heroStat = sel.heroStat || sel.recommendation.stat || ''
-      const takeaway = cleanForSlide(sel.takeaway || sel.recommendation.description || '')
-
-      sections.push(
-        [
-          heroStat ? `# ${heroStat}` : `# ${label}`,
-          heroStat && label ? `## ${label}` : '',
-          '',
-          takeaway,
-        ]
-          .filter((l) => l !== undefined)
-          .join('\n')
-      )
-      selectedRecommendationCount++
+      // James wants selected recommendations combined into ONE slide on
+      // export, not one slide per recommendation (unlike findings/tables/
+      // visuals, which each get their own card). Collected here instead of
+      // pushed immediately — the combined card gets built once, after this
+      // loop, from everything gathered in selectedRecommendations.
+      selectedRecommendations.push(sel)
       continue
     }
 
@@ -321,16 +307,38 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
     )
   }
 
-  // ── Recommendations fallback ────────────────────────────────────────────
-  // Recommendations themselves are now built as individual cards in the main
-  // selection loop above (sel.type === 'recommendation'), same as findings —
-  // no longer auto-included wholesale here regardless of what the user
-  // picked. This fallback only fires when the user selected NONE (not
-  // "whenever project.recommendations happens to be empty", which was the
-  // old trigger condition) — a safety net so a deck isn't missing a "next
-  // steps" card entirely just because nobody touched that section, not a
-  // substitute for the user's actual choice when they made one.
-  if (selectedRecommendationCount === 0 && confirmedAnalysis.suggestedFollowUps.length > 0) {
+  // ── Recommendations card ────────────────────────────────────────────────
+  // Every selected recommendation is combined into ONE "Recommended Next
+  // Steps" card here — not one slide per recommendation, unlike findings/
+  // tables/visuals, which each get their own card. This still respects the
+  // user's actual selection (only recommendations they picked go in, and
+  // in the order they were selected), it's just rendered as one shared
+  // card rather than N separate ones. The suggestedFollowUps fallback
+  // below only fires when the user selected NONE (not "whenever
+  // project.recommendations happens to be empty," which was the old
+  // trigger condition) — a safety net so a deck isn't missing a "next
+  // steps" card entirely just because nobody touched that section.
+  if (selectedRecommendations.length > 0) {
+    sections.push(
+      [
+        '# Recommended Next Steps',
+        '',
+        ...selectedRecommendations.map((sel, i) => {
+          const rec = sel.recommendation
+          const title = rec.title || ''
+          const description = cleanForSlide(sel.takeaway || rec.description || '')
+          const stat = sel.heroStat || rec.stat || ''
+          return [
+            `**${rec.number || String(i + 1).padStart(2, '0')} ${title}**`,
+            description,
+            stat ? `**${stat}** ${rec.stat_label || ''}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        }),
+      ].join('\n\n')
+    )
+  } else if (confirmedAnalysis.suggestedFollowUps.length > 0) {
     // Reframe analytical follow-ups as action items for the deck context
     sections.push(
       [
