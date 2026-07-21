@@ -66,7 +66,12 @@ export default function ProjectViewPage() {
   const [showSlideSelector, setShowSlideSelector] = useState(false)
 
   const [chartsGenerating, setChartsGenerating] = useState(false)
-  const chartsGenTriggered = useRef(false)
+  // chartsGenTriggered ref removed — Build Visuals is now an explicit
+  // button click (handleBuildVisuals), not an auto-firing effect, so
+  // there's no remount-reset race to guard against the way there was
+  // before. chartsGenerating itself now serves as the re-click guard.
+  const [recommendationsGenerating, setRecommendationsGenerating] = useState(false)
+  const [recommendationsError, setRecommendationsError] = useState<string | null>(null)
 
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
@@ -123,6 +128,15 @@ export default function ProjectViewPage() {
 
         if (!data.raw_data && !data.sampled_rows) return
         if (analysisTriggered.current) return
+        // analysisTriggered is just an in-memory ref scoped to this one page
+        // mount — it resets the moment you navigate away and back, so it
+        // couldn't stop a second /api/analyze call from firing if you
+        // reopened this project before the first one finished. status
+        // === 'analyzing' is the real, persistent signal: analyze/route.ts
+        // sets it right when analysis starts and only clears it on
+        // success/failure, so it survives across page loads and browser
+        // tabs, not just this one mount.
+        if (data.status === 'analyzing') return
         analysisTriggered.current = true
 
         setAnalysisLoading(true)
@@ -203,11 +217,13 @@ export default function ProjectViewPage() {
     }
   }, [id, isLoaded])
 
-  useEffect(() => {
+  // Was an auto-firing useEffect that ran the instant analysisOutput
+  // existed — now an explicit handler, called only from the "Build
+  // Visuals" button in AnalysisView. No more silent background generation
+  // with no visible state; the button IS the loading state.
+  const handleBuildVisuals = useCallback(() => {
     if (!project || !analysisOutput) return
-    if (project.charts?.length > 0) return
-    if (chartsGenTriggered.current) return
-    chartsGenTriggered.current = true
+    if (chartsGenerating) return // already in flight, ignore a duplicate click
 
     setChartsGenerating(true)
     fetch('/api/generate', {
@@ -221,9 +237,6 @@ export default function ProjectViewPage() {
         tone: project.tone || 'executive',
         projectName: project.name,
         targetCompany: project.target_company || null,
-        // Was hardcoded to null — meant Visuals were built audience-agnostic
-        // even after /api/analyze became audience-aware. Now consistent
-        // with both /api/analyze calls above.
         targetAudience: project.target_audience || null,
         optIn: project.opt_in_crowd || false,
         dataSourceType: project.data_source_type || null,
@@ -242,7 +255,40 @@ export default function ProjectViewPage() {
         console.error('Visual generation failed:', err)
       })
       .finally(() => setChartsGenerating(false))
-  }, [project, analysisOutput])
+  }, [project, analysisOutput, chartsGenerating])
+
+  // Recommendations — previously a silent background call fired from inside
+  // /api/generate right after charts saved, with zero visible state and the
+  // exact "did it work or not?" ambiguity that took most of a session to
+  // diagnose. Now its own explicit button, its own endpoint
+  // (/api/generate-recommendations), its own loading/error state — same
+  // reasoning as Build Visuals above.
+  const handleBuildRecommendations = useCallback(() => {
+    if (!project) return
+    if (recommendationsGenerating) return
+
+    setRecommendationsGenerating(true)
+    setRecommendationsError(null)
+    fetch('/api/generate-recommendations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id }),
+    })
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || `Recommendations failed: ${res.status}`)
+        return data
+      })
+      .then(() => supabase.from('projects').select('*').eq('id', project.id).single())
+      .then(({ data }) => {
+        if (data) setProject(data)
+      })
+      .catch((err) => {
+        console.error('Recommendations failed:', err)
+        setRecommendationsError(err.message || 'Recommendations failed — please try again.')
+      })
+      .finally(() => setRecommendationsGenerating(false))
+  }, [project, recommendationsGenerating])
 
   const runAnalysis = useCallback(
     async (followUpQuestion: string) => {
@@ -616,6 +662,12 @@ export default function ProjectViewPage() {
                 charts={project.charts || []}
                 chartsGenerating={chartsGenerating}
                 chartColors={BRAND_COLORS}
+                onBuildVisuals={handleBuildVisuals}
+                generationError={project.generation_error || null}
+                recommendations={project.recommendations || []}
+                recommendationsGenerating={recommendationsGenerating}
+                onBuildRecommendations={handleBuildRecommendations}
+                recommendationsError={recommendationsError || project.recommendations_error || null}
               />
             )}
           </div>
