@@ -5,6 +5,8 @@ import { useUser } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
 import IntelligenceSubNav from '@/components/IntelligenceSubNav'
+import TrendSeasonalityStrip from '@/components/TrendSeasonalityStrip'
+import TopicHistorySearch from '@/components/TopicHistorySearch'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import {
@@ -658,6 +660,12 @@ export default function TrendsPage() {
             </div>
           </div>
         )}
+
+        {CATEGORY_META[category].active && (
+          <TrendSeasonalityStrip category={category} dark={dark} onSelectTopic={openTopicDetail} />
+        )}
+
+        <TopicHistorySearch dark={dark} />
 
         {/* Topic detail panel */}
         {selectedTopic && (
