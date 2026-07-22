@@ -1,9 +1,10 @@
 // Shared types and normalization logic for the trends pipeline.
-// Every source fetcher (wikipedia.ts, reddit.ts, youtube.ts) returns raw
-// values in its own native unit — pageviews, post count, view count. This
-// file is what turns those incompatible units into one comparable 0-100
-// scale, using the same "100 = own trailing baseline" convention as
-// ampli's existing Crowd Insights index, per the roadmap decision.
+// Every source fetcher (wikipedia.ts, reddit.ts, youtube.ts, googleTrends.ts)
+// returns raw values in its own native unit — pageviews, post count, view
+// count, estimated search traffic. This file is what turns those
+// incompatible units into one comparable 0-100 scale, using the same
+// "100 = own trailing baseline" convention as ampli's existing Crowd
+// Insights index, per the roadmap decision.
 
 // 'company' is distinct from the six curated public-interest categories —
 // it's for on-demand tracked companies/competitors added per-project,
@@ -17,7 +18,11 @@ export type TrendCategory =
   | 'travel'
   | 'tech'
   | 'company'
-export type TrendSource = 'wikipedia' | 'reddit' | 'youtube'
+
+// google_trends added alongside the original three — same shape as
+// wikipedia/youtube (a daily raw value per topic), so it slots into the
+// existing composite/signal pipeline without any structural change.
+export type TrendSource = 'wikipedia' | 'reddit' | 'youtube' | 'google_trends'
 
 // What a source fetcher returns for one topic on one day — still in that
 // source's native unit, not yet comparable across sources.

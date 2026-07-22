@@ -21,16 +21,21 @@ import {
   Cpu,
   Zap,
   Scale,
-  BarChart3,
+  Sparkles,
 } from 'lucide-react'
 import {
   LineChart,
   Line,
+  ScatterChart,
+  Scatter,
   ResponsiveContainer,
   XAxis,
   YAxis,
+  ZAxis,
+  ReferenceLine,
   Tooltip as RechartsTooltip,
   Legend,
+  Cell,
 } from 'recharts'
 
 // ── Category config ─────────────────────────────────────────────────────
@@ -50,21 +55,28 @@ const SOURCE_LABELS: Record<string, string> = {
   wikipedia: 'Wikipedia',
   reddit: 'Reddit',
   youtube: 'YouTube',
+  google_trends: 'Google Trends',
 }
 
 const RAW_UNIT_LABELS: Record<string, string> = {
   wikipedia: 'pageviews',
   reddit: 'posts',
   youtube: 'views',
+  google_trends: 'est. searches',
 }
 
-// A source counts as "spiking" for the multi-source agreement flag when
-// its delta vs. 7 days prior exceeds this — same idea as Crowd Insights'
-// "strong divergence" flag, just applied to trend deltas instead of
-// group comparisons.
 const SPIKE_THRESHOLD_PCT = 15
 const COMPARE_COLORS = ['#3b82f6', '#10b981', '#f59e0b']
 const MAX_COMPARE_TOPICS = 3
+const NEW_TOPIC_WINDOW_DAYS = 3
+
+const QUADRANT_COLORS = {
+  emerging: '#3b82f6',
+  trending: '#10b981',
+  saturated: '#f59e0b',
+  laggard: '#71717a',
+  neutral: '#a1a1aa',
+} as const
 
 interface CompositeRow {
   topic: string
@@ -82,6 +94,12 @@ interface SignalRow {
   raw_value: number
   delta_vs_prior: number | null
   as_of: string
+}
+
+interface TopicMetaRow {
+  topic: string
+  topic_origin: string | null
+  discovered_at: string | null
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -115,8 +133,6 @@ function latestPerTopic(rows: CompositeRow[]): CompositeRow[] {
   return Array.from(byTopic.values())
 }
 
-// Latest row per (topic, source) pair — used both for the multi-source
-// agreement flag and to seed the detail panel's source breakdown.
 function latestPerTopicSource(rows: SignalRow[]): Map<string, SignalRow> {
   const byKey = new Map<string, SignalRow>()
   for (const row of rows) {
@@ -127,13 +143,43 @@ function latestPerTopicSource(rows: SignalRow[]): Map<string, SignalRow> {
   return byKey
 }
 
-// A topic "agrees" when 2+ sources are spiking (delta > threshold) on the
-// same day — a stronger signal than any single source alone.
 function hasAgreement(signalsForTopic: SignalRow[]): boolean {
   const spiking = signalsForTopic.filter(
     (s) => s.delta_vs_prior !== null && s.delta_vs_prior > SPIKE_THRESHOLD_PCT
   )
   return spiking.length >= 2
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 50
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+type Quadrant = 'emerging' | 'trending' | 'saturated' | 'laggard' | 'neutral'
+
+// Horizontal split is the median composite score of whatever topics are
+// currently active in this category — deliberately relative rather than a
+// fixed cutoff, since a fixed number would drift out of sync with whatever
+// "high" actually means as topics come and go through discovery and
+// retirement. Vertical split is a fixed 0% (growing vs. shrinking is a
+// meaningful absolute line, unlike raw score level).
+function quadrantFor(score: number, delta: number | null, medianScore: number): Quadrant {
+  if (delta === null) return 'neutral'
+  const high = score >= medianScore
+  const rising = delta > 0
+  if (high && rising) return 'trending'
+  if (!high && rising) return 'emerging'
+  if (high && !rising) return 'saturated'
+  return 'laggard'
+}
+
+const QUADRANT_LABELS: Record<Exclude<Quadrant, 'neutral'>, string> = {
+  emerging: 'Emerging',
+  trending: 'Trending / Peaking',
+  saturated: 'Saturated / Mature',
+  laggard: 'Laggard',
 }
 
 // ── Main page ──────────────────────────────────────────────────────────
@@ -146,14 +192,13 @@ export default function TrendsPage() {
   const [category, setCategory] = useState<TrendCategory>('auto')
   const [topics, setTopics] = useState<CompositeRow[]>([])
   const [signalsByKey, setSignalsByKey] = useState<Map<string, SignalRow>>(new Map())
+  const [topicMeta, setTopicMeta] = useState<Map<string, TopicMetaRow>>(new Map())
   const [loading, setLoading] = useState(true)
 
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null)
   const [sparkline, setSparkline] = useState<CompositeRow[]>([])
   const [sourceBreakdown, setSourceBreakdown] = useState<SignalRow[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
-
-  const [minScore, setMinScore] = useState(0)
 
   const [compareMode, setCompareMode] = useState(false)
   const [compareSelection, setCompareSelection] = useState<string[]>([])
@@ -165,15 +210,15 @@ export default function TrendsPage() {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
 
-  // Load current topics + latest per-source signals for the selected
-  // category. The signals fetch is what powers the multi-source agreement
-  // flag and the raw-magnitude numbers — it's a category-wide query, not
-  // per-topic, so the agreement flag can show on every card in the grid,
-  // not just inside an opened detail panel.
+  // Load current topics, latest per-source signals, and topic lifecycle
+  // metadata (origin/discovered_at) for the selected category. Lifecycle
+  // metadata drives the "New" badge — it lives in trend_topics, not
+  // trend_composite/trend_signals, so it's a separate query.
   useEffect(() => {
     if (!CATEGORY_META[category].active) {
       setTopics([])
       setSignalsByKey(new Map())
+      setTopicMeta(new Map())
       setLoading(false)
       return
     }
@@ -198,16 +243,21 @@ export default function TrendsPage() {
         .eq('category', category)
         .gte('as_of', cutoffStr)
         .order('as_of', { ascending: false }),
-    ]).then(([compositeRes, signalsRes]) => {
+      supabase
+        .from('trend_topics')
+        .select('topic, topic_origin, discovered_at')
+        .eq('category', category)
+        .eq('active', true),
+    ]).then(([compositeRes, signalsRes, metaRes]) => {
       setTopics(latestPerTopic((compositeRes.data as CompositeRow[]) || []))
       setSignalsByKey(latestPerTopicSource((signalsRes.data as SignalRow[]) || []))
+      const metaMap = new Map<string, TopicMetaRow>()
+      for (const row of (metaRes.data as TopicMetaRow[]) || []) metaMap.set(row.topic, row)
+      setTopicMeta(metaMap)
       setLoading(false)
     })
   }, [category])
 
-  // Category-level rollup — average delta across whatever topics are
-  // currently loaded. Pure client-side computation, no extra query needed
-  // since `topics` already carries each one's delta_vs_prior.
   const categoryRollup = useMemo(() => {
     const withDelta = topics.filter((t) => t.delta_vs_prior !== null)
     if (withDelta.length === 0) return null
@@ -215,6 +265,15 @@ export default function TrendsPage() {
       withDelta.reduce((sum, t) => sum + (t.delta_vs_prior as number), 0) / withDelta.length
     return Math.round(avg * 10) / 10
   }, [topics])
+
+  const medianScore = useMemo(() => median(topics.map((t) => t.composite_score)), [topics])
+
+  const isNewTopic = (topic: string): boolean => {
+    const meta = topicMeta.get(topic)
+    if (!meta || meta.topic_origin !== 'discovered' || !meta.discovered_at) return false
+    const ageMs = Date.now() - new Date(meta.discovered_at).getTime()
+    return ageMs < NEW_TOPIC_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  }
 
   const openTopicDetail = (topic: string) => {
     setSelectedTopic(topic)
@@ -245,13 +304,17 @@ export default function TrendsPage() {
     })
   }
 
-  const toggleCompareSelection = (topic: string, e: React.MouseEvent) => {
-    e.stopPropagation()
+  const toggleCompareSelection = (topic: string) => {
     setCompareSelection((prev) => {
       if (prev.includes(topic)) return prev.filter((t) => t !== topic)
       if (prev.length >= MAX_COMPARE_TOPICS) return prev
       return [...prev, topic]
     })
+  }
+
+  const handlePointClick = (topic: string) => {
+    if (compareMode) toggleCompareSelection(topic)
+    else openTopicDetail(topic)
   }
 
   const openComparison = () => {
@@ -273,9 +336,6 @@ export default function TrendsPage() {
           .order('as_of', { ascending: true })
       )
     ).then((results) => {
-      // Merge each topic's series into one array keyed by date, since
-      // Recharts needs one row per x-axis point with each topic as its
-      // own key for a multi-line overlay.
       const byDate = new Map<string, Record<string, any>>()
       results.forEach((res, i) => {
         const topic = compareSelection[i]
@@ -295,12 +355,14 @@ export default function TrendsPage() {
     [topics, selectedTopic]
   )
 
-  const visibleTopics = useMemo(
+  const scatterData = useMemo(
     () =>
-      topics
-        .filter((t) => t.composite_score >= minScore)
-        .sort((a, b) => b.composite_score - a.composite_score),
-    [topics, minScore]
+      topics.map((t) => ({
+        ...t,
+        quadrant: quadrantFor(t.composite_score, t.delta_vs_prior, medianScore),
+        isNew: isNewTopic(t.topic),
+      })),
+    [topics, medianScore, topicMeta]
   )
 
   // ── Token-based styles ────────────────────────────────────────────────
@@ -328,8 +390,9 @@ export default function TrendsPage() {
           <div>
             <h1 className="text-2xl font-bold mb-1 tracking-tight">User Behaviors</h1>
             <p className={`text-sm ${muted}`}>
-              What the public is actively researching right now — aggregated from public behavioral
-              signals (Wikipedia, YouTube), not survey or panel data.
+              What the public is actively researching right now — new topics are discovered
+              automatically as they trend and retired once they go cold, so this stays a living
+              picture, not a fixed list.
             </p>
           </div>
           {CATEGORY_META[category].active && (
@@ -360,17 +423,19 @@ export default function TrendsPage() {
           <p
             className={`text-xs leading-relaxed ${dark ? 'text-blue-200/70' : 'text-blue-900/70'}`}
           >
-            Interest scores are 0-100, relative to each topic's own recent activity — a score of 100
-            means today matches that topic's highest point in the last two weeks, not an absolute
-            comparison between topics. Composite scores currently reflect Wikipedia and YouTube;
-            Reddit is pending approval and will join automatically once available.
+            Each dot is one topic. Horizontal position is current interest level relative to today's
+            mix (dashed line marks the median); vertical position is momentum vs. last week.
+            Composite scores reflect Wikipedia, YouTube, and Google Trends; Reddit is pending
+            approval. Topics marked <Sparkles size={10} className="inline mx-0.5" />
+            New were surfaced from real trending searches in the last {NEW_TOPIC_WINDOW_DAYS} days —
+            not part of the original curated list.
           </p>
         </div>
 
         {/* Category rollup */}
         {CATEGORY_META[category].active && categoryRollup !== null && (
           <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border mb-6 ${card}`}>
-            <BarChart3 size={16} className="text-blue-500 shrink-0" />
+            <Zap size={16} className="text-blue-500 shrink-0" />
             <p className="text-sm">
               <span className="font-semibold">{CATEGORY_META[category].label} overall</span> is{' '}
               <span className={`font-bold ${deltaColor(categoryRollup)}`}>
@@ -416,22 +481,6 @@ export default function TrendsPage() {
           })}
         </div>
 
-        {/* Interest index slider */}
-        {CATEGORY_META[category].active && topics.length > 0 && (
-          <div className={`flex items-center gap-3 mb-5 px-4 py-3 rounded-lg border ${card}`}>
-            <span className={`text-xs font-medium shrink-0 ${muted}`}>Min. Interest Score</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={minScore}
-              onChange={(e) => setMinScore(Number(e.target.value))}
-              className="flex-1 accent-blue-500"
-            />
-            <span className="text-xs font-semibold w-8 text-right shrink-0">{minScore}</span>
-          </div>
-        )}
-
         {/* Compare mode banner */}
         {compareMode && (
           <div
@@ -451,76 +500,162 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Topic grid */}
+        {/* Quadrant matrix */}
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : visibleTopics.length === 0 ? (
+        ) : !CATEGORY_META[category].active ? (
+          <div className={`p-10 rounded-xl border text-center ${card}`}>
+            <p className={`text-sm ${muted}`}>This category is planned but not built yet.</p>
+          </div>
+        ) : scatterData.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
-              {!CATEGORY_META[category].active
-                ? 'This category is planned but not built yet.'
-                : topics.length === 0
-                  ? 'No data yet for this category — check back after the next daily refresh.'
-                  : 'No topics meet the current minimum score filter.'}
+              No data yet for this category — check back after the next daily refresh.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {visibleTopics.map((t) => {
-              const wiki = signalsByKey.get(`${t.topic}::wikipedia`)
-              const yt = signalsByKey.get(`${t.topic}::youtube`)
-              const signalsForTopic = [wiki, yt].filter((s): s is SignalRow => !!s)
-              const agrees = hasAgreement(signalsForTopic)
-              const totalRaw = signalsForTopic.reduce((sum, s) => sum + s.raw_value, 0)
-              const isSelected = compareSelection.includes(t.topic)
+          <div className={`relative p-4 rounded-xl border ${card}`}>
+            <div className="absolute top-4 left-4 text-[10px] font-semibold uppercase tracking-wide text-blue-500 z-10">
+              Emerging
+            </div>
+            <div className="absolute top-4 right-4 text-[10px] font-semibold uppercase tracking-wide text-emerald-500 z-10">
+              Trending / Peaking
+            </div>
+            <div className="absolute bottom-4 right-4 text-[10px] font-semibold uppercase tracking-wide text-amber-500 z-10">
+              Saturated / Mature
+            </div>
+            <div
+              className={`absolute bottom-4 left-4 text-[10px] font-semibold uppercase tracking-wide z-10 ${dark ? 'text-white/30' : 'text-zinc-400'}`}
+            >
+              Laggard
+            </div>
 
-              return (
-                <button
-                  key={t.topic}
-                  onClick={(e) =>
-                    compareMode ? toggleCompareSelection(t.topic, e) : openTopicDetail(t.topic)
-                  }
-                  className={`text-left p-4 rounded-xl border transition-all hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${
-                    isSelected ? 'border-blue-500 bg-blue-500/8' : card
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-2 gap-2">
-                    <p className="text-sm font-semibold">{t.topic}</p>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {agrees && (
-                        <span
-                          title="Confirmed across both sources"
-                          className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 font-semibold"
+            <div className="h-96 pt-8">
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
+                  <XAxis
+                    type="number"
+                    dataKey="composite_score"
+                    domain={[0, 100]}
+                    name="Interest level"
+                    tick={{ fontSize: 10, fill: dark ? 'rgba(255,255,255,0.4)' : '#71717a' }}
+                    label={{
+                      value: 'Interest level (current, relative to own history)',
+                      position: 'insideBottom',
+                      offset: -5,
+                      fontSize: 10,
+                      fill: dark ? 'rgba(255,255,255,0.4)' : '#71717a',
+                    }}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="delta_vs_prior"
+                    name="Momentum"
+                    tick={{ fontSize: 10, fill: dark ? 'rgba(255,255,255,0.4)' : '#71717a' }}
+                    label={{
+                      value: 'Momentum (% vs. last week)',
+                      angle: -90,
+                      position: 'insideLeft',
+                      fontSize: 10,
+                      fill: dark ? 'rgba(255,255,255,0.4)' : '#71717a',
+                    }}
+                  />
+                  <ZAxis range={[80, 80]} />
+                  <ReferenceLine
+                    x={medianScore}
+                    stroke={dark ? 'rgba(255,255,255,0.15)' : '#d4d4d8'}
+                    strokeDasharray="4 4"
+                  />
+                  <ReferenceLine
+                    y={0}
+                    stroke={dark ? 'rgba(255,255,255,0.15)' : '#d4d4d8'}
+                    strokeDasharray="4 4"
+                  />
+                  <RechartsTooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload || !payload[0]) return null
+                      const d: any = payload[0].payload
+                      return (
+                        <div
+                          className={`px-3 py-2 rounded-lg border text-xs ${dark ? 'bg-[#111118] border-white/10' : 'bg-white border-zinc-200'}`}
                         >
-                          <Zap size={9} /> Confirmed
-                        </span>
-                      )}
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-full ${dark ? 'bg-white/5 text-white/35' : 'bg-zinc-100 text-zinc-500'}`}
-                      >
-                        {t.source_count} source{t.source_count !== 1 ? 's' : ''}
-                      </span>
-                    </div>
+                          <p className="font-semibold flex items-center gap-1">
+                            {d.topic}
+                            {d.isNew && <Sparkles size={10} className="text-blue-400" />}
+                          </p>
+                          <p className={muted}>
+                            Score {d.composite_score} ·{' '}
+                            {d.delta_vs_prior !== null
+                              ? `${d.delta_vs_prior > 0 ? '+' : ''}${d.delta_vs_prior}%`
+                              : 'new'}
+                          </p>
+                          {d.quadrant !== 'neutral' && (
+                            <p className={muted}>
+                              {QUADRANT_LABELS[d.quadrant as Exclude<Quadrant, 'neutral'>]}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    }}
+                  />
+                  <Scatter
+                    data={scatterData}
+                    onClick={(point: any) => handlePointClick(point.topic)}
+                    cursor="pointer"
+                  >
+                    {scatterData.map((d) => (
+                      <Cell
+                        key={d.topic}
+                        fill={
+                          compareSelection.includes(d.topic)
+                            ? '#3b82f6'
+                            : QUADRANT_COLORS[d.quadrant]
+                        }
+                        stroke={compareSelection.includes(d.topic) ? '#1d4ed8' : 'none'}
+                        strokeWidth={compareSelection.includes(d.topic) ? 2 : 0}
+                      />
+                    ))}
+                  </Scatter>
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Topic names grouped by quadrant — dots alone aren't readable
+                labels at this density. */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-white/5">
+              {(['emerging', 'trending', 'saturated', 'laggard'] as const).map((q) => (
+                <div key={q}>
+                  <p
+                    className="text-[10px] font-semibold uppercase tracking-wide mb-1.5"
+                    style={{ color: QUADRANT_COLORS[q] }}
+                  >
+                    {QUADRANT_LABELS[q]}
+                  </p>
+                  <div className="space-y-1">
+                    {scatterData
+                      .filter((d) => d.quadrant === q)
+                      .map((d) => (
+                        <button
+                          key={d.topic}
+                          onClick={() => handlePointClick(d.topic)}
+                          className={`flex items-center gap-1 text-xs text-left hover:underline ${
+                            compareSelection.includes(d.topic) ? 'text-blue-500 font-medium' : muted
+                          }`}
+                        >
+                          {d.isNew && <Sparkles size={9} className="text-blue-400 shrink-0" />}
+                          {d.topic}
+                        </button>
+                      ))}
+                    {scatterData.filter((d) => d.quadrant === q).length === 0 && (
+                      <p className={`text-[11px] ${muted}`}>None right now</p>
+                    )}
                   </div>
-                  <div className="flex items-end gap-2 mb-1">
-                    <span className="text-2xl font-black leading-none">{t.composite_score}</span>
-                    <span
-                      className={`flex items-center gap-1 text-xs font-medium mb-0.5 ${deltaColor(t.delta_vs_prior)}`}
-                    >
-                      <TrendArrow delta={t.delta_vs_prior} />
-                      {t.delta_vs_prior !== null
-                        ? `${t.delta_vs_prior > 0 ? '+' : ''}${t.delta_vs_prior}%`
-                        : 'New'}
-                    </span>
-                  </div>
-                  {totalRaw > 0 && (
-                    <p className={`text-[11px] ${muted}`}>{formatRaw(totalRaw)} total this week</p>
-                  )}
-                </button>
-              )
-            })}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -534,7 +669,14 @@ export default function TrendsPage() {
             <div className={`relative w-full max-w-lg p-6 rounded-2xl border shadow-2xl ${card}`}>
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h3 className="font-bold text-lg">{selectedTopic}</h3>
+                  <h3 className="font-bold text-lg flex items-center gap-1.5">
+                    {selectedTopic}
+                    {isNewTopic(selectedTopic) && (
+                      <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-semibold">
+                        <Sparkles size={9} /> New
+                      </span>
+                    )}
+                  </h3>
                   {selectedRow && (
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-3xl font-black">{selectedRow.composite_score}</span>
@@ -578,12 +720,11 @@ export default function TrendsPage() {
                       className={`flex items-center gap-2 px-3 py-2 rounded-lg mb-4 text-xs font-medium ${dark ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700'}`}
                     >
                       <Zap size={12} className="shrink-0" />
-                      Confirmed across multiple sources — both Wikipedia and YouTube are spiking on
-                      this topic at the same time, a stronger signal than either alone.
+                      Confirmed across multiple sources — at least two sources are spiking on this
+                      topic at the same time, a stronger signal than either alone.
                     </div>
                   )}
 
-                  {/* Sparkline */}
                   <div className="mb-5">
                     <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${muted}`}>
                       Last 14 Days
@@ -623,9 +764,6 @@ export default function TrendsPage() {
                     )}
                   </div>
 
-                  {/* Source breakdown — now with raw magnitude alongside
-                      the normalized score, since two topics can both show
-                      an 85 despite wildly different actual audience sizes. */}
                   <div>
                     <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${muted}`}>
                       Source Breakdown
@@ -637,7 +775,7 @@ export default function TrendsPage() {
                         sourceBreakdown.map((s) => (
                           <div key={s.source}>
                             <div className="flex items-center gap-3">
-                              <span className={`text-xs w-16 shrink-0 ${muted}`}>
+                              <span className={`text-xs w-20 shrink-0 ${muted}`}>
                                 {SOURCE_LABELS[s.source] || s.source}
                               </span>
                               <div
@@ -652,7 +790,7 @@ export default function TrendsPage() {
                                 {s.signal_score}
                               </span>
                             </div>
-                            <p className={`text-[11px] mt-1 ml-[76px] ${muted}`}>
+                            <p className={`text-[11px] mt-1 ml-[84px] ${muted}`}>
                               {formatRaw(s.raw_value)} {RAW_UNIT_LABELS[s.source] || 'units'}
                             </p>
                           </div>

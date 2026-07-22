@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js'
 import { fetchWikipediaToday } from '@/lib/trends/sources/wikipedia'
 import { fetchRedditToday } from '@/lib/trends/sources/reddit'
 import { fetchYoutubeToday } from '@/lib/trends/sources/youtube'
+import { fetchGoogleTrendsDaily, findTodayTraffic } from '@/lib/trends/sources/googleTrends'
+import { discoverNewTopics } from '@/lib/trends/discoverTopics'
+import { pruneStaleTopics } from '@/lib/trends/pruneTopics'
 import { normalizeSignal, type RawSignal, type NormalizedSignal } from '@/lib/trends/normalize'
 import { computeComposite } from '@/lib/trends/aggregate'
 
@@ -32,6 +35,29 @@ export async function GET(req: Request) {
   const today = new Date().toISOString().slice(0, 10)
   const results: { topic: string; source: string; status: 'ok' | 'error'; error?: string }[] = []
 
+  // Discovery runs first, before topics are loaded, so anything newly
+  // discovered from today's Google Trends list gets its first signal
+  // reading in this same run rather than waiting until tomorrow. A
+  // discovery failure (e.g. the unofficial Google endpoint being down or
+  // blocked) shouldn't take down the rest of the refresh — same
+  // continue-past-failures posture as every per-source fetch below.
+  let discovery: { scanned: number; classified: number; added: string[] } = {
+    scanned: 0,
+    classified: 0,
+    added: [],
+  }
+  try {
+    discovery = await discoverNewTopics()
+  } catch (err: any) {
+    console.error('Topic discovery failed:', err.message)
+  }
+
+  // Today's Google Trends list is fetched once for the whole run, not
+  // per topic — it's one shared feed that every active topic checks
+  // itself against (see findTodayTraffic below), unlike Wikipedia/YouTube
+  // which are genuinely per-topic queries.
+  const todaysGoogleTrends = await fetchGoogleTrendsDaily()
+
   const { data: topics, error: topicsError } = await supabaseAdmin
     .from('trend_topics')
     .select('*')
@@ -45,7 +71,7 @@ export async function GET(req: Request) {
     const signalsForTopic: NormalizedSignal[] = []
 
     const sourcesToFetch: {
-      source: 'wikipedia' | 'reddit' | 'youtube'
+      source: 'wikipedia' | 'reddit' | 'youtube' | 'google_trends'
       fetchFn: () => Promise<number>
     }[] = []
 
@@ -72,6 +98,16 @@ export async function GET(req: Request) {
         fetchFn: () => fetchYoutubeToday(topic.youtube_query),
       })
     }
+    // Google Trends checks this topic against today's already-fetched
+    // trending list — a 0 here means "not in today's top trending
+    // searches," a legitimate reading, not a failure, so every active
+    // topic gets a signal row for this source every day (unlike the
+    // discovery feed itself, which only ever contributes brand new
+    // topics, not daily readings for existing ones).
+    sourcesToFetch.push({
+      source: 'google_trends',
+      fetchFn: async () => findTodayTraffic(topic.topic, todaysGoogleTrends),
+    })
 
     for (const { source, fetchFn } of sourcesToFetch) {
       try {
@@ -79,9 +115,9 @@ export async function GET(req: Request) {
 
         // Pull trailing raw_value history from our own storage — not
         // re-derived from the source each run. This is what lets YouTube
-        // (which has no historical endpoint) work the same way as
-        // Wikipedia and Reddit: today's value plus whatever we've already
-        // accumulated ourselves.
+        // and Google Trends (neither of which has a historical endpoint
+        // we can query) work the same way as Wikipedia: today's value
+        // plus whatever we've already accumulated ourselves.
         const cutoff = new Date()
         cutoff.setDate(cutoff.getDate() - TRAILING_DAYS)
         const { data: history } = await supabaseAdmin
@@ -142,6 +178,17 @@ export async function GET(req: Request) {
     }
   }
 
+  // Pruning runs last, after this run's composite scores are written, so
+  // a topic's just-computed score counts toward its cold-streak check.
+  // A pruning failure is logged but never fails the whole refresh — the
+  // day's actual signal data is already safely written by this point.
+  let pruning: { checked: number; retired: string[] } = { checked: 0, retired: [] }
+  try {
+    pruning = await pruneStaleTopics()
+  } catch (err: any) {
+    console.error('Topic pruning failed:', err.message)
+  }
+
   const errorCount = results.filter((r) => r.status === 'error').length
   return NextResponse.json({
     success: true,
@@ -149,6 +196,8 @@ export async function GET(req: Request) {
     topicsProcessed: topics.length,
     sourceCallsOk: results.filter((r) => r.status === 'ok').length,
     sourceCallsFailed: errorCount,
+    discovery,
+    pruning,
     results,
   })
 }
