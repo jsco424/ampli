@@ -85,11 +85,30 @@ export async function GET(req: Request) {
     // not attempted-and-logged-as-error. Once those env vars are added
     // (pending Reddit's commercial API approval), this resumes on its
     // own with no code changes needed.
+    //
+    // reddit_subreddits comes back from Supabase as a JSON-encoded string
+    // (e.g. '["personalfinance","investing"]'), not a real array — confirmed
+    // against a real export of trend_topics. Parsed defensively here so
+    // .length and the array passed to fetchRedditToday are both correct
+    // once Reddit actually gets configured; left as-is this would always
+    // read as a large truthy string length and hand fetchRedditToday a raw
+    // string instead of a subreddit list.
     const redditConfigured = !!(process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET)
-    if (redditConfigured && topic.reddit_subreddits?.length > 0 && topic.reddit_query) {
+    let redditSubreddits: string[] = []
+    if (redditConfigured && topic.reddit_subreddits) {
+      try {
+        redditSubreddits =
+          typeof topic.reddit_subreddits === 'string'
+            ? JSON.parse(topic.reddit_subreddits)
+            : topic.reddit_subreddits
+      } catch {
+        redditSubreddits = []
+      }
+    }
+    if (redditConfigured && redditSubreddits.length > 0 && topic.reddit_query) {
       sourcesToFetch.push({
         source: 'reddit',
-        fetchFn: () => fetchRedditToday(topic.reddit_subreddits, topic.reddit_query),
+        fetchFn: () => fetchRedditToday(redditSubreddits, topic.reddit_query),
       })
     }
     if (topic.youtube_query) {

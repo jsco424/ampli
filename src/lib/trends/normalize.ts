@@ -6,18 +6,16 @@
 // "100 = own trailing baseline" convention as ampli's existing Crowd
 // Insights index, per the roadmap decision.
 
-// 'company' is distinct from the six curated public-interest categories —
-// it's for on-demand tracked companies/competitors added per-project,
-// not part of the curated topic list. Same tables, same pipeline, kept
-// as one type so both flows share all the same normalization logic.
-export type TrendCategory =
-  | 'auto'
-  | 'education'
-  | 'home'
-  | 'finance'
-  | 'travel'
-  | 'tech'
-  | 'company'
+// Deliberately a plain string, not a fixed union. Categories are no longer
+// a hand-maintained enum — discoverTopics.ts classifies new terms against
+// an expandable keyword taxonomy, and new categories can appear over time
+// without needing a type change here or anywhere downstream (page.tsx,
+// industryMapping.ts, etc. all treat this as an open string set with
+// fallback display logic for anything not explicitly labeled).
+// 'company' remains a reserved value for on-demand tracked
+// companies/competitors added per-project — not part of the classified
+// public-interest taxonomy, but same tables/pipeline.
+export type TrendCategory = string
 
 // google_trends added alongside the original three — same shape as
 // wikipedia/youtube (a daily raw value per topic), so it slots into the

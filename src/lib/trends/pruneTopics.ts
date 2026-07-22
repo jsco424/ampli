@@ -47,7 +47,10 @@ export async function pruneStaleTopics(): Promise<PruneResult> {
       .limit(COLD_STREAK_DAYS)
 
     if (!recent || recent.length < COLD_STREAK_DAYS) continue // not enough history yet
-    const allCold = recent.every((r: any) => r.composite_score < COLD_SCORE_THRESHOLD)
+    // composite_score can come back as a numeric-typed JSON string (see
+    // trends/page.tsx's toCompositeRow for the confirming example) —
+    // coerced here so this is a real numeric comparison.
+    const allCold = recent.every((r: any) => Number(r.composite_score) < COLD_SCORE_THRESHOLD)
     if (!allCold) continue
 
     await supabaseAdmin

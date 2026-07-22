@@ -44,8 +44,12 @@ function buildMonthlyTopTopics(rows: CompositeHistoryRow[], months: string[]): M
     const month = row.as_of.slice(0, 7)
     if (!byMonthTopic.has(month)) byMonthTopic.set(month, new Map())
     const topicMap = byMonthTopic.get(month)!
+    // composite_score is a Postgres numeric column and can come back as a
+    // JSON string rather than a JS number — coerced here so comparisons
+    // below are real numeric comparisons, not string comparisons.
+    const score = Number(row.composite_score)
     const prev = topicMap.get(row.topic) ?? -Infinity
-    if (row.composite_score > prev) topicMap.set(row.topic, row.composite_score)
+    if (score > prev) topicMap.set(row.topic, score)
   }
 
   return months.map((month) => {

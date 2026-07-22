@@ -21,6 +21,17 @@ import {
   DollarSign,
   Plane,
   Cpu,
+  PawPrint,
+  HeartPulse,
+  Utensils,
+  Baby,
+  Trophy,
+  Gamepad2,
+  Shirt,
+  Hammer,
+  Clapperboard,
+  Mountain,
+  Tag,
   Zap,
   Scale,
   Sparkles,
@@ -41,16 +52,67 @@ import {
 } from 'recharts'
 
 // ── Category config ─────────────────────────────────────────────────────
+//
+// Categories are no longer a fixed, hand-maintained list. Which tabs show
+// up here is entirely data-driven — whatever categories currently have at
+// least one active topic in trend_topics, queried on load (see the
+// `availableCategories` effect below). Labels/icons below are just cosmetic
+// lookups for categories we anticipated; anything discovered that isn't in
+// this list still works, it just falls back to a title-cased version of its
+// raw name and a generic tag icon (see categoryLabel/categoryIcon).
 
-type TrendCategory = 'auto' | 'education' | 'home' | 'finance' | 'travel' | 'tech'
+const CATEGORY_LABELS: Partial<Record<string, string>> = {
+  auto: 'Auto',
+  education: 'Education',
+  finance: 'Finance',
+  home: 'Home',
+  travel: 'Travel',
+  tech: 'Tech',
+  pets: 'Pets',
+  fitness_wellness: 'Fitness & Wellness',
+  beauty: 'Beauty',
+  food_dining: 'Food & Dining',
+  parenting: 'Parenting',
+  sports: 'Sports',
+  gaming: 'Gaming',
+  fashion: 'Fashion',
+  home_improvement: 'Home Improvement',
+  entertainment: 'Entertainment',
+  outdoors: 'Outdoors',
+}
 
-const CATEGORY_META: Record<TrendCategory, { label: string; icon: any; active: boolean }> = {
-  auto: { label: 'Auto', icon: Car, active: true },
-  education: { label: 'Education', icon: GraduationCap, active: true },
-  finance: { label: 'Finance', icon: DollarSign, active: true },
-  home: { label: 'Home', icon: HomeIcon, active: false },
-  travel: { label: 'Travel', icon: Plane, active: false },
-  tech: { label: 'Tech', icon: Cpu, active: false },
+const CATEGORY_ICONS: Partial<Record<string, any>> = {
+  auto: Car,
+  education: GraduationCap,
+  finance: DollarSign,
+  home: HomeIcon,
+  travel: Plane,
+  tech: Cpu,
+  pets: PawPrint,
+  fitness_wellness: HeartPulse,
+  beauty: Sparkles,
+  food_dining: Utensils,
+  parenting: Baby,
+  sports: Trophy,
+  gaming: Gamepad2,
+  fashion: Shirt,
+  home_improvement: Hammer,
+  entertainment: Clapperboard,
+  outdoors: Mountain,
+}
+
+function categoryLabel(cat: string): string {
+  return (
+    CATEGORY_LABELS[cat] ||
+    cat
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+  )
+}
+
+function categoryIcon(cat: string) {
+  return CATEGORY_ICONS[cat] || Tag
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -82,7 +144,7 @@ const QUADRANT_COLORS = {
 
 interface CompositeRow {
   topic: string
-  category: TrendCategory
+  category: string
   composite_score: number
   delta_vs_prior: number | null
   source_count: number
@@ -133,6 +195,38 @@ function latestPerTopic(rows: CompositeRow[]): CompositeRow[] {
     if (!existing || row.as_of > existing.as_of) byTopic.set(row.topic, row)
   }
   return Array.from(byTopic.values())
+}
+
+// Postgres numeric/decimal columns (composite_score, delta_vs_prior,
+// signal_score, raw_value all fall in this category) commonly come back
+// through Supabase as JSON strings rather than JS numbers, to avoid
+// silent precision loss — confirmed against a real export of this app's
+// own tables (composite_score/delta_vs_prior showed up quoted, e.g.
+// "37", "-23.1"). Left uncoerced, `sum + t.delta_vs_prior` in
+// categoryRollup below would silently string-concatenate instead of add,
+// producing a NaN rollup. Every row is normalized to real numbers right
+// at the point it's read from Supabase, once, rather than trusting the
+// type callers annotate it with.
+function toCompositeRow(row: any): CompositeRow {
+  return {
+    topic: row.topic,
+    category: row.category,
+    composite_score: Number(row.composite_score),
+    delta_vs_prior: row.delta_vs_prior === null ? null : Number(row.delta_vs_prior),
+    source_count: Number(row.source_count),
+    as_of: row.as_of,
+  }
+}
+
+function toSignalRow(row: any): SignalRow {
+  return {
+    topic: row.topic,
+    source: row.source,
+    signal_score: Number(row.signal_score),
+    raw_value: Number(row.raw_value),
+    delta_vs_prior: row.delta_vs_prior === null ? null : Number(row.delta_vs_prior),
+    as_of: row.as_of,
+  }
 }
 
 function latestPerTopicSource(rows: SignalRow[]): Map<string, SignalRow> {
@@ -191,7 +285,10 @@ export default function TrendsPage() {
   const { dark } = useTheme()
   const router = useRouter()
 
-  const [category, setCategory] = useState<TrendCategory>('auto')
+  const [category, setCategory] = useState<string | null>(null)
+  const [availableCategories, setAvailableCategories] = useState<string[]>([])
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
+
   const [topics, setTopics] = useState<CompositeRow[]>([])
   const [signalsByKey, setSignalsByKey] = useState<Map<string, SignalRow>>(new Map())
   const [topicMeta, setTopicMeta] = useState<Map<string, TopicMetaRow>>(new Map())
@@ -212,12 +309,34 @@ export default function TrendsPage() {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
 
+  // Discovers which category tabs to show, purely from what currently has
+  // active topics — no hardcoded list of "supported" categories. A category
+  // only appears once something real has been classified into it; the tab
+  // bar grows or shrinks on its own as the tracked topic pool changes.
+  useEffect(() => {
+    supabase
+      .from('trend_topics')
+      .select('category')
+      .eq('active', true)
+      .then(({ data }) => {
+        const distinct = Array.from(
+          new Set(((data as any[]) || []).map((r) => r.category as string))
+        ).sort()
+        setAvailableCategories(distinct)
+        setCategory((prev) => {
+          if (prev && distinct.includes(prev)) return prev
+          return distinct.includes('auto') ? 'auto' : distinct[0] || null
+        })
+        setCategoriesLoading(false)
+      })
+  }, [])
+
   // Load current topics, latest per-source signals, and topic lifecycle
   // metadata (origin/discovered_at) for the selected category. Lifecycle
   // metadata drives the "New" badge — it lives in trend_topics, not
   // trend_composite/trend_signals, so it's a separate query.
   useEffect(() => {
-    if (!CATEGORY_META[category].active) {
+    if (!category) {
       setTopics([])
       setSignalsByKey(new Map())
       setTopicMeta(new Map())
@@ -251,8 +370,8 @@ export default function TrendsPage() {
         .eq('category', category)
         .eq('active', true),
     ]).then(([compositeRes, signalsRes, metaRes]) => {
-      setTopics(latestPerTopic((compositeRes.data as CompositeRow[]) || []))
-      setSignalsByKey(latestPerTopicSource((signalsRes.data as SignalRow[]) || []))
+      setTopics(latestPerTopic(((compositeRes.data as any[]) || []).map(toCompositeRow)))
+      setSignalsByKey(latestPerTopicSource(((signalsRes.data as any[]) || []).map(toSignalRow)))
       const metaMap = new Map<string, TopicMetaRow>()
       for (const row of (metaRes.data as TopicMetaRow[]) || []) metaMap.set(row.topic, row)
       setTopicMeta(metaMap)
@@ -299,8 +418,8 @@ export default function TrendsPage() {
         .order('as_of', { ascending: false })
         .limit(10),
     ]).then(([compositeRes, signalsRes]) => {
-      setSparkline((compositeRes.data as CompositeRow[]) || [])
-      const bySource = latestPerTopicSource((signalsRes.data as SignalRow[]) || [])
+      setSparkline(((compositeRes.data as any[]) || []).map(toCompositeRow))
+      const bySource = latestPerTopicSource(((signalsRes.data as any[]) || []).map(toSignalRow))
       setSourceBreakdown(Array.from(bySource.values()))
       setDetailLoading(false)
     })
@@ -343,7 +462,7 @@ export default function TrendsPage() {
         const topic = compareSelection[i]
         for (const row of (res.data as any[]) || []) {
           const existing = byDate.get(row.as_of) || { as_of: row.as_of }
-          existing[topic] = row.composite_score
+          existing[topic] = Number(row.composite_score)
           byDate.set(row.as_of, existing)
         }
       })
@@ -377,7 +496,6 @@ export default function TrendsPage() {
   const tabInactive = dark
     ? 'text-white/35 hover:text-white/70'
     : 'text-zinc-500 hover:text-zinc-900'
-  const tabDisabled = dark ? 'text-white/15 cursor-not-allowed' : 'text-zinc-300 cursor-not-allowed'
 
   if (!isLoaded || !user) return null
 
@@ -392,12 +510,12 @@ export default function TrendsPage() {
           <div>
             <h1 className="text-2xl font-bold mb-1 tracking-tight">User Behaviors</h1>
             <p className={`text-sm ${muted}`}>
-              What the public is actively researching right now — new topics are discovered
-              automatically as they trend and retired once they go cold, so this stays a living
-              picture, not a fixed list.
+              What the public is actively researching right now — both topics and the categories
+              themselves are discovered organically from real trending activity, not a fixed list,
+              and retired once they go cold.
             </p>
           </div>
-          {CATEGORY_META[category].active && (
+          {!categoriesLoading && availableCategories.length > 0 && (
             <button
               onClick={() => {
                 setCompareMode(!compareMode)
@@ -429,17 +547,18 @@ export default function TrendsPage() {
             mix (dashed line marks the median); vertical position is momentum vs. last week.
             Composite scores reflect Wikipedia, YouTube, and Google Trends; Reddit is pending
             approval. Topics marked <Sparkles size={10} className="inline mx-0.5" />
-            New were surfaced from real trending searches in the last {NEW_TOPIC_WINDOW_DAYS} days —
-            not part of the original curated list.
+            New were surfaced from real trending searches in the last {NEW_TOPIC_WINDOW_DAYS} days.
+            Category tabs themselves only appear once real activity has been classified into them —
+            there's no fixed list of supported categories.
           </p>
         </div>
 
         {/* Category rollup */}
-        {CATEGORY_META[category].active && categoryRollup !== null && (
+        {category && categoryRollup !== null && (
           <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border mb-6 ${card}`}>
             <Zap size={16} className="text-blue-500 shrink-0" />
             <p className="text-sm">
-              <span className="font-semibold">{CATEGORY_META[category].label} overall</span> is{' '}
+              <span className="font-semibold">{categoryLabel(category)} overall</span> is{' '}
               <span className={`font-bold ${deltaColor(categoryRollup)}`}>
                 {categoryRollup > 0 ? '+' : ''}
                 {categoryRollup}%
@@ -452,36 +571,26 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Category tabs */}
-        <div
-          className={`flex gap-1 mb-4 p-1 rounded-xl w-fit flex-wrap ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
-        >
-          {(Object.keys(CATEGORY_META) as TrendCategory[]).map((c) => {
-            const meta = CATEGORY_META[c]
-            const Icon = meta.icon
-            return (
-              <button
-                key={c}
-                onClick={() => meta.active && setCategory(c)}
-                disabled={!meta.active}
-                title={meta.active ? undefined : 'Coming soon'}
-                className={`${tabBase} ${
-                  !meta.active ? tabDisabled : category === c ? tabActive : tabInactive
-                }`}
-              >
-                <Icon size={13} />
-                {meta.label}
-                {!meta.active && (
-                  <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded-full ${dark ? 'bg-white/10' : 'bg-zinc-200'}`}
-                  >
-                    Soon
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
+        {/* Category tabs — built entirely from availableCategories */}
+        {!categoriesLoading && availableCategories.length > 0 && (
+          <div
+            className={`flex gap-1 mb-4 p-1 rounded-xl w-fit flex-wrap ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
+          >
+            {availableCategories.map((c) => {
+              const Icon = categoryIcon(c)
+              return (
+                <button
+                  key={c}
+                  onClick={() => setCategory(c)}
+                  className={`${tabBase} ${category === c ? tabActive : tabInactive}`}
+                >
+                  <Icon size={13} />
+                  {categoryLabel(c)}
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {/* Compare mode banner */}
         {compareMode && (
@@ -503,13 +612,16 @@ export default function TrendsPage() {
         )}
 
         {/* Quadrant matrix */}
-        {loading ? (
+        {categoriesLoading || loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : !CATEGORY_META[category].active ? (
+        ) : availableCategories.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
-            <p className={`text-sm ${muted}`}>This category is planned but not built yet.</p>
+            <p className={`text-sm ${muted}`}>
+              No categories have active data yet — check back after the next daily refresh runs and
+              classifies today's trending terms.
+            </p>
           </div>
         ) : scatterData.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
@@ -661,7 +773,7 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {CATEGORY_META[category].active && (
+        {category && (
           <TrendSeasonalityStrip category={category} dark={dark} onSelectTopic={openTopicDetail} />
         )}
 

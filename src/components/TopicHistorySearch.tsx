@@ -75,8 +75,11 @@ function buildMonthlySeries(
     const month = row.as_of.slice(0, 7)
     if (!byTopicMonth.has(row.topic)) byTopicMonth.set(row.topic, new Map())
     const m = byTopicMonth.get(row.topic)!
+    // See TrendSeasonalityStrip.tsx's identical note — composite_score is
+    // a Postgres numeric column and can come back as a JSON string.
+    const score = Number(row.composite_score)
     const prev = m.get(month) ?? -Infinity
-    if (row.composite_score > prev) m.set(month, row.composite_score)
+    if (score > prev) m.set(month, score)
   }
 
   const allMonths = new Set<string>()
