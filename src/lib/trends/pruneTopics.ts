@@ -1,9 +1,9 @@
-// Retires discovered topics that have gone cold, so the tracked list stays
-// current instead of accumulating every term that was ever briefly
-// trending. Only ever touches topics with topic_origin = 'discovered' —
-// the original 18 curated seed topics are a permanent baseline and are
-// never auto-retired here, since those were deliberately chosen as
-// evergreen categories rather than fleeting keywords.
+// Retires any tracked topic — the original curated set included — once
+// it's gone cold for a sustained stretch, so this reflects what's actually
+// trending right now rather than accumulating a permanent list that just
+// gets re-scored forever. Retirement isn't permanent: if discoverTopics.ts
+// sees a retired topic trending again later, it gets reactivated rather
+// than treated as unknown (see discoverTopics.ts).
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -12,7 +12,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const GRACE_PERIOD_DAYS = 3 // don't evaluate anything discovered more recently than this
+const GRACE_PERIOD_DAYS = 3 // don't evaluate anything (re)activated more recently than this
 const COLD_STREAK_DAYS = 5 // consecutive low-score days needed to retire
 const COLD_SCORE_THRESHOLD = 20
 
@@ -25,10 +25,14 @@ export async function pruneStaleTopics(): Promise<PruneResult> {
   const graceCutoff = new Date()
   graceCutoff.setDate(graceCutoff.getDate() - GRACE_PERIOD_DAYS)
 
+  // No topic_origin filter — this now applies to every active topic,
+  // curated or discovered alike. The only thing exempting a topic from
+  // evaluation is the grace period on discovered_at (or, for the original
+  // seed topics right after the discovery-columns migration runs, the
+  // migration's own timestamp — see the migration file's note).
   const { data: candidates } = await supabaseAdmin
     .from('trend_topics')
     .select('topic, discovered_at')
-    .eq('topic_origin', 'discovered')
     .eq('active', true)
     .lt('discovered_at', graceCutoff.toISOString())
 

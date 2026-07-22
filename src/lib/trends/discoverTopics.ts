@@ -1,15 +1,18 @@
 // Auto-discovery of new trend topics from Google Trends' daily trending
 // searches. This is what makes User Behaviors dynamic instead of a fixed
-// 18-topic seed list — candidate terms are classified against the six
-// trend categories using simple keyword-overlap matching, deliberately not
-// an AI call, to keep this a free, unlimited-frequency step (same reasoning
-// as the existing free Wikipedia/YouTube sources, and consistent with
+// topic list — candidate terms are classified against the six trend
+// categories using simple keyword-overlap matching, deliberately not an AI
+// call, to keep this a free, unlimited-frequency step (same reasoning as
+// the existing free Wikipedia/YouTube sources, and consistent with
 // conserving Anthropic spend during pre-revenue testing).
 //
-// A term is added to trend_topics only if it clears the classification
-// threshold against some category's keyword set. Anything that doesn't fit
-// one of the six categories cleanly is left out — better to miss a
-// borderline term than pollute a category with something unrelated.
+// A brand new term is added only if it clears the classification threshold
+// against some category's keyword set. A term that matches a topic that's
+// already tracked but currently retired (inactive — see pruneTopics.ts) is
+// reactivated instead of re-classified from scratch, reusing its existing
+// category/wikipedia_article/etc. rather than re-guessing them. This is
+// what lets a topic genuinely come and go over time rather than a retired
+// topic being gone for good the moment it goes cold.
 
 import { createClient } from '@supabase/supabase-js'
 import { fetchGoogleTrendsDaily } from './sources/googleTrends'
@@ -113,22 +116,43 @@ export interface DiscoveryResult {
   scanned: number
   classified: number
   added: string[]
+  reactivated: string[]
 }
 
 // Run once per daily refresh, before the normal per-topic signal fetch —
-// so anything newly discovered today gets its first signal reading in the
-// same run. Only inserts topics not already tracked; existing topics
-// (seed or previously discovered) are left untouched here.
+// so anything newly discovered or reactivated today gets its first signal
+// reading in the same run.
 export async function discoverNewTopics(): Promise<DiscoveryResult> {
   const candidates = await fetchGoogleTrendsDaily()
   const added: string[] = []
+  const reactivated: string[] = []
 
-  const { data: existing } = await supabaseAdmin.from('trend_topics').select('topic')
-  const existingSet = new Set((existing || []).map((r: any) => r.topic.toLowerCase()))
+  // Pulled regardless of active status, unlike before — a retired topic
+  // still exists in trend_topics with active=false, and needs to be found
+  // here so it can be brought back rather than treated as unknown.
+  const { data: existing } = await supabaseAdmin.from('trend_topics').select('topic, active')
+  const existingByKey = new Map<string, { exactTopic: string; active: boolean }>()
+  for (const row of (existing || []) as any[]) {
+    existingByKey.set(row.topic.toLowerCase(), { exactTopic: row.topic, active: row.active })
+  }
 
   let classified = 0
   for (const candidate of candidates) {
-    if (existingSet.has(candidate.term.toLowerCase())) continue
+    const key = candidate.term.toLowerCase()
+    const match = existingByKey.get(key)
+
+    if (match) {
+      if (match.active) continue // already tracked and live, nothing to do
+      // Previously retired, trending again — reactivate rather than
+      // re-classify or re-guess its wikipedia_article/youtube_query.
+      await supabaseAdmin
+        .from('trend_topics')
+        .update({ active: true, discovered_at: new Date().toISOString() })
+        .eq('topic', match.exactTopic)
+      reactivated.push(match.exactTopic)
+      continue
+    }
+
     const category = classify(candidate.term)
     if (!category) continue
     classified++
@@ -151,5 +175,5 @@ export async function discoverNewTopics(): Promise<DiscoveryResult> {
     added.push(candidate.term)
   }
 
-  return { scanned: candidates.length, classified, added }
+  return { scanned: candidates.length, classified, added, reactivated }
 }
