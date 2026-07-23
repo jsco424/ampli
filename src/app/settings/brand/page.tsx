@@ -22,6 +22,7 @@ interface BrandSettings {
   brand_primary_color: string
   brand_logo_url: string
   gamma_theme_id: string
+  gamma_template_id: string
 }
 
 interface GammaTheme {
@@ -41,6 +42,7 @@ const DEFAULT_SETTINGS: BrandSettings = {
   brand_primary_color: '#3b82f6',
   brand_logo_url: '',
   gamma_theme_id: '',
+  gamma_template_id: '',
 }
 
 const COLOR_PRESETS = [
@@ -119,7 +121,7 @@ export default function BrandSettingsPage() {
     if (!user) return
     supabase
       .from('user_settings')
-      .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
+      .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id, gamma_template_id')
       .eq('user_id', user.id)
       .single()
       .then(({ data }) => {
@@ -129,6 +131,7 @@ export default function BrandSettingsPage() {
             brand_primary_color: data.brand_primary_color || DEFAULT_SETTINGS.brand_primary_color,
             brand_logo_url: data.brand_logo_url || '',
             gamma_theme_id: data.gamma_theme_id || '',
+            gamma_template_id: data.gamma_template_id || '',
           })
         }
       })
@@ -163,6 +166,7 @@ export default function BrandSettingsPage() {
         brand_primary_color: settings.brand_primary_color,
         brand_logo_url: settings.brand_logo_url.trim(),
         gamma_theme_id: settings.gamma_theme_id.trim(),
+        gamma_template_id: settings.gamma_template_id.trim(),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id' }
@@ -182,6 +186,7 @@ export default function BrandSettingsPage() {
   // same search, same filters, no gating on the browse-everything picker
   // itself, only on this additional shortlist.
   const isBusinessTierOrAbove = userTier === 'business' || userTier === 'enterprise'
+  const isEnterpriseTier = userTier === 'enterprise'
   const curatedThemes = themes.filter((t) => BUSINESS_CURATED_THEME_IDS.includes(t.id))
   const showRecommended = isBusinessTierOrAbove && curatedThemes.length > 0
 
@@ -517,6 +522,46 @@ export default function BrandSettingsPage() {
               </p>
             )}
           </div>
+
+          {isEnterpriseTier && (
+            <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles size={15} className="text-amber-400" />
+                <p className="font-semibold text-sm">Enterprise Custom Branding</p>
+              </div>
+              <p className={`text-xs mb-4 ${subtler}`}>
+                If your account rep gave you a Theme ID or Template ID (built from your own company
+                deck), paste it here directly — no need to hunt for it in the picker above. This
+                overrides whatever's selected there.
+              </p>
+
+              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
+                Custom Theme ID
+              </label>
+              <input
+                value={settings.gamma_theme_id}
+                onChange={(e) => setSettings({ ...settings, gamma_theme_id: e.target.value })}
+                placeholder="theme_xxxxxxxx"
+                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors mb-4 ${input}`}
+              />
+
+              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
+                Custom Template ID
+                <span className={`font-normal ml-1 ${subtler}`}>(optional)</span>
+              </label>
+              <input
+                value={settings.gamma_template_id}
+                onChange={(e) => setSettings({ ...settings, gamma_template_id: e.target.value })}
+                placeholder="Leave blank unless you have a custom deck structure"
+                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
+              />
+              <p className={`text-xs mt-2 ${subtler}`}>
+                Setting this replaces the entire deck layout with your custom structure — the Theme
+                ID above still controls its colors. Leave blank to use a normal generated layout
+                with just the theme applied.
+              </p>
+            </div>
+          )}
 
           <div className={`p-4 rounded-2xl border ${section}`}>
             <p className={`text-xs font-semibold mb-2 ${subtle}`}>
