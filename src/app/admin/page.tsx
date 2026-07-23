@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
-import { Search, ShieldAlert, Save, CheckCircle } from 'lucide-react'
+import { Search, ShieldAlert, Save, CheckCircle, UserCog } from 'lucide-react'
 
 interface FoundUser {
   userId: string
@@ -50,6 +50,7 @@ export default function AdminPage() {
   const [loadingAccount, setLoadingAccount] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [impersonating, setImpersonating] = useState(false)
 
   useEffect(() => {
     fetch('/api/admin/check')
@@ -109,6 +110,28 @@ export default function AdminPage() {
       setSearchError(err.message || 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleImpersonate = async () => {
+    if (!foundUser) return
+    setImpersonating(true)
+    try {
+      const res = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: foundUser.userId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to start impersonation')
+      // Full navigation, not a fetch-and-continue — this ends your own
+      // signed-in session on this tab and starts a new one as the target
+      // user (see the route's own comment for why there's no automatic
+      // way back to your admin session afterward).
+      window.location.href = data.url
+    } catch (err: any) {
+      setSearchError(err.message || 'Failed to start impersonation')
+      setImpersonating(false)
     }
   }
 
@@ -182,6 +205,18 @@ export default function AdminPage() {
                 this month
               </p>
             )}
+            <button
+              onClick={handleImpersonate}
+              disabled={impersonating}
+              className="mt-4 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-black text-xs font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
+            >
+              <UserCog size={13} /> {impersonating ? 'Starting…' : 'Act as This User'}
+            </button>
+            <p className={`text-[11px] mt-2 ${subtler}`}>
+              This signs you OUT of your own account and signs you in as them — it's a real browser
+              session swap, not a preview. To get back to your own account afterward, sign in again
+              as yourself. Free Clerk plans allow up to 5 of these per month.
+            </p>
           </div>
         )}
 
