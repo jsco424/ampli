@@ -113,7 +113,7 @@ export default function BrandSettingsPage() {
     if (!user) return
     fetch('/api/account-status')
       .then((res) => res.json())
-      .then((data) => setUserTier((data.tier || data.plan || null)?.toLowerCase() || null))
+      .then((data) => setUserTier((data.tier || null)?.toLowerCase() || null))
       .catch(() => setUserTier(null))
   }, [user])
 
@@ -185,8 +185,16 @@ export default function BrandSettingsPage() {
   // Everyone else's experience is completely unchanged — same full list,
   // same search, same filters, no gating on the browse-everything picker
   // itself, only on this additional shortlist.
-  const isBusinessTierOrAbove = userTier === 'business' || userTier === 'enterprise'
-  const isEnterpriseTier = userTier === 'enterprise'
+  // checkCreditLimit() (the source of userTier, via account-status) only
+  // ever returns 'free' | 'starter' | 'business' — Enterprise is
+  // sales-assisted, not self-serve credit-metered, so it was never given
+  // its own tier value here. That means a userTier === 'enterprise' check
+  // can NEVER be true — this is confirmed against creditLimit.ts's actual
+  // return type, not a guess. Business-tier gating below is real and
+  // correct; there is currently no reliable signal to gate an
+  // Enterprise-only section on, so the Custom Branding section further
+  // down is shown to everyone instead of gated — see its own comment.
+  const isBusinessTierOrAbove = userTier === 'business'
   const curatedThemes = themes.filter((t) => BUSINESS_CURATED_THEME_IDS.includes(t.id))
   const showRecommended = isBusinessTierOrAbove && curatedThemes.length > 0
 
@@ -523,45 +531,51 @@ export default function BrandSettingsPage() {
             )}
           </div>
 
-          {isEnterpriseTier && (
-            <div className={`p-5 rounded-2xl border ${card}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <Sparkles size={15} className="text-amber-400" />
-                <p className="font-semibold text-sm">Enterprise Custom Branding</p>
-              </div>
-              <p className={`text-xs mb-4 ${subtler}`}>
-                If your account rep gave you a Theme ID or Template ID (built from your own company
-                deck), paste it here directly — no need to hunt for it in the picker above. This
-                overrides whatever's selected there.
-              </p>
-
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
-                Custom Theme ID
-              </label>
-              <input
-                value={settings.gamma_theme_id}
-                onChange={(e) => setSettings({ ...settings, gamma_theme_id: e.target.value })}
-                placeholder="theme_xxxxxxxx"
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors mb-4 ${input}`}
-              />
-
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
-                Custom Template ID
-                <span className={`font-normal ml-1 ${subtler}`}>(optional)</span>
-              </label>
-              <input
-                value={settings.gamma_template_id}
-                onChange={(e) => setSettings({ ...settings, gamma_template_id: e.target.value })}
-                placeholder="Leave blank unless you have a custom deck structure"
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
-              />
-              <p className={`text-xs mt-2 ${subtler}`}>
-                Setting this replaces the entire deck layout with your custom structure — the Theme
-                ID above still controls its colors. Leave blank to use a normal generated layout
-                with just the theme applied.
-              </p>
+          {/* Not tier-gated — there's no reliable way to detect an
+              Enterprise account from userTier (see the comment above
+              isBusinessTierOrAbove). Safe to leave open to everyone since
+              this is a paste-in field with no default value and no effect
+              unless someone actually has a real ID to enter; a Free/Pro
+              user has nothing to gain by finding this. If a real
+              Enterprise signal becomes available later (a Clerk plan
+              slug, an account flag, whatever it turns out to be), gate
+              this the same way the Business Recommended section above
+              is gated. */}
+          <div className={`p-5 rounded-2xl border ${card}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <Sparkles size={15} className="text-amber-400" />
+              <p className="font-semibold text-sm">Custom Branding</p>
             </div>
-          )}
+            <p className={`text-xs mb-4 ${subtler}`}>
+              If your account rep gave you a Theme ID or Template ID (built from your own company
+              deck), paste it here directly — no need to hunt for it in the picker above. This
+              overrides whatever's selected there.
+            </p>
+
+            <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>Custom Theme ID</label>
+            <input
+              value={settings.gamma_theme_id}
+              onChange={(e) => setSettings({ ...settings, gamma_theme_id: e.target.value })}
+              placeholder="theme_xxxxxxxx"
+              className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors mb-4 ${input}`}
+            />
+
+            <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
+              Custom Template ID
+              <span className={`font-normal ml-1 ${subtler}`}>(optional)</span>
+            </label>
+            <input
+              value={settings.gamma_template_id}
+              onChange={(e) => setSettings({ ...settings, gamma_template_id: e.target.value })}
+              placeholder="Leave blank unless you have a custom deck structure"
+              className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
+            />
+            <p className={`text-xs mt-2 ${subtler}`}>
+              Setting this replaces the entire deck layout with your custom structure — the Theme ID
+              above still controls its colors. Leave blank to use a normal generated layout with
+              just the theme applied.
+            </p>
+          </div>
 
           <div className={`p-4 rounded-2xl border ${section}`}>
             <p className={`text-xs font-semibold mb-2 ${subtle}`}>
