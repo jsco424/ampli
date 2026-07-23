@@ -28,8 +28,12 @@ interface GammaTheme {
   id: string
   name: string
   type: 'standard' | 'custom'
-  colorKeywords: string[]
-  toneKeywords: string[]
+  // Optional — a deck-matched custom theme (created via Gamma's upload-and-
+  // match feature) may not come back with these populated the way a
+  // manually-tagged standard theme does. Every usage below guards against
+  // undefined rather than assuming these are always arrays.
+  colorKeywords?: string[]
+  toneKeywords?: string[]
 }
 
 const DEFAULT_SETTINGS: BrandSettings = {
@@ -64,8 +68,8 @@ const BUSINESS_CURATED_THEME_IDS: string[] = [
   // 'theme_xxxxxxxx',
 ]
 
-function swatchColorFromKeywords(keywords: string[]): string {
-  const k = keywords.map((w) => w.toLowerCase())
+function swatchColorFromKeywords(keywords: string[] | undefined | null): string {
+  const k = (keywords || []).map((w) => w.toLowerCase())
   if (k.some((w) => ['dark', 'black', 'carbon', 'onyx', 'night'].includes(w))) return '#1a1a2e'
   if (k.some((w) => ['navy', 'indigo', 'blue', 'royal blue'].includes(w))) return '#1e3a5f'
   if (k.some((w) => ['purple', 'violet', 'lavender'].includes(w))) return '#4c1d95'
@@ -185,8 +189,8 @@ export default function BrandSettingsPage() {
     const matchesSearch =
       !themeSearch ||
       t.name.toLowerCase().includes(themeSearch.toLowerCase()) ||
-      t.toneKeywords.some((k) => k.toLowerCase().includes(themeSearch.toLowerCase())) ||
-      t.colorKeywords.some((k) => k.toLowerCase().includes(themeSearch.toLowerCase()))
+      (t.toneKeywords || []).some((k) => k.toLowerCase().includes(themeSearch.toLowerCase())) ||
+      (t.colorKeywords || []).some((k) => k.toLowerCase().includes(themeSearch.toLowerCase()))
     const matchesFilter = themeFilter === 'all' || t.type === themeFilter
     return matchesSearch && matchesFilter
   })
@@ -364,7 +368,7 @@ export default function BrandSettingsPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold">{selectedTheme.name}</p>
                   <p className={`text-[11px] truncate ${subtler}`}>
-                    {selectedTheme.toneKeywords.slice(0, 4).join(', ')}
+                    {(selectedTheme.toneKeywords || []).slice(0, 4).join(', ')}
                   </p>
                 </div>
                 <CheckCircle2 size={15} className="text-blue-500 shrink-0" />
@@ -492,7 +496,7 @@ export default function BrandSettingsPage() {
                       <div className={`px-2.5 py-2 ${dark ? 'bg-zinc-800' : 'bg-white'}`}>
                         <p className="text-xs font-semibold truncate">{theme.name}</p>
                         <p className={`text-[10px] truncate mt-0.5 ${subtler}`}>
-                          {theme.toneKeywords.slice(0, 3).join(', ')}
+                          {(theme.toneKeywords || []).slice(0, 3).join(', ')}
                         </p>
                       </div>
                     </button>
