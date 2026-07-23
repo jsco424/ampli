@@ -49,7 +49,23 @@ export async function POST(req: Request) {
     // and signs in as the target user instead. There is no automatic
     // "return to your own admin session" afterward; see
     // ImpersonationBanner.tsx's comment for what stopping actually does.
-    return NextResponse.json({ url: data.url })
+    //
+    // A bare consume URL leaves Clerk with no way to know which domain to
+    // bounce back to once the sign-in completes — on a development
+    // instance especially, this shows Clerk's own "cannot redirect to
+    // your application" placeholder instead of landing you back in the
+    // app. Appending redirect_url fixes it, using the same domain
+    // fallback chain already established elsewhere in this app (the
+    // Crowd Insights opt-in fetch fix): explicit env var first, then
+    // Vercel's auto-populated deployment URL, then localhost for actual
+    // local dev only.
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+    const consumeUrl = new URL(data.url)
+    consumeUrl.searchParams.set('redirect_url', appUrl)
+
+    return NextResponse.json({ url: consumeUrl.toString() })
   } catch (err: any) {
     console.error('Impersonation request failed:', err)
     return NextResponse.json({ error: 'Request failed — see server logs' }, { status: 500 })
