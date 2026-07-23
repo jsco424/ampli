@@ -3,9 +3,16 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+// Service-role client — this is a server route with no window.Clerk session
+// to attach a token from, so the anon key this was previously using had no
+// auth context at all. Under RLS, every write below (crowd_insights
+// upserts, the projects.update() calls) was silently affecting zero rows —
+// same bug, same fix, as generate/route.ts and gamma/route.ts earlier this
+// project.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 const VALID_INDUSTRIES = [
