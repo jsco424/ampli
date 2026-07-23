@@ -374,16 +374,17 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
     .join(' ')
 
   // ── themeInstructions ─────────────────────────────────────────────────
-  // Separate from additionalInstructions — used by the route to select
-  // a theme. Currently a description string; swap for a themeId once
-  // a custom Gamma theme is created in the workspace.
-  //
-  // NOTE: this is exactly the mechanism the brand-color roadmap item
-  // depends on — a custom Gamma theme keyed by themeId gives exact hex
-  // color reproduction, while this description string only gets Gamma's
-  // closest interpretation. When that item gets built, the route should
-  // pass user_settings.gamma_theme_id as themeId when present, and only
-  // fall back to this description-based themeInstructions when it's not.
+  // NOTE (corrected): the real themeId mechanism this used to describe as
+  // future work is already built and live in gamma/route.ts — a three-tier
+  // resolution (brandSettings.gamma_theme_id exact match → closest-color
+  // standard theme match → TONE_THEME_MAP tone fallback), plus a separate
+  // gamma_template_id path for a fully custom-structured deck via Gamma's
+  // from-template endpoint. gamma/route.ts computes themeId entirely on
+  // its own and never actually reads this field — themeInstructions below
+  // is dead output at this point, kept only for backward compatibility
+  // with the GammaFormatterOutput type and any other caller that might
+  // still read it. Safe to remove in a future cleanup pass if nothing else
+  // turns out to depend on it.
   const themeInstructions = [
     'Clean, minimal, data-focused.',
     'Dark navy or white background preferred.',

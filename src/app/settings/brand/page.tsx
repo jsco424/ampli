@@ -14,6 +14,7 @@ import {
   RefreshCw,
   CheckCircle2,
   Image,
+  Star,
 } from 'lucide-react'
 
 interface BrandSettings {
@@ -53,6 +54,16 @@ const COLOR_PRESETS = [
   '#1a1a1a',
 ]
 
+// James's curated 5-10 Business-tier themeIds go here once he's picked them
+// in Gamma. Everyone (Free/Pro/Business/Enterprise) already has the full
+// open picker below regardless — this is purely an additional "Recommended"
+// shortlist surfaced above it for Business-tier accounts specifically.
+// Empty for now; the Recommended section simply doesn't render until this
+// has entries.
+const BUSINESS_CURATED_THEME_IDS: string[] = [
+  // 'theme_xxxxxxxx',
+]
+
 function swatchColorFromKeywords(keywords: string[]): string {
   const k = keywords.map((w) => w.toLowerCase())
   if (k.some((w) => ['dark', 'black', 'carbon', 'onyx', 'night'].includes(w))) return '#1a1a2e'
@@ -84,6 +95,21 @@ export default function BrandSettingsPage() {
   const [themesError, setThemesError] = useState<string | null>(null)
   const [themeSearch, setThemeSearch] = useState('')
   const [themeFilter, setThemeFilter] = useState<'all' | 'standard' | 'custom'>('all')
+
+  // TODO: confirm the actual field name against account-status/route.ts's
+  // real response — guessing `tier`/`plan` defensively for now. Gating a
+  // whole section on an unconfirmed field name is exactly the kind of thing
+  // that silently shows/hides for the wrong users, so don't ship this
+  // without checking it against the real route.
+  const [userTier, setUserTier] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user) return
+    fetch('/api/account-status')
+      .then((res) => res.json())
+      .then((data) => setUserTier((data.tier || data.plan || null)?.toLowerCase() || null))
+      .catch(() => setUserTier(null))
+  }, [user])
 
   useEffect(() => {
     if (!user) return
@@ -145,6 +171,15 @@ export default function BrandSettingsPage() {
   }
 
   const selectedTheme = themes.find((t) => t.id === settings.gamma_theme_id)
+
+  // Business-tier accounts (and above, so an Enterprise account still sees
+  // it too) get this pinned "Recommended" strip above the full picker.
+  // Everyone else's experience is completely unchanged — same full list,
+  // same search, same filters, no gating on the browse-everything picker
+  // itself, only on this additional shortlist.
+  const isBusinessTierOrAbove = userTier === 'business' || userTier === 'enterprise'
+  const curatedThemes = themes.filter((t) => BUSINESS_CURATED_THEME_IDS.includes(t.id))
+  const showRecommended = isBusinessTierOrAbove && curatedThemes.length > 0
 
   const filteredThemes = themes.filter((t) => {
     const matchesSearch =
@@ -333,6 +368,53 @@ export default function BrandSettingsPage() {
                   </p>
                 </div>
                 <CheckCircle2 size={15} className="text-blue-500 shrink-0" />
+              </div>
+            )}
+
+            {showRecommended && (
+              <div className="mb-4">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Star size={12} className="text-amber-400" />
+                  <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtle}`}>
+                    Recommended for Business
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {curatedThemes.map((theme) => {
+                    const isSelected = settings.gamma_theme_id === theme.id
+                    const swatchBg = swatchColorFromKeywords(theme.colorKeywords)
+                    const swatchText = swatchTextColor(swatchBg)
+                    return (
+                      <button
+                        key={theme.id}
+                        onClick={() => setSettings({ ...settings, gamma_theme_id: theme.id })}
+                        className={`text-left rounded-xl border overflow-hidden transition-all hover:scale-[1.02] ${
+                          isSelected
+                            ? 'border-amber-400 ring-1 ring-amber-400'
+                            : dark
+                              ? 'border-zinc-700 hover:border-zinc-600'
+                              : 'border-zinc-200 hover:border-zinc-300'
+                        }`}
+                      >
+                        <div
+                          className="h-10 w-full flex items-center justify-between px-2.5"
+                          style={{ background: swatchBg }}
+                        >
+                          <span
+                            className="text-[10px] font-bold tracking-wide"
+                            style={{ color: swatchText }}
+                          >
+                            Aa
+                          </span>
+                          {isSelected && <CheckCircle2 size={13} className="text-amber-400" />}
+                        </div>
+                        <div className={`px-2.5 py-2 ${dark ? 'bg-zinc-800' : 'bg-white'}`}>
+                          <p className="text-xs font-semibold truncate">{theme.name}</p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             )}
 
