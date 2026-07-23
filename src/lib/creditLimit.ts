@@ -45,7 +45,40 @@ export interface CreditLimitResult {
   isPaid: boolean
   // NEW — which specific tier, since isPaid alone can no longer
   // distinguish Starter from Business now that there are two paid tiers.
+  // NOTE: this only ever reflects the Clerk-plan-derived tier — there is
+  // no 'enterprise' value here. Enterprise is sales-assisted, has no Clerk
+  // plan of its own (confirmed against Clerk's actual Plans table), and is
+  // handled via the credit_limit_override below instead, layered on top
+  // of whatever Clerk tier the account happens to be manually assigned.
   tier: 'free' | 'starter' | 'business'
+}
+
+// Computes actual measured usage for ANY user_id this calendar month —
+// extracted as its own export so the admin dashboard can show a target
+// account's real usage without duplicating this logic. checkCreditLimit()
+// below is just this plus the current request's own auth context.
+export async function getCreditsUsedForUser(userId: string): Promise<number> {
+  const monthStart = new Date()
+  monthStart.setDate(1)
+  monthStart.setHours(0, 0, 0, 0)
+
+  // token_usage_log doesn't store user_id directly — join through projects.
+  const { data: userProjects } = await supabaseAdmin
+    .from('projects')
+    .select('id')
+    .eq('user_id', userId)
+
+  const projectIds = (userProjects || []).map((p) => p.id)
+  if (projectIds.length === 0) return 0
+
+  const { data: usageRows } = await supabaseAdmin
+    .from('token_usage_log')
+    .select('cost_usd')
+    .in('project_id', projectIds)
+    .gte('created_at', monthStart.toISOString())
+
+  const totalCostUsd = (usageRows || []).reduce((sum, row) => sum + Number(row.cost_usd), 0)
+  return Math.round(totalCostUsd * CREDITS_PER_DOLLAR)
 }
 
 // Checks the CURRENT request's authenticated user (via Clerk's own
@@ -79,36 +112,30 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
       ? 'starter'
       : 'free'
   const isPaid = tier !== 'free'
-  const creditsLimit =
+  const tierCreditsLimit =
     tier === 'business'
       ? BUSINESS_CREDIT_LIMIT
       : tier === 'starter'
         ? STARTER_CREDIT_LIMIT
         : FREE_CREDIT_LIMIT
 
-  const monthStart = new Date()
-  monthStart.setDate(1)
-  monthStart.setHours(0, 0, 0, 0)
-
-  // token_usage_log doesn't store user_id directly — join through projects.
-  const { data: userProjects } = await supabaseAdmin
-    .from('projects')
-    .select('id')
+  // Manual override, set via the internal admin dashboard — this is what
+  // lets an Enterprise account (comped onto the 'business' Clerk plan,
+  // since there's no 'enterprise' plan to assign) get a credit ceiling
+  // that actually matches their negotiated seat count instead of being
+  // silently capped at Business's flat 20,000. Also doubles as the lever
+  // for resolving a one-off billing dispute without touching Clerk at all.
+  // Checked AFTER computing the normal tier limit so `tier`/`isPaid` above
+  // still reflect the account's real Clerk plan for display purposes —
+  // only the numeric ceiling itself is ever swapped.
+  const { data: settingsRow } = await supabaseAdmin
+    .from('user_settings')
+    .select('credit_limit_override')
     .eq('user_id', userId)
+    .single()
+  const creditsLimit = settingsRow?.credit_limit_override ?? tierCreditsLimit
 
-  const projectIds = (userProjects || []).map((p) => p.id)
-  if (projectIds.length === 0) {
-    return { allowed: true, creditsUsed: 0, creditsLimit, isPaid, tier }
-  }
-
-  const { data: usageRows } = await supabaseAdmin
-    .from('token_usage_log')
-    .select('cost_usd')
-    .in('project_id', projectIds)
-    .gte('created_at', monthStart.toISOString())
-
-  const totalCostUsd = (usageRows || []).reduce((sum, row) => sum + Number(row.cost_usd), 0)
-  const creditsUsed = Math.round(totalCostUsd * CREDITS_PER_DOLLAR)
+  const creditsUsed = await getCreditsUsedForUser(userId)
 
   return {
     allowed: creditsUsed < creditsLimit,
