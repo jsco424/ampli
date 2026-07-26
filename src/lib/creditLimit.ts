@@ -1,5 +1,6 @@
-import { auth } from '@clerk/nextjs/server'
+import { auth, currentUser } from '@clerk/nextjs/server'
 import { createClient } from '@supabase/supabase-js'
+import { resolveBillingContext } from './seatResolution'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -36,6 +37,9 @@ const STARTER_PLAN_SLUG = 'starter'
 //   - PLAN SLUG — used for has({ plan: ... }) authorization checks, per
 //     every example in Clerk's own docs (e.g. has({ plan: 'bronze' }))
 // Confirmed against Clerk's dashboard (Plans → Plan Key column): 'business'.
+// Also the single gate for seat management — see seats/route.ts — which is
+// what lets an active seat-holder be treated as 'business' tier below
+// without ever needing to look up the owner's plan at request time.
 const BUSINESS_PLAN_SLUG = 'business'
 
 export interface CreditLimitResult {
@@ -53,11 +57,13 @@ export interface CreditLimitResult {
   tier: 'free' | 'starter' | 'business'
 }
 
-// Computes actual measured usage for ANY user_id this calendar month —
-// extracted as its own export so the admin dashboard can show a target
-// account's real usage without duplicating this logic. checkCreditLimit()
-// below is just this plus the current request's own auth context.
-export async function getCreditsUsedForUser(userId: string): Promise<number> {
+// Computes actual measured usage across an arbitrary set of user_ids this
+// calendar month — extracted so both the self-check below and a pooled
+// team of seat-holders can share the same calculation without duplicating
+// it. A single-user check is just this called with a one-element array.
+export async function getCreditsUsedForUsers(userIds: string[]): Promise<number> {
+  if (userIds.length === 0) return 0
+
   const monthStart = new Date()
   monthStart.setDate(1)
   monthStart.setHours(0, 0, 0, 0)
@@ -66,7 +72,7 @@ export async function getCreditsUsedForUser(userId: string): Promise<number> {
   const { data: userProjects } = await supabaseAdmin
     .from('projects')
     .select('id')
-    .eq('user_id', userId)
+    .in('user_id', userIds)
 
   const projectIds = (userProjects || []).map((p) => p.id)
   if (projectIds.length === 0) return 0
@@ -79,6 +85,17 @@ export async function getCreditsUsedForUser(userId: string): Promise<number> {
 
   const totalCostUsd = (usageRows || []).reduce((sum, row) => sum + Number(row.cost_usd), 0)
   return Math.round(totalCostUsd * CREDITS_PER_DOLLAR)
+}
+
+// Kept for any existing caller checking a single specific user (e.g. the
+// admin dashboard looking up one person) — thin wrapper around the pooled
+// version above with a one-element array. NOTE: this deliberately shows
+// only that one person's own usage, not their whole team's pooled total —
+// if the admin dashboard ever needs to show a seat-holder's real
+// team-wide figure, it should call resolveBillingContext() + this
+// function together, the same way checkCreditLimit() does below.
+export async function getCreditsUsedForUser(userId: string): Promise<number> {
+  return getCreditsUsedForUsers([userId])
 }
 
 // Checks the CURRENT request's authenticated user (via Clerk's own
@@ -101,10 +118,29 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
     }
   }
 
+  // Resolves seat membership — most users are their own owner
+  // (poolUserIds = [userId], isSeatHolder = false), unchanged from before
+  // this feature existed. A seat-holder invited under someone else's
+  // Business account instead pools usage with their whole team.
+  const user = await currentUser()
+  const email = user?.primaryEmailAddress?.emailAddress || null
+  const { ownerId, poolUserIds, isSeatHolder } = await resolveBillingContext(userId, email)
+
   // Checked highest tier first — someone on Business also technically
   // could pass a Starter check if Clerk plans are hierarchical, but
   // checking in priority order avoids ever relying on that assumption.
-  const isBusiness = has({ plan: BUSINESS_PLAN_SLUG })
+  //
+  // A seat-holder is deterministically 'business' tier with no further
+  // lookup needed — the ONLY way to become an active seat is if the owner
+  // passed the has({plan: 'business'}) check at invite time (see
+  // seats/route.ts's POST handler), so there's no need to call Clerk's
+  // still-Beta cross-user billing-subscription API here to confirm it
+  // again. KNOWN SIMPLIFICATION: if the owner later downgrades or cancels,
+  // existing seats aren't automatically revoked — this treats that as an
+  // acceptable gap for now rather than building revocation-on-downgrade
+  // logic before there's a real case that needs it, same posture as this
+  // app's other deliberate early-stage simplifications.
+  const isBusiness = isSeatHolder || has({ plan: BUSINESS_PLAN_SLUG })
   const isStarter = !isBusiness && has({ plan: STARTER_PLAN_SLUG })
   const tier: 'free' | 'starter' | 'business' = isBusiness
     ? 'business'
@@ -119,23 +155,23 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
         ? STARTER_CREDIT_LIMIT
         : FREE_CREDIT_LIMIT
 
-  // Manual override, set via the internal admin dashboard — this is what
-  // lets an Enterprise account (comped onto the 'business' Clerk plan,
-  // since there's no 'enterprise' plan to assign) get a credit ceiling
-  // that actually matches their negotiated seat count instead of being
-  // silently capped at Business's flat 20,000. Also doubles as the lever
-  // for resolving a one-off billing dispute without touching Clerk at all.
-  // Checked AFTER computing the normal tier limit so `tier`/`isPaid` above
-  // still reflect the account's real Clerk plan for display purposes —
-  // only the numeric ceiling itself is ever swapped.
+  // Manual override, set via the internal admin dashboard — read from the
+  // OWNER's row, not the current request's own user_settings, since this
+  // is a company-level override (a comped Enterprise seat allotment or a
+  // billing dispute resolution) that should apply the same way whether
+  // the owner themselves or one of their seat-holders is the one asking.
   const { data: settingsRow } = await supabaseAdmin
     .from('user_settings')
     .select('credit_limit_override')
-    .eq('user_id', userId)
+    .eq('user_id', ownerId)
     .single()
   const creditsLimit = settingsRow?.credit_limit_override ?? tierCreditsLimit
 
-  const creditsUsed = await getCreditsUsedForUser(userId)
+  // Pooled across the owner + every active seat-holder — a teammate's own
+  // generated projects count toward the same shared limit, matching the
+  // "credits are pooled per account" design decided when seat management
+  // was first scoped.
+  const creditsUsed = await getCreditsUsedForUsers(poolUserIds)
 
   return {
     allowed: creditsUsed < creditsLimit,
