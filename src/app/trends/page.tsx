@@ -293,6 +293,7 @@ export default function TrendsPage() {
   const [previousCategory, setPreviousCategory] = useState<string | null>(null)
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
+  const [researchedCompanyNames, setResearchedCompanyNames] = useState<Set<string> | null>(null)
 
   const [topics, setTopics] = useState<CompositeRow[]>([])
   const [signalsByKey, setSignalsByKey] = useState<Map<string, SignalRow>>(new Map())
@@ -350,6 +351,18 @@ export default function TrendsPage() {
         setCategoriesLoading(false)
       })
   }, [])
+
+  // Fetches once, the first time Companies view is opened — the set of
+  // company names that have actually been through the research step, used
+  // to filter the roster down to companies that can show real competitor
+  // data instead of including every on-demand-tracked company regardless.
+  useEffect(() => {
+    if (category !== 'company' || researchedCompanyNames !== null) return
+    fetch('/api/trends/researched-companies')
+      .then((res) => res.json())
+      .then((data) => setResearchedCompanyNames(new Set(data.names || [])))
+      .catch(() => setResearchedCompanyNames(new Set()))
+  }, [category, researchedCompanyNames])
 
   // Load current topics, latest per-source signals, and topic lifecycle
   // metadata (origin/discovered_at) for the selected category. Lifecycle
@@ -541,6 +554,18 @@ export default function TrendsPage() {
   // spans however many unrelated industries someone's actually researched.
   const isCompanyView = category === 'company'
 
+  // Only companies that have actually been through Company Research —
+  // per James's ask, a company sitting on the roster with no possible
+  // competitor data isn't adding much, and it made the list longer than
+  // it needed to be. researchedCompanyNames === null means the fetch
+  // hasn't resolved yet (handled as a loading state below), NOT "nothing
+  // matched" — an empty Set after a successful fetch is what actually
+  // means zero matches.
+  const researchedCompanies = useMemo(() => {
+    if (!researchedCompanyNames) return []
+    return scatterData.filter((d) => researchedCompanyNames.has(d.topic.toLowerCase().trim()))
+  }, [scatterData, researchedCompanyNames])
+
   // ── Token-based styles ────────────────────────────────────────────────
   const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
@@ -712,7 +737,7 @@ export default function TrendsPage() {
         )}
 
         {/* Quadrant matrix (keywords) or roster (companies) */}
-        {categoriesLoading || loading ? (
+        {categoriesLoading || loading || (isCompanyView && researchedCompanyNames === null) ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
@@ -723,12 +748,18 @@ export default function TrendsPage() {
               classifies today's trending terms.
             </p>
           </div>
-        ) : scatterData.length === 0 ? (
+        ) : isCompanyView && researchedCompanies.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
-              {isCompanyView
+              {scatterData.length === 0
                 ? "No companies tracked yet — they're added automatically the first time you run an analysis with a target company set."
-                : 'No data yet for this category — check back after the next daily refresh.'}
+                : 'None of your tracked companies have been through Company Research yet — this roster only shows companies with real competitor data available. Research a company on the home dashboard to add it here.'}
+            </p>
+          </div>
+        ) : !isCompanyView && scatterData.length === 0 ? (
+          <div className={`p-10 rounded-xl border text-center ${card}`}>
+            <p className={`text-sm ${muted}`}>
+              No data yet for this category — check back after the next daily refresh.
             </p>
           </div>
         ) : isCompanyView ? (
@@ -740,10 +771,12 @@ export default function TrendsPage() {
                 placeholder="Filter companies…"
                 className={`flex-1 px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${dark ? 'bg-white/[0.03] border-white/10 text-white placeholder-white/25' : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder-zinc-400'}`}
               />
-              <span className={`text-xs shrink-0 ${muted}`}>{scatterData.length} tracked</span>
+              <span className={`text-xs shrink-0 ${muted}`}>
+                {researchedCompanies.length} researched
+              </span>
             </div>
             <div className="space-y-2">
-              {scatterData
+              {researchedCompanies
                 .filter((d) => d.topic.toLowerCase().includes(companySearch.trim().toLowerCase()))
                 .slice()
                 .sort((a, b) => b.composite_score - a.composite_score)
@@ -770,11 +803,11 @@ export default function TrendsPage() {
                     </div>
                   </button>
                 ))}
-              {scatterData.filter((d) =>
+              {researchedCompanies.filter((d) =>
                 d.topic.toLowerCase().includes(companySearch.trim().toLowerCase())
               ).length === 0 && (
                 <p className={`text-xs text-center py-6 ${muted}`}>
-                  No tracked companies match "{companySearch}"
+                  No researched companies match "{companySearch}"
                 </p>
               )}
             </div>
