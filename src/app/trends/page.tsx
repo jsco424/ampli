@@ -36,6 +36,8 @@ import {
   Scale,
   Sparkles,
   Building2,
+  Link2,
+  Swords,
 } from 'lucide-react'
 import {
   LineChart,
@@ -300,8 +302,15 @@ export default function TrendsPage() {
   const [sparkline, setSparkline] = useState<CompositeRow[]>([])
   const [sourceBreakdown, setSourceBreakdown] = useState<SignalRow[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
+  const [relatedQueries, setRelatedQueries] = useState<{ query: string; value: number }[]>([])
+  const [relatedLoading, setRelatedLoading] = useState(false)
+  const [knownCompetitors, setKnownCompetitors] = useState<{ name: string; description: string }[]>(
+    []
+  )
+  const [competitorsLoading, setCompetitorsLoading] = useState(false)
 
   const [compareMode, setCompareMode] = useState(false)
+  const [companySearch, setCompanySearch] = useState('')
   const [compareSelection, setCompareSelection] = useState<string[]>([])
   const [comparisonData, setComparisonData] = useState<Record<string, any>[]>([])
   const [showComparison, setShowComparison] = useState(false)
@@ -409,6 +418,10 @@ export default function TrendsPage() {
   const openTopicDetail = (topic: string) => {
     setSelectedTopic(topic)
     setDetailLoading(true)
+    setRelatedLoading(true)
+    setRelatedQueries([])
+    setCompetitorsLoading(true)
+    setKnownCompetitors([])
 
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - 14)
@@ -433,6 +446,30 @@ export default function TrendsPage() {
       setSourceBreakdown(Array.from(bySource.values()))
       setDetailLoading(false)
     })
+
+    // Independent request, not part of the Promise.all above — related
+    // queries can be genuinely slow (a live Google Trends fetch on a cache
+    // miss involves two sequential requests) and shouldn't hold up the
+    // sparkline/source-breakdown section, which has its own faster,
+    // more reliable data source.
+    fetch(`/api/trends/related?topic=${encodeURIComponent(topic)}`)
+      .then((res) => res.json())
+      .then((data) => setRelatedQueries(data.related || []))
+      .catch(() => setRelatedQueries([]))
+      .finally(() => setRelatedLoading(false))
+
+    // Real, AI-derived competitor data from the home dashboard's Company
+    // Research tool — already built, already persisted in company_research
+    // whenever anyone researches a company (required before a project can
+    // target one). Matched by name, so this only populates for topics that
+    // happen to have been researched at some point; a company added purely
+    // via on-demand tracking without ever going through that research step
+    // just won't have a match, which is a correct empty state, not a bug.
+    fetch(`/api/trends/competitors?company=${encodeURIComponent(topic)}`)
+      .then((res) => res.json())
+      .then((data) => setKnownCompetitors(data.competitors || []))
+      .catch(() => setKnownCompetitors([]))
+      .finally(() => setCompetitorsLoading(false))
   }
 
   const toggleCompareSelection = (topic: string) => {
@@ -617,8 +654,11 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Category tabs — built entirely from availableCategories */}
-        {!categoriesLoading && availableCategories.length > 0 && !isCompanyView && (
+        {/* Category tabs — built entirely from availableCategories. Stays
+            visible even in Companies view (not gated on !isCompanyView) —
+            without this there was no way back to a keyword category once
+            you clicked Companies. */}
+        {!categoriesLoading && availableCategories.length > 0 && (
           <div
             className={`flex gap-1 mb-4 p-1 rounded-xl w-fit flex-wrap ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
           >
@@ -679,8 +719,18 @@ export default function TrendsPage() {
           </div>
         ) : isCompanyView ? (
           <div className={`p-4 rounded-xl border ${card}`}>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <input
+                value={companySearch}
+                onChange={(e) => setCompanySearch(e.target.value)}
+                placeholder="Filter companies…"
+                className={`flex-1 px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${dark ? 'bg-white/[0.03] border-white/10 text-white placeholder-white/25' : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder-zinc-400'}`}
+              />
+              <span className={`text-xs shrink-0 ${muted}`}>{scatterData.length} tracked</span>
+            </div>
             <div className="space-y-2">
               {scatterData
+                .filter((d) => d.topic.toLowerCase().includes(companySearch.trim().toLowerCase()))
                 .slice()
                 .sort((a, b) => b.composite_score - a.composite_score)
                 .map((d) => (
@@ -706,6 +756,13 @@ export default function TrendsPage() {
                     </div>
                   </button>
                 ))}
+              {scatterData.filter((d) =>
+                d.topic.toLowerCase().includes(companySearch.trim().toLowerCase())
+              ).length === 0 && (
+                <p className={`text-xs text-center py-6 ${muted}`}>
+                  No tracked companies match "{companySearch}"
+                </p>
+              )}
             </div>
           </div>
         ) : (
@@ -996,6 +1053,68 @@ export default function TrendsPage() {
                         ))
                       )}
                     </div>
+                  </div>
+
+                  {(competitorsLoading || knownCompetitors.length > 0) && (
+                    <div className="mt-5">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Swords size={11} className="text-red-400" />
+                        <p className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>
+                          Known Competitors
+                        </p>
+                      </div>
+                      <p className={`text-[11px] mb-2.5 ${muted}`}>
+                        From Company Research — AI-analyzed from {selectedTopic}'s own website, not
+                        inferred from search behavior.
+                      </p>
+                      {competitorsLoading ? (
+                        <p className={`text-xs ${muted}`}>Checking Company Research…</p>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {knownCompetitors.map((c) => (
+                            <div
+                              key={c.name}
+                              className={`p-2.5 rounded-lg border ${dark ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}
+                            >
+                              <p className="text-xs font-semibold">{c.name}</p>
+                              <p className={`text-[11px] mt-0.5 ${muted}`}>{c.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="mt-5">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Link2 size={11} className={muted} />
+                      <p className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>
+                        Related Searches
+                      </p>
+                    </div>
+                    <p className={`text-[11px] mb-2.5 ${muted}`}>
+                      What people actually search for alongside {selectedTopic} — a different signal
+                      from Known Competitors above (real public search behavior, not AI judgment),
+                      useful even when no formal research exists yet.
+                    </p>
+                    {relatedLoading ? (
+                      <p className={`text-xs ${muted}`}>Looking up related searches…</p>
+                    ) : relatedQueries.length === 0 ? (
+                      <p className={`text-xs ${muted}`}>Nothing found for this one yet.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {relatedQueries.map((r) => (
+                          <button
+                            key={r.query}
+                            onClick={() => openTopicDetail(r.query)}
+                            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${dark ? 'border-white/10 text-white/70 hover:bg-white/[0.05]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+                            title="Open this term's own detail panel"
+                          >
+                            {r.query}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </>
               )}

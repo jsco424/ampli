@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { fetchWikipediaToday } from '@/lib/trends/sources/wikipedia'
 import { fetchRedditToday } from '@/lib/trends/sources/reddit'
 import { fetchYoutubeToday } from '@/lib/trends/sources/youtube'
-import { fetchGoogleTrendsDaily, findTodayTraffic } from '@/lib/trends/sources/googleTrends'
+import { fetchInterestScore } from '@/lib/trends/sources/googleTrends'
 import { discoverNewTopics } from '@/lib/trends/discoverTopics'
 import { pruneStaleTopics } from '@/lib/trends/pruneTopics'
 import { normalizeSignal, type RawSignal, type NormalizedSignal } from '@/lib/trends/normalize'
@@ -51,12 +51,6 @@ export async function GET(req: Request) {
   } catch (err: any) {
     console.error('Topic discovery failed:', err.message)
   }
-
-  // Today's Google Trends list is fetched once for the whole run, not
-  // per topic — it's one shared feed that every active topic checks
-  // itself against (see findTodayTraffic below), unlike Wikipedia/YouTube
-  // which are genuinely per-topic queries.
-  const todaysGoogleTrends = await fetchGoogleTrendsDaily()
 
   const { data: topics, error: topicsError } = await supabaseAdmin
     .from('trend_topics')
@@ -117,15 +111,18 @@ export async function GET(req: Request) {
         fetchFn: () => fetchYoutubeToday(topic.youtube_query),
       })
     }
-    // Google Trends checks this topic against today's already-fetched
-    // trending list — a 0 here means "not in today's top trending
-    // searches," a legitimate reading, not a failure, so every active
-    // topic gets a signal row for this source every day (unlike the
-    // discovery feed itself, which only ever contributes brand new
-    // topics, not daily readings for existing ones).
+    // Real, term-specific Google Trends reading for this exact topic —
+    // replaces the old shared-daily-list membership check, which was
+    // near-permanently 0 for almost every tracked topic (the odds of any
+    // specific topic landing in Google's US-wide top-~20 list on a given
+    // day are close to zero, regardless of its real search interest).
+    // This is a genuine per-topic live call now, not a shared one-request
+    // check — meaningfully more request volume against Google's
+    // unofficial endpoint, confirmed as an accepted tradeoff before
+    // building this.
     sourcesToFetch.push({
       source: 'google_trends',
-      fetchFn: async () => findTodayTraffic(topic.topic, todaysGoogleTrends),
+      fetchFn: () => fetchInterestScore(topic.topic),
     })
 
     for (const { source, fetchFn } of sourcesToFetch) {
