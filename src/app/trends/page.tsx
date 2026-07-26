@@ -130,7 +130,7 @@ const RAW_UNIT_LABELS: Record<string, string> = {
   wikipedia: 'pageviews',
   reddit: 'posts',
   youtube: 'views',
-  google_trends: 'est. searches',
+  google_trends: 'interest index',
 }
 
 const SPIKE_THRESHOLD_PCT = 15
@@ -290,6 +290,7 @@ export default function TrendsPage() {
   const router = useRouter()
 
   const [category, setCategory] = useState<string | null>(null)
+  const [previousCategory, setPreviousCategory] = useState<string | null>(null)
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
 
@@ -571,7 +572,19 @@ export default function TrendsPage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => setCategory('company')}
+              onClick={() => {
+                if (isCompanyView) {
+                  setCategory(
+                    previousCategory ||
+                      (availableCategories.includes('auto')
+                        ? 'auto'
+                        : availableCategories[0] || null)
+                  )
+                } else {
+                  setPreviousCategory(category)
+                  setCategory('company')
+                }
+              }}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
                 isCompanyView
                   ? 'border-amber-500/50 bg-amber-500/10 text-amber-500'
@@ -654,11 +667,12 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Category tabs — built entirely from availableCategories. Stays
-            visible even in Companies view (not gated on !isCompanyView) —
-            without this there was no way back to a keyword category once
-            you clicked Companies. */}
-        {!categoriesLoading && availableCategories.length > 0 && (
+        {/* Category tabs — built entirely from availableCategories. Hidden
+            in Companies view (the Companies button itself toggles back to
+            the last keyword category — see previousCategory above), so
+            these don't sit alongside a company roster where they don't
+            apply. */}
+        {!categoriesLoading && availableCategories.length > 0 && !isCompanyView && (
           <div
             className={`flex gap-1 mb-4 p-1 rounded-xl w-fit flex-wrap ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
           >
@@ -1055,35 +1069,38 @@ export default function TrendsPage() {
                     </div>
                   </div>
 
-                  {(competitorsLoading || knownCompetitors.length > 0) && (
-                    <div className="mt-5">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <Swords size={11} className="text-red-400" />
-                        <p className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>
-                          Known Competitors
-                        </p>
-                      </div>
-                      <p className={`text-[11px] mb-2.5 ${muted}`}>
-                        From Company Research — AI-analyzed from {selectedTopic}'s own website, not
-                        inferred from search behavior.
+                  <div className="mt-5">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Swords size={11} className="text-red-400" />
+                      <p className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>
+                        Known Competitors
                       </p>
-                      {competitorsLoading ? (
-                        <p className={`text-xs ${muted}`}>Checking Company Research…</p>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {knownCompetitors.map((c) => (
-                            <div
-                              key={c.name}
-                              className={`p-2.5 rounded-lg border ${dark ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}
-                            >
-                              <p className="text-xs font-semibold">{c.name}</p>
-                              <p className={`text-[11px] mt-0.5 ${muted}`}>{c.description}</p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                     </div>
-                  )}
+                    <p className={`text-[11px] mb-2.5 ${muted}`}>
+                      From Company Research — AI-analyzed from {selectedTopic}'s own website, not
+                      inferred from search behavior.
+                    </p>
+                    {competitorsLoading ? (
+                      <p className={`text-xs ${muted}`}>Checking Company Research…</p>
+                    ) : knownCompetitors.length === 0 ? (
+                      <p className={`text-xs ${muted}`}>
+                        No match in Company Research — this company may not have gone through the
+                        home dashboard's research step yet.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {knownCompetitors.map((c) => (
+                          <div
+                            key={c.name}
+                            className={`p-2.5 rounded-lg border ${dark ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}
+                          >
+                            <p className="text-xs font-semibold">{c.name}</p>
+                            <p className={`text-[11px] mt-0.5 ${muted}`}>{c.description}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="mt-5">
                     <div className="flex items-center gap-1.5 mb-2">
