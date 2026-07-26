@@ -21,6 +21,33 @@ const PERSONAL_EMAIL_DOMAINS = new Set([
   'protonmail.com',
 ])
 
+// Explicit per-email override so specific test/internal accounts can see
+// Company Benchmarks populated even on a personal email domain, without
+// opening the exclusion up broadly. Comma-separated full addresses in
+// TEST_COMPANY_EMAILS, e.g. "james@gmail.com,gabriella@yahoo.com" — each
+// maps to its OWN private company key (test-company:<local-part>), so two
+// different people testing this never accidentally get pooled together
+// under one shared bucket, and this data can never be mistaken for a real
+// company's real benchmark data.
+//
+// Deliberately NOT gated by NODE_ENV, unlike devCompanyKeyOverride() below
+// — this is meant to work wherever you're actually signed in and testing,
+// including a deployed environment, not just local dev. Scoped narrowly to
+// an explicit allowlist of specific addresses, which is what makes that
+// safe to leave un-gated.
+const TEST_COMPANY_EMAILS = new Set(
+  (process.env.TEST_COMPANY_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+)
+
+function testCompanyKeyOverride(normalizedEmail: string): string | null {
+  if (!TEST_COMPANY_EMAILS.has(normalizedEmail)) return null
+  const localPart = normalizedEmail.split('@')[0]
+  return `test-company:${localPart}`
+}
+
 // Dev-only override so local testing doesn't require signing in with a real
 // company email domain. Set DEV_COMPANY_KEY in .env.local (e.g.
 // DEV_COMPANY_KEY=test-company.dev) to force every signed-in user to
@@ -41,7 +68,12 @@ export function deriveCompanyKey(email: string | null | undefined): string | nul
   if (devOverride) return devOverride
 
   if (!email || !email.includes('@')) return null
-  const domain = email.split('@')[1]?.toLowerCase().trim()
+  const normalizedEmail = email.toLowerCase().trim()
+
+  const testOverride = testCompanyKeyOverride(normalizedEmail)
+  if (testOverride) return testOverride
+
+  const domain = normalizedEmail.split('@')[1]?.trim()
   if (!domain || PERSONAL_EMAIL_DOMAINS.has(domain)) return null
   return domain
 }
