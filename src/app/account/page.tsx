@@ -5,7 +5,7 @@ import { useUser, useClerk } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
-import { CreditCard, Zap, HelpCircle, ExternalLink, Sparkles } from 'lucide-react'
+import { CreditCard, Zap, HelpCircle, ExternalLink, Sparkles, Users } from 'lucide-react'
 import Link from 'next/link'
 
 interface AccountStatus {
@@ -14,6 +14,10 @@ interface AccountStatus {
   creditsLimit: number
   isPaid: boolean
   tier: 'free' | 'starter' | 'business'
+  // Flows through from checkCreditLimit() unchanged — true only for an
+  // invited teammate using a seat under someone else's Business account,
+  // never for the actual paying/comped owner.
+  isSeatHolder: boolean
 }
 
 export default function AccountPage() {
@@ -102,6 +106,38 @@ export default function AccountPage() {
                 </Link>
               )}
             </div>
+
+            {/* Team — Business tier only. Whether this shows "Manage
+                Seats" or a restricted message depends entirely on
+                isSeatHolder, which flows through from checkCreditLimit()
+                — the same gate the Navbar's Manage Team icon already
+                uses, kept consistent here rather than re-derived. */}
+            {status?.tier === 'business' && (
+              <div className={`p-6 rounded-2xl border ${card}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Users size={16} className="text-blue-400" />
+                  <p className="font-semibold">Team</p>
+                </div>
+                {status.isSeatHolder ? (
+                  <p className={`text-sm ${muted}`}>
+                    Only the primary account holder can manage seats for this Business plan.
+                  </p>
+                ) : (
+                  <>
+                    <p className={`text-sm mb-4 ${muted}`}>
+                      Add teammates by email — they'll share this plan and credit pool
+                      automatically, no separate subscription needed.
+                    </p>
+                    <Link
+                      href="/account/seats"
+                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
+                    >
+                      Manage Seats
+                    </Link>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Credit usage */}
             <div className={`p-6 rounded-2xl border ${card}`}>
