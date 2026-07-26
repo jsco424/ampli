@@ -30,6 +30,13 @@ export interface CompanyTrendResult {
 // to let the tracked-topic list grow organically rather than staying
 // purely ephemeral per-deck.
 //
+// topic_origin is explicitly 'company_tracked' — NOT left to fall through
+// to the column's 'seed' default. That default-fallthrough was a real
+// data-quality bug: every company ever tracked this way was silently
+// showing up labeled 'seed' in trend_topics, indistinguishable from an
+// actually hand-curated keyword. Existing rows aren't retroactively fixed
+// by this change alone — see the accompanying one-time SQL to relabel them.
+//
 // wikipedia_article is a best-effort transform (spaces -> underscores),
 // not a curated exact match the way seedTopics.ts's entries are. A 404
 // from Wikipedia is handled gracefully upstream (returns 0, not a throw),
@@ -52,6 +59,7 @@ export async function fetchCompanyTrendOnDemand(
       reddit_query: null,
       active: true,
       added_via_project_id: projectId,
+      topic_origin: 'company_tracked',
     },
     { onConflict: 'topic' }
   )

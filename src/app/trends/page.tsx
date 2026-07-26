@@ -35,6 +35,7 @@ import {
   Zap,
   Scale,
   Sparkles,
+  Building2,
 } from 'lucide-react'
 import {
   LineChart,
@@ -79,6 +80,7 @@ const CATEGORY_LABELS: Partial<Record<string, string>> = {
   home_improvement: 'Home Improvement',
   entertainment: 'Entertainment',
   outdoors: 'Outdoors',
+  company: 'Companies',
 }
 
 const CATEGORY_ICONS: Partial<Record<string, any>> = {
@@ -313,6 +315,12 @@ export default function TrendsPage() {
   // active topics — no hardcoded list of "supported" categories. A category
   // only appears once something real has been classified into it; the tab
   // bar grows or shrinks on its own as the tracked topic pool changes.
+  //
+  // 'company' is deliberately excluded from this list — tracked companies
+  // aren't a trending-keyword category, they're a research roster (see
+  // isCompanyView below), and get their own separate button rather than
+  // sitting in this pill group where they'd read as "just another topic
+  // area" alongside Auto/Finance/etc.
   useEffect(() => {
     supabase
       .from('trend_topics')
@@ -321,10 +329,12 @@ export default function TrendsPage() {
       .then(({ data }) => {
         const distinct = Array.from(
           new Set(((data as any[]) || []).map((r) => r.category as string))
-        ).sort()
+        )
+          .filter((c) => c !== 'company')
+          .sort()
         setAvailableCategories(distinct)
         setCategory((prev) => {
-          if (prev && distinct.includes(prev)) return prev
+          if (prev && (distinct.includes(prev) || prev === 'company')) return prev
           return distinct.includes('auto') ? 'auto' : distinct[0] || null
         })
         setCategoriesLoading(false)
@@ -486,6 +496,13 @@ export default function TrendsPage() {
     [topics, medianScore, topicMeta]
   )
 
+  // Companies get a roster, not a quadrant — plotting Teads against Apple
+  // against Stop & Shop on shared interest/momentum axes isn't a real
+  // comparison just because they all happen to be tracked. The quadrant's
+  // median-split logic assumes one coherent topic area; a company roster
+  // spans however many unrelated industries someone's actually researched.
+  const isCompanyView = category === 'company'
+
   // ── Token-based styles ────────────────────────────────────────────────
   const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
@@ -515,24 +532,39 @@ export default function TrendsPage() {
               and retired once they go cold.
             </p>
           </div>
-          {!categoriesLoading && availableCategories.length > 0 && (
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => {
-                setCompareMode(!compareMode)
-                setCompareSelection([])
-              }}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors shrink-0 ${
-                compareMode
-                  ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
+              onClick={() => setCategory('company')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                isCompanyView
+                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-500'
                   : dark
                     ? 'border-white/[0.08] text-white/50 hover:bg-white/[0.04]'
                     : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
               }`}
             >
-              <Scale size={13} />
-              {compareMode ? 'Cancel Compare' : 'Compare Topics'}
+              <Building2 size={13} />
+              Companies
             </button>
-          )}
+            {!categoriesLoading && availableCategories.length > 0 && !isCompanyView && (
+              <button
+                onClick={() => {
+                  setCompareMode(!compareMode)
+                  setCompareSelection([])
+                }}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                  compareMode
+                    ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
+                    : dark
+                      ? 'border-white/[0.08] text-white/50 hover:bg-white/[0.04]'
+                      : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+                }`}
+              >
+                <Scale size={13} />
+                {compareMode ? 'Cancel Compare' : 'Compare Topics'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Info banner */}
@@ -543,13 +575,27 @@ export default function TrendsPage() {
           <p
             className={`text-xs leading-relaxed ${dark ? 'text-blue-200/70' : 'text-blue-900/70'}`}
           >
-            Each dot is one topic. Horizontal position is current interest level relative to today's
-            mix (dashed line marks the median); vertical position is momentum vs. last week.
-            Composite scores reflect Wikipedia, YouTube, and Google Trends; Reddit is pending
-            approval. Topics marked <Sparkles size={10} className="inline mx-0.5" />
-            New were surfaced from real trending searches in the last {NEW_TOPIC_WINDOW_DAYS} days.
-            Category tabs themselves only appear once real activity has been classified into them —
-            there's no fixed list of supported categories.
+            {isCompanyView ? (
+              <>
+                Companies you've researched through an analysis, tracked individually — sorted by
+                current interest level, not plotted against each other, since companies from
+                unrelated industries have nothing meaningful to be compared on. Click any company
+                for its own history, or use Compare below to overlay a few you actually want side by
+                side.
+              </>
+            ) : (
+              <>
+                Each dot is one topic. Horizontal position is current interest level relative to
+                today's mix (dashed line marks the median); vertical position is momentum vs. last
+                week. Composite scores reflect Wikipedia, YouTube, and Google Trends; Reddit is
+                pending approval. Topics marked <Sparkles size={10} className="inline mx-0.5" />
+                New were surfaced from real trending searches in the last {
+                  NEW_TOPIC_WINDOW_DAYS
+                }{' '}
+                days. Category tabs themselves only appear once real activity has been classified
+                into them — there's no fixed list of supported categories.
+              </>
+            )}
           </p>
         </div>
 
@@ -572,7 +618,7 @@ export default function TrendsPage() {
         )}
 
         {/* Category tabs — built entirely from availableCategories */}
-        {!categoriesLoading && availableCategories.length > 0 && (
+        {!categoriesLoading && availableCategories.length > 0 && !isCompanyView && (
           <div
             className={`flex gap-1 mb-4 p-1 rounded-xl w-fit flex-wrap ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
           >
@@ -611,12 +657,12 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Quadrant matrix */}
+        {/* Quadrant matrix (keywords) or roster (companies) */}
         {categoriesLoading || loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : availableCategories.length === 0 ? (
+        ) : !isCompanyView && availableCategories.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
               No categories have active data yet — check back after the next daily refresh runs and
@@ -626,8 +672,41 @@ export default function TrendsPage() {
         ) : scatterData.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
-              No data yet for this category — check back after the next daily refresh.
+              {isCompanyView
+                ? "No companies tracked yet — they're added automatically the first time you run an analysis with a target company set."
+                : 'No data yet for this category — check back after the next daily refresh.'}
             </p>
+          </div>
+        ) : isCompanyView ? (
+          <div className={`p-4 rounded-xl border ${card}`}>
+            <div className="space-y-2">
+              {scatterData
+                .slice()
+                .sort((a, b) => b.composite_score - a.composite_score)
+                .map((d) => (
+                  <button
+                    key={d.topic}
+                    onClick={() => openTopicDetail(d.topic)}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-left transition-colors hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${card}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {d.isNew && <Sparkles size={12} className="text-blue-400 shrink-0" />}
+                      <span className="text-sm font-medium truncate">{d.topic}</span>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-lg font-bold">{d.composite_score}</span>
+                      <span
+                        className={`flex items-center gap-1 text-xs font-medium w-16 ${deltaColor(d.delta_vs_prior)}`}
+                      >
+                        <TrendArrow delta={d.delta_vs_prior} />
+                        {d.delta_vs_prior !== null
+                          ? `${d.delta_vs_prior > 0 ? '+' : ''}${d.delta_vs_prior}%`
+                          : 'new'}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+            </div>
           </div>
         ) : (
           <div className={`relative p-4 rounded-xl border ${card}`}>
