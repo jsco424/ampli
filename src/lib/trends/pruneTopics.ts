@@ -68,31 +68,3 @@ export async function pruneStaleTopics(): Promise<PruneResult> {
 
   return { checked: (candidates || []).length, retired }
 }
-
-  const retired: string[] = []
-
-  for (const row of candidates || []) {
-    const { data: recent } = await supabaseAdmin
-      .from('trend_composite')
-      .select('composite_score, as_of')
-      .eq('topic', row.topic)
-      .order('as_of', { ascending: false })
-      .limit(COLD_STREAK_DAYS)
-
-    if (!recent || recent.length < COLD_STREAK_DAYS) continue // not enough history yet
-    // composite_score can come back as a numeric-typed JSON string (see
-    // trends/page.tsx's toCompositeRow for the confirming example) —
-    // coerced here so this is a real numeric comparison.
-    const allCold = recent.every((r: any) => Number(r.composite_score) < COLD_SCORE_THRESHOLD)
-    if (!allCold) continue
-
-    await supabaseAdmin
-      .from('trend_topics')
-      .update({ active: false, last_active_at: recent[0].as_of })
-      .eq('topic', row.topic)
-
-    retired.push(row.topic)
-  }
-
-  return { checked: (candidates || []).length, retired }
-}
