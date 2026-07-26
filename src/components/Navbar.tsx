@@ -2,10 +2,10 @@
 
 import { UserButton } from '@clerk/nextjs'
 import { useTheme } from '@/hooks/useTheme'
-import { Moon, Sun, Menu, X, UploadCloud, Palette, CreditCard } from 'lucide-react'
+import { Moon, Sun, Menu, X, UploadCloud, Palette, CreditCard, Users } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const NAV_LINKS = [
   { label: 'Dashboard', href: '/dashboard' },
@@ -26,6 +26,20 @@ export default function Navbar() {
   const { dark, toggle } = useTheme()
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Gates the "Manage Team" link — only a real account owner (self-paid
+  // Business, or manually comped Enterprise) should see this, not a
+  // teammate who was invited as a seat under someone else's account.
+  // isSeatHolder comes straight through from checkCreditLimit() via
+  // /api/account-status with no route change needed there.
+  const [isBusinessOwner, setIsBusinessOwner] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/account-status')
+      .then((res) => res.json())
+      .then((data) => setIsBusinessOwner(data.tier === 'business' && !data.isSeatHolder))
+      .catch(() => setIsBusinessOwner(false))
+  }, [])
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard'
@@ -101,6 +115,21 @@ export default function Navbar() {
             className={`hidden md:block w-px h-5 mx-1 ${dark ? 'bg-white/10' : 'bg-zinc-200'}`}
           />
 
+          {/* Manage Team — only shown to an actual account owner, not a
+              teammate using a seat under someone else's Business account.
+              Deliberately absent for everyone else rather than shown
+              disabled, since it's not relevant to them at all. */}
+          {isBusinessOwner && (
+            <Link
+              href="/account/seats"
+              title="Manage Team"
+              className={`p-1.5 rounded-lg transition-colors
+                ${dark ? 'text-white/35 hover:text-white/70 hover:bg-white/6' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
+            >
+              <Users size={15} />
+            </Link>
+          )}
+
           {/* Brand settings */}
           <Link
             href="/settings/brand"
@@ -170,6 +199,25 @@ export default function Navbar() {
                 {link.label}
               </Link>
             ))}
+            {isBusinessOwner && (
+              <Link
+                href="/account/seats"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors
+                  ${
+                    isActive('/account/seats')
+                      ? dark
+                        ? 'text-white bg-white/8'
+                        : 'text-zinc-900 bg-zinc-100'
+                      : dark
+                        ? 'text-white/45 hover:text-white/80 hover:bg-white/5'
+                        : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50'
+                  }`}
+              >
+                <Users size={14} />
+                Manage Team
+              </Link>
+            )}
             <Link
               href="/projects/new"
               onClick={() => setMobileOpen(false)}

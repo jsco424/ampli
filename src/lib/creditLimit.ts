@@ -55,6 +55,13 @@ export interface CreditLimitResult {
   // handled via the credit_limit_override below instead, layered on top
   // of whatever Clerk tier the account happens to be manually assigned.
   tier: 'free' | 'starter' | 'business'
+  // NEW — whether this account is an active seat under someone else's
+  // Business account, as opposed to being its own owner (whether by
+  // personally paying, or being manually comped for Enterprise). Needed
+  // so a "Manage Team" nav link can be shown only to actual owners, not
+  // to seat-holders who share the same tier but shouldn't get seat
+  // management powers over an account they don't own.
+  isSeatHolder: boolean
 }
 
 // Computes actual measured usage across an arbitrary set of user_ids this
@@ -115,6 +122,7 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
       creditsLimit: FREE_CREDIT_LIMIT,
       isPaid: false,
       tier: 'free',
+      isSeatHolder: false,
     }
   }
 
@@ -179,5 +187,6 @@ export async function checkCreditLimit(): Promise<CreditLimitResult> {
     creditsLimit,
     isPaid,
     tier,
+    isSeatHolder,
   }
 }
