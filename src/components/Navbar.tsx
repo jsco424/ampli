@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { label: 'Projects', href: '/projects' },
   { label: 'Intelligence', href: '/intelligence' },
   { label: 'Research', href: '/dashboard#research' },
+  { label: 'About', href: '/about' },
   { label: 'Pricing', href: '/pricing' },
 ]
 
