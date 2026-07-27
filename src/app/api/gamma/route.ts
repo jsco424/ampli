@@ -40,14 +40,33 @@ const GAMMA_API_BASE = 'https://public-api.gamma.app/v1.0'
 const POLL_INTERVAL_MS = 3000
 const POLL_MAX_ATTEMPTS = 40
 
-// Maps ampli tone → Gamma theme ID.
-// Override any of these in .env.local if you want to swap themes later.
-// Find available theme IDs: GET /v1.0/themes with your X-API-KEY header.
+// Maps ampli tone → Gamma theme ID. All three tones share ampli's own
+// real custom theme (tm98hrco10qdq76) — per the agreed plan, there's one
+// shared default look for everyone, not a different theme per tone. Kept
+// as a per-tone map rather than a single constant so a future decision to
+// differentiate by tone is still just an env var away, with no code
+// change needed. This was previously three generic Gamma placeholder
+// themes ('default-dark'/'default-light'/'gold-leaf') — anyone who
+// reached this fallback tier (no picked theme, no closest-color match)
+// was getting a generic Gamma look, not ampli's actual brand, until now.
 const TONE_THEME_MAP: Record<string, string> = {
-  executive: process.env.GAMMA_THEME_EXECUTIVE || 'default-dark',
-  analytical: process.env.GAMMA_THEME_ANALYTICAL || 'default-light',
-  educational: process.env.GAMMA_THEME_EDUCATIONAL || 'gold-leaf',
-} // ~2 minutes max
+  executive: process.env.GAMMA_THEME_EXECUTIVE || 'tm98hrco10qdq76',
+  analytical: process.env.GAMMA_THEME_ANALYTICAL || 'tm98hrco10qdq76',
+  educational: process.env.GAMMA_THEME_EDUCATIONAL || 'tm98hrco10qdq76',
+}
+
+// Platform-wide default template — deliberately null. A template locks
+// deck structure to a fixed set of slide slots regardless of how much
+// content a project actually selected (unlike a theme, which only changes
+// colors/fonts and never touches structure at all). Defaulting everyone
+// into that tradeoff was the wrong call — templates should stay an
+// explicit, rare opt-in (via gamma_template_id in Brand Settings) for an
+// account that specifically wants a fixed custom structure and accepts
+// the flexibility loss, not something applied platform-wide. The
+// gammaId g_652b7ehg3au6c7h James provided is still perfectly usable —
+// just set it on a specific account's gamma_template_id when that
+// tradeoff is actually wanted, rather than as a blanket default here.
+const DEFAULT_TEMPLATE_ID = process.env.GAMMA_DEFAULT_TEMPLATE_ID || null
 
 // ── Closest-theme color matching (Tier 2 fallback) ──────────────────────
 // Gamma's themes API returns colorKeywords as words ("blue", "gradient"),
@@ -306,15 +325,21 @@ export async function POST(req: Request) {
     const matched = resolvedPrimaryColor
       ? await findClosestThemeByColor(resolvedPrimaryColor, apiKey)
       : null
-    themeId = matched || TONE_THEME_MAP[project.tone || 'executive'] || 'default-dark'
+    // 'tm98hrco10qdq76' here is the same real ampli theme as
+    // TONE_THEME_MAP's own values — this only ever fires if project.tone
+    // somehow holds a value outside the three known tones, a defensive
+    // edge case rather than a real fallback tier.
+    themeId = matched || TONE_THEME_MAP[project.tone || 'executive'] || 'tm98hrco10qdq76'
   }
 
   // Template selection takes priority over theme-only generation — if the
-  // client has picked a saved template (built manually via a "Request a
-  // Custom Look" request), export through /generations/from-template
-  // instead, which uses that template's exact layout/design rather than
-  // letting Gamma build the layout automatically from a theme + outline.
-  const selectedTemplateId = brandSettings?.gamma_template_id || null
+  // client has picked their own saved template, use that. DEFAULT_TEMPLATE_ID
+  // is null by default (see its own comment above), so almost every account
+  // falls through to theme-based from-scratch generation below, which is
+  // what keeps deck structure flexing with whatever a project's
+  // SlideSelector selection actually contains, rather than locked to a
+  // fixed template layout. Templates stay an explicit, rare opt-in.
+  const selectedTemplateId = brandSettings?.gamma_template_id || DEFAULT_TEMPLATE_ID
 
   let gammaBody: Record<string, any>
   let generationEndpoint: string
