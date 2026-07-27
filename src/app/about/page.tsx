@@ -297,7 +297,7 @@ export default function AboutPage() {
             {PILLARS.map((p, i) => {
               const Icon = p.icon
               const accent = ACCENT_STYLES[p.accent]
-              const isWide = i === 3
+              const isWide = i === 4
               return (
                 <div
                   key={i}
