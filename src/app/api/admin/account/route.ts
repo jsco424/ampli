@@ -20,7 +20,6 @@ const EDITABLE_FIELDS = [
   'brand_primary_color',
   'brand_logo_url',
   'gamma_theme_id',
-  'gamma_template_id',
   'credit_limit_override',
 ] as const
 
@@ -38,7 +37,7 @@ export async function GET(req: Request) {
   const { data: settings } = await supabaseAdmin
     .from('user_settings')
     .select(
-      'brand_name, brand_primary_color, brand_logo_url, gamma_theme_id, gamma_template_id, credit_limit_override'
+      'brand_name, brand_primary_color, brand_logo_url, gamma_theme_id, credit_limit_override'
     )
     .eq('user_id', userId)
     .single()

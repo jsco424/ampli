@@ -17,7 +17,6 @@ interface AccountData {
   brand_primary_color: string
   brand_logo_url: string
   gamma_theme_id: string
-  gamma_template_id: string
   credit_limit_override: number | null
 }
 
@@ -26,7 +25,6 @@ const EMPTY_ACCOUNT: AccountData = {
   brand_primary_color: '',
   brand_logo_url: '',
   gamma_theme_id: '',
-  gamma_template_id: '',
   credit_limit_override: null,
 }
 
@@ -254,19 +252,6 @@ export default function AdminPage() {
                 value={account.gamma_theme_id}
                 onChange={(e) => setAccount({ ...account, gamma_theme_id: e.target.value })}
                 placeholder="theme_xxxxxxxx"
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
-              />
-            </div>
-
-            <div>
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
-                Gamma Template ID
-                <span className={`ml-1 font-normal ${subtler}`}>(optional)</span>
-              </label>
-              <input
-                value={account.gamma_template_id}
-                onChange={(e) => setAccount({ ...account, gamma_template_id: e.target.value })}
-                placeholder="Leave blank unless they have a custom deck structure"
                 className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
               />
             </div>

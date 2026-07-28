@@ -40,33 +40,16 @@ const GAMMA_API_BASE = 'https://public-api.gamma.app/v1.0'
 const POLL_INTERVAL_MS = 3000
 const POLL_MAX_ATTEMPTS = 40
 
-// Maps ampli tone → Gamma theme ID. All three tones share ampli's own
-// real custom theme (tm98hrco10qdq76) — per the agreed plan, there's one
-// shared default look for everyone, not a different theme per tone. Kept
-// as a per-tone map rather than a single constant so a future decision to
-// differentiate by tone is still just an env var away, with no code
-// change needed. This was previously three generic Gamma placeholder
-// themes ('default-dark'/'default-light'/'gold-leaf') — anyone who
-// reached this fallback tier (no picked theme, no closest-color match)
-// was getting a generic Gamma look, not ampli's actual brand, until now.
+// Maps ampli tone → Gamma theme ID. All three tones share ampli's own real
+// custom theme (tm98hrco10qdq76) — one shared default look for everyone,
+// not a different theme per tone. Kept as a per-tone map rather than a
+// single constant so a future decision to differentiate by tone is still
+// just an env var away, with no code change needed.
 const TONE_THEME_MAP: Record<string, string> = {
   executive: process.env.GAMMA_THEME_EXECUTIVE || 'tm98hrco10qdq76',
   analytical: process.env.GAMMA_THEME_ANALYTICAL || 'tm98hrco10qdq76',
   educational: process.env.GAMMA_THEME_EDUCATIONAL || 'tm98hrco10qdq76',
 }
-
-// Platform-wide default template — deliberately null. A template locks
-// deck structure to a fixed set of slide slots regardless of how much
-// content a project actually selected (unlike a theme, which only changes
-// colors/fonts and never touches structure at all). Defaulting everyone
-// into that tradeoff was the wrong call — templates should stay an
-// explicit, rare opt-in (via gamma_template_id in Brand Settings) for an
-// account that specifically wants a fixed custom structure and accepts
-// the flexibility loss, not something applied platform-wide. The
-// gammaId g_652b7ehg3au6c7h James provided is still perfectly usable —
-// just set it on a specific account's gamma_template_id when that
-// tradeoff is actually wanted, rather than as a blanket default here.
-const DEFAULT_TEMPLATE_ID = process.env.GAMMA_DEFAULT_TEMPLATE_ID || null
 
 // ── Closest-theme color matching (Tier 2 fallback) ──────────────────────
 // Gamma's themes API returns colorKeywords as words ("blue", "gradient"),
@@ -256,14 +239,16 @@ export async function POST(req: Request) {
   // Fetch user brand settings separately — brand belongs to the user,
   // not the project. Falls back gracefully if not set.
   //
-  // NOTE: this was previously fetched but never actually read anywhere
-  // below — primaryColor/logoUrl were pulled from `project.*` instead,
-  // which may not reflect what the user actually set in Brand Settings.
-  // Now used directly, with project fields kept only as a fallback for
-  // any older data that predates this fix.
+  // gamma_template_id intentionally no longer selected here — templates
+  // are fully retired as of this pass. A theme confirmed to carry a
+  // user's chosen color all the way through export, which is what settled
+  // this: themes alone give real brand control without the fixed-
+  // structure tradeoff a template forces. The gamma_template_id column
+  // itself is left alone in the DB (harmless, unused), just no longer
+  // read or acted on anywhere in this route.
   const { data: brandSettings } = await supabase
     .from('user_settings')
-    .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id, gamma_template_id')
+    .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
     .eq('user_id', project.user_id)
     .single()
 
@@ -284,25 +269,10 @@ export async function POST(req: Request) {
   const formatted = formatForGamma({
     confirmedAnalysis: handoff.confirmedAnalysis,
     selectedFindings: handoff.selectedFindings || [],
-    // This was missing entirely before — without it, gammaFormatter.ts
-    // always fell through to its suggestedFollowUps fallback (the
-    // analytical "ask me to..." follow-up questions from /api/analyze),
-    // even on projects where real AI-generated recommendations existed
-    // in the database the whole time.
     projectRecommendations: project.recommendations || [],
     projectName: project.name || project.pitch_title || 'Untitled',
     tone: project.tone || 'executive',
     targetCompany: project.target_company || null,
-    // target_audience is the full tailoring object ({role, seniority,
-    // cares_about, narrative_style, avoid}) since the jsonb migration —
-    // but formatForGamma's targetAudience param is a much simpler concept:
-    // a brief string description for Gamma's own textOptions.audience API
-    // field (e.g. "CMO"), not our rich internal tailoring structure. This
-    // is the third regression from that migration (after the two React
-    // error #31 spots earlier) — passing the raw object here meant Gamma's
-    // API rejected the request outright: "textOptions.audience must be a
-    // string". Extracting just .role restores the pre-migration behavior,
-    // where target_audience was already just this same string.
     targetAudience: project.target_audience?.role || null,
     primaryColor: resolvedPrimaryColor,
     logoUrl: resolvedLogoUrl,
@@ -312,12 +282,12 @@ export async function POST(req: Request) {
   //   1. User's own custom Gamma theme (exact color match, set up once
   //      in Brand Settings) — the only path that guarantees pixel-exact
   //      brand color, since Gamma's generation API has no raw hex-code
-  //      parameter, only themeId.
+  //      parameter, only themeId. Confirmed working end to end.
   //   2. Closest standard Gamma theme by color keyword — approximate,
   //      but works with zero setup for anyone who hasn't configured a
   //      custom theme yet.
-  //   3. The original tone-based fallback, if the color-match lookup
-  //      itself fails for any reason (network error, no themes matched).
+  //   3. The ampli default theme, if the color-match lookup itself fails
+  //      for any reason (network error, no themes matched).
   let themeId: string
   if (brandSettings?.gamma_theme_id) {
     themeId = brandSettings.gamma_theme_id
@@ -325,107 +295,58 @@ export async function POST(req: Request) {
     const matched = resolvedPrimaryColor
       ? await findClosestThemeByColor(resolvedPrimaryColor, apiKey)
       : null
-    // 'tm98hrco10qdq76' here is the same real ampli theme as
-    // TONE_THEME_MAP's own values — this only ever fires if project.tone
-    // somehow holds a value outside the three known tones, a defensive
-    // edge case rather than a real fallback tier.
     themeId = matched || TONE_THEME_MAP[project.tone || 'executive'] || 'tm98hrco10qdq76'
   }
-  // Computed but not sent while theme testing is underway (see the two
-  // commented-out themeId lines below) — this no-op keeps TypeScript from
-  // flagging it as an unused variable if the build config is strict about
-  // that. Safe to remove once themeId is being sent again.
-  void themeId
 
-  // Template selection takes priority over theme-only generation — if the
-  // client has picked their own saved template, use that. DEFAULT_TEMPLATE_ID
-  // is null by default (see its own comment above), so almost every account
-  // falls through to theme-based from-scratch generation below, which is
-  // what keeps deck structure flexing with whatever a project's
-  // SlideSelector selection actually contains, rather than locked to a
-  // fixed template layout. Templates stay an explicit, rare opt-in.
-  const selectedTemplateId = brandSettings?.gamma_template_id || DEFAULT_TEMPLATE_ID
+  // Templates retired entirely — every export now goes through Gamma's
+  // regular from-scratch generation, which is what lets deck structure
+  // flex to match however many findings/tables/visuals a project's
+  // SlideSelector selection actually has, with the resolved theme above
+  // giving real, confirmed brand color control on top of that.
+  const gammaBody: Record<string, any> = {
+    inputText: formatted.inputText,
+    title: formatted.title,
+    textMode: 'preserve',
+    format: 'presentation',
+    cardSplit: 'inputTextBreaks',
+    exportAs: exportFormat,
+    themeId,
+    textOptions: {
+      amount: 'brief',
+      tone: formatted.tone,
+      audience: formatted.audience,
+      language: 'en',
+    },
+    imageOptions: {
+      source: 'themeAccent',
+    },
+    cardOptions: {
+      dimensions: '16x9',
+    },
+    additionalInstructions: formatted.additionalInstructions,
+    sharingOptions: {
+      workspaceAccess: 'noAccess',
+      externalAccess: 'noAccess',
+    },
+  }
 
-  let gammaBody: Record<string, any>
-  let generationEndpoint: string
-
-  if (selectedTemplateId) {
-    generationEndpoint = `${GAMMA_API_BASE}/generations/from-template`
-    // from-template takes a `prompt` describing what to change, not the
-    // same inputText/cardSplit/textOptions shape as a from-scratch
-    // generation — the template's own structure and design are preserved
-    // by default, so the prompt just needs to say what content goes in.
-    const logoInstruction = resolvedLogoUrl
-      ? ` Include the logo at ${resolvedLogoUrl} somewhere appropriate in the header if the template design allows for it.`
-      : ''
-    gammaBody = {
-      gammaId: selectedTemplateId,
-      prompt: `Replace the content in this template with the following, preserving the template's exact structure, layout, and design.${logoInstruction}\n\n${formatted.inputText}`,
-      // themeId temporarily removed for theme testing — James is trying
-      // different available themes without our resolution logic forcing
-      // one. The themeId resolution above (matched/TONE_THEME_MAP) still
-      // runs untouched; only the actual send to Gamma is disabled. To
-      // restore, uncomment this line (and the matching one in the
-      // from-scratch branch below).
-      // themeId,
-      exportAs: exportFormat,
-      sharingOptions: {
-        workspaceAccess: 'noAccess',
-        externalAccess: 'noAccess',
-      },
-    }
-  } else {
-    generationEndpoint = `${GAMMA_API_BASE}/generations`
-    // Build the Gamma API request body
-    gammaBody = {
-      inputText: formatted.inputText,
-      title: formatted.title,
-      textMode: 'preserve',
-      format: 'presentation',
-      cardSplit: 'inputTextBreaks',
-      exportAs: exportFormat,
-      // themeId temporarily removed — see the matching comment in the
-      // from-template branch above for why and how to restore it.
-      // themeId,
-      textOptions: {
-        amount: 'brief',
-        tone: formatted.tone,
-        audience: formatted.audience,
-        language: 'en',
-      },
-      imageOptions: {
-        source: 'themeAccent',
-      },
-      cardOptions: {
-        dimensions: '16x9',
-      },
-      additionalInstructions: formatted.additionalInstructions,
-      sharingOptions: {
-        workspaceAccess: 'noAccess',
-        externalAccess: 'noAccess',
-      },
-    }
-
-    // Add logo to top-right header if available — only supported on the
-    // from-scratch generation path, since from-template has no
-    // cardOptions.headerFooter field in its schema.
-    if (formatted.inputText && resolvedLogoUrl) {
-      const logoUrl: string = resolvedLogoUrl
-      const isPublic = logoUrl.startsWith('https://') && !logoUrl.includes('localhost')
-      if (isPublic) {
-        gammaBody.cardOptions.headerFooter = {
-          topRight: {
-            type: 'image',
-            source: 'custom',
-            src: logoUrl,
-            size: 'sm',
-          },
-          bottomRight: {
-            type: 'cardNumber',
-          },
-          // Don't show logo/page number on the title card
-          hideFromFirstCard: false,
-        }
+  // Add logo to top-right header if available
+  if (formatted.inputText && resolvedLogoUrl) {
+    const logoUrl: string = resolvedLogoUrl
+    const isPublic = logoUrl.startsWith('https://') && !logoUrl.includes('localhost')
+    if (isPublic) {
+      gammaBody.cardOptions.headerFooter = {
+        topRight: {
+          type: 'image',
+          source: 'custom',
+          src: logoUrl,
+          size: 'sm',
+        },
+        bottomRight: {
+          type: 'cardNumber',
+        },
+        // Don't show logo/page number on the title card
+        hideFromFirstCard: false,
       }
     }
   }
@@ -433,7 +354,7 @@ export async function POST(req: Request) {
   // Fire the generation request
   let generationId: string
   try {
-    const res = await fetch(generationEndpoint, {
+    const res = await fetch(`${GAMMA_API_BASE}/generations`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -445,12 +366,6 @@ export async function POST(req: Request) {
     if (!res.ok) {
       const errBody = await res.text()
       console.error('Gamma generation request failed:', res.status, errBody)
-      // Previously only the status code reached the client ("Gamma API
-      // error: 400") — the actual reason Gamma rejected the request only
-      // existed in Vercel's logs, same class of problem as every other
-      // "real error hidden behind a generic message" bug fixed this
-      // session. Truncated to a reasonable length in case Gamma's error
-      // body is unexpectedly large.
       return NextResponse.json(
         { error: `Gamma API error: ${res.status} — ${errBody.slice(0, 500)}` },
         { status: res.status }
