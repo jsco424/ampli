@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import Link from 'next/link'
+import * as XLSX from 'xlsx'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
@@ -23,6 +24,8 @@ import {
   Briefcase,
   Microscope,
   Newspaper,
+  Download,
+  Table2,
 } from 'lucide-react'
 
 const TONE_META: Record<string, { label: string; icon: any; color: string }> = {
@@ -31,11 +34,53 @@ const TONE_META: Record<string, { label: string; icon: any; color: string }> = {
   educational: { label: 'Educational & Informative', icon: Newspaper, color: 'text-emerald-400' },
 }
 
-// 'visuals' removed — its chart grid now renders inline inside AnalysisView
-// (see the 'analysis' tab render below), between Anomalies and the
-// Follow-up Thread, instead of living behind a separate tab with its own
-// duplicate "Build Slides" button.
-type Tab = 'analysis' | 'data' | 'notes'
+// Charts split back out into its own tab — a real rows-and-columns table
+// view of project.charts, distinct from AnalysisView's inline chart
+// previews (which stay as-is; that's about the narrative flow, this is
+// about inspecting/downloading the underlying data).
+type Tab = 'analysis' | 'data' | 'charts' | 'notes'
+
+// Renders any array of plain objects as a real HTML table — used for both
+// the Data tab (project.sampled_rows) and the Charts tab (each chart's own
+// data array). Columns come from the first row's own keys, so this works
+// for any shape without needing to know it ahead of time.
+function DataTable({ rows, dark, muted }: { rows: any[]; dark: boolean; muted: string }) {
+  if (!rows || rows.length === 0) {
+    return <p className={`text-xs p-4 ${muted}`}>No rows to show.</p>
+  }
+  const columns = Object.keys(rows[0])
+  return (
+    <div className="overflow-auto max-h-96">
+      <table className="w-full text-xs">
+        <thead className={`sticky top-0 ${dark ? 'bg-[#111118]' : 'bg-white'}`}>
+          <tr className={`border-b ${dark ? 'border-white/[0.08]' : 'border-zinc-200'}`}>
+            {columns.map((col) => (
+              <th
+                key={col}
+                className={`text-left px-3 py-2 font-semibold whitespace-nowrap ${muted}`}
+              >
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className={`border-b ${dark ? 'border-white/[0.04]' : 'border-zinc-100'}`}>
+              {columns.map((col) => (
+                <td key={col} className="px-3 py-2 whitespace-nowrap">
+                  {typeof row[col] === 'object' && row[col] !== null
+                    ? JSON.stringify(row[col])
+                    : String(row[col] ?? '')}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export default function ProjectViewPage() {
   const { id } = useParams()
@@ -66,10 +111,6 @@ export default function ProjectViewPage() {
   const [showSlideSelector, setShowSlideSelector] = useState(false)
 
   const [chartsGenerating, setChartsGenerating] = useState(false)
-  // chartsGenTriggered ref removed — Build Visuals is now an explicit
-  // button click (handleBuildVisuals), not an auto-firing effect, so
-  // there's no remount-reset race to guard against the way there was
-  // before. chartsGenerating itself now serves as the re-click guard.
   const [recommendationsGenerating, setRecommendationsGenerating] = useState(false)
   const [recommendationsError, setRecommendationsError] = useState<string | null>(null)
 
@@ -79,24 +120,6 @@ export default function ProjectViewPage() {
   const analysisTriggered = useRef(false)
 
   useEffect(() => {
-    // Waits for Clerk to finish loading before firing ANY Supabase query.
-    // This was the actual root cause of a 406 (Not Acceptable) on this
-    // exact fetch: Supabase's accessToken callback in src/lib/supabase.ts
-    // calls window.Clerk.session.getToken() on every request, but this
-    // effect previously fired as soon as `id` was available — with no
-    // guard on Clerk having actually finished initializing. On a hard
-    // reload, Clerk needs real time to bootstrap (verify cookies, load the
-    // session), especially on development keys, which are documented as
-    // slower than production keys. If this query raced ahead of that,
-    // window.Clerk.session didn't exist yet, the accessToken callback
-    // returned null, and with no token attached, RLS filtered the row out
-    // entirely — Postgres returned zero rows, and PostgREST turned that
-    // into exactly this 406. With `data` then null, `project` state never
-    // got set, which meant the chart-generation effect further down
-    // (gated on `if (!project || !analysisOutput) return`) never fired
-    // either — so /api/generate was never even called client-side. That's
-    // consistent with everything observed: zero server logs, no
-    // generation_error recorded, charts stuck null indefinitely.
     if (!id || !isLoaded) return
 
     supabase
@@ -116,11 +139,6 @@ export default function ProjectViewPage() {
 
         if (data.analysis) {
           setAnalysisOutput(data.analysis as AnalysisOutput)
-          // Restore follow-up "Dig deeper" state — previously this was
-          // pure React state with no persistence at all, so navigating
-          // away and back lost every follow-up turn. Both fields are
-          // nullable jsonb columns; a project with no follow-ups yet
-          // simply has null here, which the || [] fallbacks handle.
           if (data.conversation_history) setConversationHistory(data.conversation_history)
           if (data.conversation_entries) setConversationEntries(data.conversation_entries)
           return
@@ -128,14 +146,6 @@ export default function ProjectViewPage() {
 
         if (!data.raw_data && !data.sampled_rows) return
         if (analysisTriggered.current) return
-        // analysisTriggered is just an in-memory ref scoped to this one page
-        // mount — it resets the moment you navigate away and back, so it
-        // couldn't stop a second /api/analyze call from firing if you
-        // reopened this project before the first one finished. status
-        // === 'analyzing' is the real, persistent signal: analyze/route.ts
-        // sets it right when analysis starts and only clears it on
-        // success/failure, so it survives across page loads and browser
-        // tabs, not just this one mount.
         if (data.status === 'analyzing') return
         analysisTriggered.current = true
 
@@ -152,17 +162,8 @@ export default function ProjectViewPage() {
             prompt: data.prompt || null,
             tone: data.tone || 'executive',
             industry: data.industry || null,
-            // NEW — lets the analysis itself (hero numbers, findings) be
-            // audience-shaped, and triggers the on-demand public interest
-            // fetch when a target company is set.
             targetAudience: data.target_audience || null,
             targetCompany: data.target_company || null,
-            // Was previously only sent to /api/generate — meant the initial
-            // executive summary and key findings could describe prospecting/
-            // benchmark data as though it were the target company's own
-            // performance, with the "this isn't actually their data" framing
-            // only applying later at deck-build time. Now applied from the
-            // first pass onward.
             dataSourceType: data.data_source_type || null,
             projectId: data.id,
           }),
@@ -181,7 +182,7 @@ export default function ProjectViewPage() {
             return res.json()
           })
           .then((result) => {
-            if (!result) return // credit limit hit, already handled above
+            if (!result) return
             const { analysis, assistantTurn } = result
             setAnalysisOutput(analysis)
             setConversationHistory([assistantTurn])
@@ -190,9 +191,6 @@ export default function ProjectViewPage() {
               .update({
                 analysis,
                 status: 'complete',
-                // Persist the very first turn immediately too, so even a
-                // project with zero follow-up questions yet has a
-                // consistent, restorable conversation_history from the start.
                 conversation_history: [assistantTurn],
               })
               .eq('id', id)
@@ -217,13 +215,9 @@ export default function ProjectViewPage() {
     }
   }, [id, isLoaded])
 
-  // Was an auto-firing useEffect that ran the instant analysisOutput
-  // existed — now an explicit handler, called only from the "Build
-  // Visuals" button in AnalysisView. No more silent background generation
-  // with no visible state; the button IS the loading state.
   const handleBuildVisuals = useCallback(() => {
     if (!project || !analysisOutput) return
-    if (chartsGenerating) return // already in flight, ignore a duplicate click
+    if (chartsGenerating) return
 
     setChartsGenerating(true)
     fetch('/api/generate', {
@@ -257,12 +251,6 @@ export default function ProjectViewPage() {
       .finally(() => setChartsGenerating(false))
   }, [project, analysisOutput, chartsGenerating])
 
-  // Recommendations — previously a silent background call fired from inside
-  // /api/generate right after charts saved, with zero visible state and the
-  // exact "did it work or not?" ambiguity that took most of a session to
-  // diagnose. Now its own explicit button, its own endpoint
-  // (/api/generate-recommendations), its own loading/error state — same
-  // reasoning as Build Visuals above.
   const handleBuildRecommendations = useCallback(() => {
     if (!project) return
     if (recommendationsGenerating) return
@@ -313,18 +301,8 @@ export default function ProjectViewPage() {
             tone: project.tone || 'executive',
             industry: project.industry || null,
             targetAudience: project.target_audience || null,
-            // Now sent on follow-ups too — needed for dataFramingInstruction
-            // (the "this isn't the target company's own data" framing) to
-            // apply on follow-up questions, not just the initial analysis.
-            // Previously omitted specifically to avoid re-triggering the
-            // on-demand public interest fetch on every follow-up; that fetch
-            // is now separately gated on !isFollowUp in analyze/route.ts, so
-            // sending targetCompany here no longer re-runs it.
             targetCompany: project.target_company || null,
             dataSourceType: project.data_source_type || null,
-            // Was missing entirely — meant follow-up questions were never
-            // counted against the credit limit at all, and never logged to
-            // token_usage_log's 'analyze_followup' route either.
             projectId: project.id,
           }),
         })
@@ -347,10 +325,6 @@ export default function ProjectViewPage() {
         setConversationEntries(newEntries)
         setConversationHistory(newHistory)
 
-        // Persist immediately — this is the fix for follow-up turns
-        // disappearing on navigation. Previously both of these only ever
-        // lived in React state, so leaving the page and coming back had
-        // nothing to restore from.
         await supabase
           .from('projects')
           .update({
@@ -378,8 +352,6 @@ export default function ProjectViewPage() {
   const handleRequestSlides = useCallback(() => {
     setShowSlideSelector(true)
     setExportError(null)
-    // Renders independent of which tab is active — the selector has its
-    // own internal Visuals / Findings & Tables toggle.
   }, [])
 
   const handleExport = useCallback(
@@ -405,11 +377,6 @@ export default function ProjectViewPage() {
         const data = await res.json()
         if (!res.ok || !data.downloadUrl) throw new Error(data.error || 'Export failed')
 
-        // downloadUrl is our own /api/exports/[id]/download route, which
-        // sets Content-Disposition: attachment — a direct navigation here
-        // actually downloads instead of leaving the page, since the browser
-        // sees it as same-origin. Gamma's raw exportUrl no longer reaches
-        // the client at all.
         window.location.href = data.downloadUrl
 
         setShowSlideSelector(false)
@@ -436,6 +403,37 @@ export default function ProjectViewPage() {
       setNotesSaved(true)
       setTimeout(() => setNotesSaved(false), 2000)
     }, 1000)
+  }
+
+  // Only real download left on this page — raw ingested data isn't
+  // downloadable here at all anymore, since the user already has that on
+  // their own machine (they uploaded it). Charts are computed/derived data,
+  // which is the thing actually worth a backup copy of. One workbook, one
+  // sheet per chart, so a user who doesn't like Gamma's auto-generated
+  // visuals can rebuild every one of them manually.
+  const handleDownloadChartsExcel = () => {
+    const charts = project?.charts || []
+    if (charts.length === 0) return
+
+    const workbook = XLSX.utils.book_new()
+    const usedNames = new Set<string>()
+
+    charts.forEach((chart: any, i: number) => {
+      const base =
+        (chart.title || `Chart ${i + 1}`).replace(/[\\/*?:\[\]]/g, '').slice(0, 28) ||
+        `Chart ${i + 1}`
+      let sheetName = base
+      let suffix = 1
+      while (usedNames.has(sheetName)) {
+        sheetName = `${base}_${suffix++}`.slice(0, 31)
+      }
+      usedNames.add(sheetName)
+
+      const worksheet = XLSX.utils.json_to_sheet(chart.data || [])
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
+    })
+
+    XLSX.writeFile(workbook, `${project.file_name || 'charts'}_charts.xlsx`)
   }
 
   const BRAND_COLORS = [
@@ -543,14 +541,6 @@ export default function ProjectViewPage() {
                 <span
                   className={`text-xs font-medium ${dark ? 'text-purple-400' : 'text-purple-600'}`}
                 >
-                  {/* target_audience is now the full object saved by
-                      new/page.tsx ({role, seniority, cares_about,
-                      narrative_style, avoid}), not a plain string — this
-                      used to render the raw string directly, and rendering
-                      the whole object here threw React error #31 ("Objects
-                      are not valid as a React child"). Only .role belongs
-                      in this compact metadata bar; the rest of the object
-                      is used server-side for tailoring, not displayed here. */}
                   {project.target_audience.role || 'Custom audience'}
                 </span>
               </div>
@@ -567,7 +557,7 @@ export default function ProjectViewPage() {
         <div
           className={`flex gap-1 mb-6 p-1 rounded-xl w-fit ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
         >
-          {(['analysis', 'data', 'notes'] as Tab[]).map((t) => (
+          {(['analysis', 'data', 'charts', 'notes'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -578,9 +568,6 @@ export default function ProjectViewPage() {
           ))}
         </div>
 
-        {/* Slide selector — rendered independent of the active tab, so
-            opening it never redirects anywhere. It has its own internal
-            Visuals / Findings & Tables toggle. */}
         {showSlideSelector && analysisOutput && (
           <SlideSelector
             analysis={analysisOutput}
@@ -673,62 +660,67 @@ export default function ProjectViewPage() {
           </div>
         )}
 
+        {/* Data tab — the raw rows the user actually uploaded, shown as a
+            real table. No download here at all: they already have this
+            data on their own machine, since they're the ones who ingested
+            it in the first place. */}
         {!showSlideSelector && tab === 'data' && (
-          <div className={`rounded-xl border overflow-auto ${card}`}>
+          <div className={`rounded-xl border overflow-hidden ${card}`}>
             <div
-              className={`p-4 border-b flex items-center justify-between ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+              className={`p-4 border-b flex items-center gap-2 ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
             >
-              <span className="text-sm font-medium">Raw Data Summary</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    // project.charts already has every chart's real data
-                    // array — no computation needed, just download what's
-                    // already there. Downloads all charts at once, no
-                    // per-chart selection, matching the same "no options,
-                    // just get the file" simplicity as the summary download
-                    // right next to it.
-                    const chartData = (project.charts || []).map((c: any) => ({
-                      title: c.title,
-                      type: c.type,
-                      data: c.data,
-                    }))
-                    const blob = new Blob([JSON.stringify(chartData, null, 2)], {
-                      type: 'application/json',
-                    })
-                    const url = URL.createObjectURL(blob)
-                    const a = document.createElement('a')
-                    a.href = url
-                    a.download = `${project.file_name}_charts.json`
-                    a.click()
-                  }}
-                  disabled={!project.charts || project.charts.length === 0}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Download Chart Data
-                </button>
-                <button
-                  onClick={() => {
-                    const blob = new Blob([project.raw_data || ''], { type: 'application/json' })
-                    const url = URL.createObjectURL(blob)
-                    const a = document.createElement('a')
-                    a.href = url
-                    a.download = `${project.file_name}_summary.json`
-                    a.click()
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors"
-                >
-                  Download JSON
-                </button>
-              </div>
+              <Table2 size={14} className={muted} />
+              <span className="text-sm font-medium">Your Data</span>
             </div>
-            <pre
-              className={`p-4 text-xs overflow-auto max-h-96 ${dark ? 'text-white/50' : 'text-zinc-600'}`}
-            >
-              {project.raw_data
-                ? JSON.stringify(JSON.parse(project.raw_data), null, 2)
-                : 'No data summary available.'}
-            </pre>
+            {project.sampled_rows && project.sampled_rows.length > 0 ? (
+              <DataTable rows={project.sampled_rows} dark={dark} muted={muted} />
+            ) : (
+              <p className={`text-xs p-4 ${muted}`}>No sample rows available for this project.</p>
+            )}
+          </div>
+        )}
+
+        {/* Charts tab — one table per chart, the actual computed/derived
+            data behind each visual, plus the one download that's actually
+            worth having: an Excel workbook, one sheet per chart, so a user
+            who doesn't like Gamma's auto-generated visual can rebuild any
+            of them by hand. */}
+        {!showSlideSelector && tab === 'charts' && (
+          <div className="space-y-4">
+            <div className={`p-4 rounded-xl border flex items-center justify-between ${card}`}>
+              <span className={`text-xs ${muted}`}>
+                {(project.charts || []).length} chart
+                {(project.charts || []).length !== 1 ? 's' : ''} computed for this project
+              </span>
+              <button
+                onClick={handleDownloadChartsExcel}
+                disabled={!project.charts || project.charts.length === 0}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download size={12} />
+                Download as Excel
+              </button>
+            </div>
+
+            {(project.charts || []).length === 0 ? (
+              <div className={`p-8 rounded-xl border text-center ${card}`}>
+                <p className={`text-sm ${muted}`}>
+                  No charts built yet — build visuals from the Analysis tab first.
+                </p>
+              </div>
+            ) : (
+              (project.charts || []).map((chart: any, i: number) => (
+                <div key={i} className={`rounded-xl border overflow-hidden ${card}`}>
+                  <div
+                    className={`p-4 border-b ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+                  >
+                    <p className="text-sm font-medium">{chart.title || `Chart ${i + 1}`}</p>
+                    {chart.type && <p className={`text-[11px] mt-0.5 ${muted}`}>{chart.type}</p>}
+                  </div>
+                  <DataTable rows={chart.data || []} dark={dark} muted={muted} />
+                </div>
+              ))
+            )}
           </div>
         )}
 

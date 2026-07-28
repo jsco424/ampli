@@ -350,6 +350,7 @@ export function formatForGamma(input: GammaFormatterInput): GammaFormatterOutput
   const instructions = [
     'Display the H1 heading (the metric) in very large type as the hero stat on each card.',
     'Keep body text concise — one short paragraph maximum per card.',
+    'On any card with a chart, the takeaway sentence beneath it must be shown as a large, prominent callout, positioned beside or directly under the chart at a clearly readable size. Never shrink it into small caption or footnote text at the bottom of the card.',
     'Do not add cards, sections, or content beyond what is provided.',
     'Do not use stock photography or AI-generated scene images.',
     primaryColor

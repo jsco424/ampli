@@ -331,6 +331,11 @@ export async function POST(req: Request) {
     // edge case rather than a real fallback tier.
     themeId = matched || TONE_THEME_MAP[project.tone || 'executive'] || 'tm98hrco10qdq76'
   }
+  // Computed but not sent while theme testing is underway (see the two
+  // commented-out themeId lines below) — this no-op keeps TypeScript from
+  // flagging it as an unused variable if the build config is strict about
+  // that. Safe to remove once themeId is being sent again.
+  void themeId
 
   // Template selection takes priority over theme-only generation — if the
   // client has picked their own saved template, use that. DEFAULT_TEMPLATE_ID
@@ -356,7 +361,13 @@ export async function POST(req: Request) {
     gammaBody = {
       gammaId: selectedTemplateId,
       prompt: `Replace the content in this template with the following, preserving the template's exact structure, layout, and design.${logoInstruction}\n\n${formatted.inputText}`,
-      themeId,
+      // themeId temporarily removed for theme testing — James is trying
+      // different available themes without our resolution logic forcing
+      // one. The themeId resolution above (matched/TONE_THEME_MAP) still
+      // runs untouched; only the actual send to Gamma is disabled. To
+      // restore, uncomment this line (and the matching one in the
+      // from-scratch branch below).
+      // themeId,
       exportAs: exportFormat,
       sharingOptions: {
         workspaceAccess: 'noAccess',
@@ -373,7 +384,9 @@ export async function POST(req: Request) {
       format: 'presentation',
       cardSplit: 'inputTextBreaks',
       exportAs: exportFormat,
-      themeId,
+      // themeId temporarily removed — see the matching comment in the
+      // from-template branch above for why and how to restore it.
+      // themeId,
       textOptions: {
         amount: 'brief',
         tone: formatted.tone,
