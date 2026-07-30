@@ -35,9 +35,7 @@ import {
   Zap,
   Scale,
   Sparkles,
-  Building2,
   Link2,
-  Swords,
 } from 'lucide-react'
 import {
   LineChart,
@@ -290,10 +288,8 @@ export default function TrendsPage() {
   const router = useRouter()
 
   const [category, setCategory] = useState<string | null>(null)
-  const [previousCategory, setPreviousCategory] = useState<string | null>(null)
   const [availableCategories, setAvailableCategories] = useState<string[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
-  const [researchedCompanyNames, setResearchedCompanyNames] = useState<Set<string> | null>(null)
 
   const [topics, setTopics] = useState<CompositeRow[]>([])
   const [signalsByKey, setSignalsByKey] = useState<Map<string, SignalRow>>(new Map())
@@ -306,13 +302,8 @@ export default function TrendsPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [relatedQueries, setRelatedQueries] = useState<{ query: string; value: number }[]>([])
   const [relatedLoading, setRelatedLoading] = useState(false)
-  const [knownCompetitors, setKnownCompetitors] = useState<{ name: string; description: string }[]>(
-    []
-  )
-  const [competitorsLoading, setCompetitorsLoading] = useState(false)
 
   const [compareMode, setCompareMode] = useState(false)
-  const [companySearch, setCompanySearch] = useState('')
   const [compareSelection, setCompareSelection] = useState<string[]>([])
   const [comparisonData, setComparisonData] = useState<Record<string, any>[]>([])
   const [showComparison, setShowComparison] = useState(false)
@@ -328,10 +319,9 @@ export default function TrendsPage() {
   // bar grows or shrinks on its own as the tracked topic pool changes.
   //
   // 'company' is deliberately excluded from this list — tracked companies
-  // aren't a trending-keyword category, they're a research roster (see
-  // isCompanyView below), and get their own separate button rather than
-  // sitting in this pill group where they'd read as "just another topic
-  // area" alongside Auto/Finance/etc.
+  // aren't a trending-keyword category at all. The Companies roster (with
+  // its own detail view, Known Competitors, and Related Searches) now
+  // lives entirely on the /research page, not here.
   useEffect(() => {
     supabase
       .from('trend_topics')
@@ -345,24 +335,12 @@ export default function TrendsPage() {
           .sort()
         setAvailableCategories(distinct)
         setCategory((prev) => {
-          if (prev && (distinct.includes(prev) || prev === 'company')) return prev
+          if (prev && distinct.includes(prev)) return prev
           return distinct.includes('auto') ? 'auto' : distinct[0] || null
         })
         setCategoriesLoading(false)
       })
   }, [])
-
-  // Fetches once, the first time Companies view is opened — the set of
-  // company names that have actually been through the research step, used
-  // to filter the roster down to companies that can show real competitor
-  // data instead of including every on-demand-tracked company regardless.
-  useEffect(() => {
-    if (category !== 'company' || researchedCompanyNames !== null) return
-    fetch('/api/trends/researched-companies')
-      .then((res) => res.json())
-      .then((data) => setResearchedCompanyNames(new Set(data.names || [])))
-      .catch(() => setResearchedCompanyNames(new Set()))
-  }, [category, researchedCompanyNames])
 
   // Load current topics, latest per-source signals, and topic lifecycle
   // metadata (origin/discovered_at) for the selected category. Lifecycle
@@ -434,8 +412,6 @@ export default function TrendsPage() {
     setDetailLoading(true)
     setRelatedLoading(true)
     setRelatedQueries([])
-    setCompetitorsLoading(true)
-    setKnownCompetitors([])
 
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - 14)
@@ -471,19 +447,6 @@ export default function TrendsPage() {
       .then((data) => setRelatedQueries(data.related || []))
       .catch(() => setRelatedQueries([]))
       .finally(() => setRelatedLoading(false))
-
-    // Real, AI-derived competitor data from the home dashboard's Company
-    // Research tool — already built, already persisted in company_research
-    // whenever anyone researches a company (required before a project can
-    // target one). Matched by name, so this only populates for topics that
-    // happen to have been researched at some point; a company added purely
-    // via on-demand tracking without ever going through that research step
-    // just won't have a match, which is a correct empty state, not a bug.
-    fetch(`/api/trends/competitors?company=${encodeURIComponent(topic)}`)
-      .then((res) => res.json())
-      .then((data) => setKnownCompetitors(data.competitors || []))
-      .catch(() => setKnownCompetitors([]))
-      .finally(() => setCompetitorsLoading(false))
   }
 
   const toggleCompareSelection = (topic: string) => {
@@ -547,25 +510,6 @@ export default function TrendsPage() {
     [topics, medianScore, topicMeta]
   )
 
-  // Companies get a roster, not a quadrant — plotting Teads against Apple
-  // against Stop & Shop on shared interest/momentum axes isn't a real
-  // comparison just because they all happen to be tracked. The quadrant's
-  // median-split logic assumes one coherent topic area; a company roster
-  // spans however many unrelated industries someone's actually researched.
-  const isCompanyView = category === 'company'
-
-  // Only companies that have actually been through Company Research —
-  // per James's ask, a company sitting on the roster with no possible
-  // competitor data isn't adding much, and it made the list longer than
-  // it needed to be. researchedCompanyNames === null means the fetch
-  // hasn't resolved yet (handled as a loading state below), NOT "nothing
-  // matched" — an empty Set after a successful fetch is what actually
-  // means zero matches.
-  const researchedCompanies = useMemo(() => {
-    if (!researchedCompanyNames) return []
-    return scatterData.filter((d) => researchedCompanyNames.has(d.topic.toLowerCase().trim()))
-  }, [scatterData, researchedCompanyNames])
-
   // ── Token-based styles ────────────────────────────────────────────────
   const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
@@ -596,32 +540,7 @@ export default function TrendsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => {
-                if (isCompanyView) {
-                  setCategory(
-                    previousCategory ||
-                      (availableCategories.includes('auto')
-                        ? 'auto'
-                        : availableCategories[0] || null)
-                  )
-                } else {
-                  setPreviousCategory(category)
-                  setCategory('company')
-                }
-              }}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
-                isCompanyView
-                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-500'
-                  : dark
-                    ? 'border-white/[0.08] text-white/50 hover:bg-white/[0.04]'
-                    : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-              }`}
-            >
-              <Building2 size={13} />
-              Companies
-            </button>
-            {!categoriesLoading && availableCategories.length > 0 && !isCompanyView && (
+            {!categoriesLoading && availableCategories.length > 0 && (
               <button
                 onClick={() => {
                   setCompareMode(!compareMode)
@@ -650,27 +569,13 @@ export default function TrendsPage() {
           <p
             className={`text-xs leading-relaxed ${dark ? 'text-blue-200/70' : 'text-blue-900/70'}`}
           >
-            {isCompanyView ? (
-              <>
-                Companies you've researched through an analysis, tracked individually — sorted by
-                current interest level, not plotted against each other, since companies from
-                unrelated industries have nothing meaningful to be compared on. Click any company
-                for its own history, or use Compare below to overlay a few you actually want side by
-                side.
-              </>
-            ) : (
-              <>
-                Each dot is one topic. Horizontal position is current interest level relative to
-                today's mix (dashed line marks the median); vertical position is momentum vs. last
-                week. Composite scores reflect Wikipedia, YouTube, and Google Trends; Reddit is
-                pending approval. Topics marked <Sparkles size={10} className="inline mx-0.5" />
-                New were surfaced from real trending searches in the last {
-                  NEW_TOPIC_WINDOW_DAYS
-                }{' '}
-                days. Category tabs themselves only appear once real activity has been classified
-                into them — there's no fixed list of supported categories.
-              </>
-            )}
+            Each dot is one topic. Horizontal position is current interest level relative to today's
+            mix (dashed line marks the median); vertical position is momentum vs. last week.
+            Composite scores reflect Wikipedia, YouTube, and Google Trends; Reddit is pending
+            approval. Topics marked <Sparkles size={10} className="inline mx-0.5" />
+            New were surfaced from real trending searches in the last {NEW_TOPIC_WINDOW_DAYS} days.
+            Category tabs themselves only appear once real activity has been classified into them —
+            there's no fixed list of supported categories.
           </p>
         </div>
 
@@ -692,12 +597,8 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Category tabs — built entirely from availableCategories. Hidden
-            in Companies view (the Companies button itself toggles back to
-            the last keyword category — see previousCategory above), so
-            these don't sit alongside a company roster where they don't
-            apply. */}
-        {!categoriesLoading && availableCategories.length > 0 && !isCompanyView && (
+        {/* Category tabs — built entirely from availableCategories. */}
+        {!categoriesLoading && availableCategories.length > 0 && (
           <div
             className={`flex gap-1 mb-4 p-1 rounded-xl w-fit flex-wrap ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
           >
@@ -736,81 +637,23 @@ export default function TrendsPage() {
           </div>
         )}
 
-        {/* Quadrant matrix (keywords) or roster (companies) */}
-        {categoriesLoading || loading || (isCompanyView && researchedCompanyNames === null) ? (
+        {/* Quadrant matrix */}
+        {categoriesLoading || loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : !isCompanyView && availableCategories.length === 0 ? (
+        ) : availableCategories.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
               No categories have active data yet — check back after the next daily refresh runs and
               classifies today's trending terms.
             </p>
           </div>
-        ) : isCompanyView && researchedCompanies.length === 0 ? (
-          <div className={`p-10 rounded-xl border text-center ${card}`}>
-            <p className={`text-sm ${muted}`}>
-              {scatterData.length === 0
-                ? "No companies tracked yet — they're added automatically the first time you run an analysis with a target company set."
-                : 'None of your tracked companies have been through Company Research yet — this roster only shows companies with real competitor data available. Research a company on the home dashboard to add it here.'}
-            </p>
-          </div>
-        ) : !isCompanyView && scatterData.length === 0 ? (
+        ) : scatterData.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
               No data yet for this category — check back after the next daily refresh.
             </p>
-          </div>
-        ) : isCompanyView ? (
-          <div className={`p-4 rounded-xl border ${card}`}>
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <input
-                value={companySearch}
-                onChange={(e) => setCompanySearch(e.target.value)}
-                placeholder="Filter companies…"
-                className={`flex-1 px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${dark ? 'bg-white/[0.03] border-white/10 text-white placeholder-white/25' : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder-zinc-400'}`}
-              />
-              <span className={`text-xs shrink-0 ${muted}`}>
-                {researchedCompanies.length} researched
-              </span>
-            </div>
-            <div className="space-y-2">
-              {researchedCompanies
-                .filter((d) => d.topic.toLowerCase().includes(companySearch.trim().toLowerCase()))
-                .slice()
-                .sort((a, b) => b.composite_score - a.composite_score)
-                .map((d) => (
-                  <button
-                    key={d.topic}
-                    onClick={() => openTopicDetail(d.topic)}
-                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-left transition-colors hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${card}`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      {d.isNew && <Sparkles size={12} className="text-blue-400 shrink-0" />}
-                      <span className="text-sm font-medium truncate">{d.topic}</span>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-lg font-bold">{d.composite_score}</span>
-                      <span
-                        className={`flex items-center gap-1 text-xs font-medium w-16 ${deltaColor(d.delta_vs_prior)}`}
-                      >
-                        <TrendArrow delta={d.delta_vs_prior} />
-                        {d.delta_vs_prior !== null
-                          ? `${d.delta_vs_prior > 0 ? '+' : ''}${d.delta_vs_prior}%`
-                          : 'new'}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              {researchedCompanies.filter((d) =>
-                d.topic.toLowerCase().includes(companySearch.trim().toLowerCase())
-              ).length === 0 && (
-                <p className={`text-xs text-center py-6 ${muted}`}>
-                  No researched companies match "{companySearch}"
-                </p>
-              )}
-            </div>
           </div>
         ) : (
           <div className={`relative p-4 rounded-xl border ${card}`}>
@@ -1104,48 +947,14 @@ export default function TrendsPage() {
 
                   <div className="mt-5">
                     <div className="flex items-center gap-1.5 mb-2">
-                      <Swords size={11} className="text-red-400" />
-                      <p className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>
-                        Known Competitors
-                      </p>
-                    </div>
-                    <p className={`text-[11px] mb-2.5 ${muted}`}>
-                      From Company Research — AI-analyzed from {selectedTopic}'s own website, not
-                      inferred from search behavior.
-                    </p>
-                    {competitorsLoading ? (
-                      <p className={`text-xs ${muted}`}>Checking Company Research…</p>
-                    ) : knownCompetitors.length === 0 ? (
-                      <p className={`text-xs ${muted}`}>
-                        No match in Company Research — this company may not have gone through the
-                        home dashboard's research step yet.
-                      </p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {knownCompetitors.map((c) => (
-                          <div
-                            key={c.name}
-                            className={`p-2.5 rounded-lg border ${dark ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}
-                          >
-                            <p className="text-xs font-semibold">{c.name}</p>
-                            <p className={`text-[11px] mt-0.5 ${muted}`}>{c.description}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-5">
-                    <div className="flex items-center gap-1.5 mb-2">
                       <Link2 size={11} className={muted} />
                       <p className={`text-xs font-semibold uppercase tracking-wide ${muted}`}>
                         Related Searches
                       </p>
                     </div>
                     <p className={`text-[11px] mb-2.5 ${muted}`}>
-                      What people actually search for alongside {selectedTopic} — a different signal
-                      from Known Competitors above (real public search behavior, not AI judgment),
-                      useful even when no formal research exists yet.
+                      What people actually search for alongside {selectedTopic} — real public search
+                      behavior, useful for spotting adjacent topics and competitors alike.
                     </p>
                     {relatedLoading ? (
                       <p className={`text-xs ${muted}`}>Looking up related searches…</p>

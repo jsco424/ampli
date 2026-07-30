@@ -15,25 +15,13 @@ import {
   Trash2,
   Clock,
   CheckCircle,
-  Globe2,
-  ChevronDown,
-  ChevronUp,
-  Package,
-  Users,
-  Swords,
-  Newspaper,
+  Search,
+  Sparkles,
 } from 'lucide-react'
 import Link from 'next/link'
 import WelcomeState from '@/components/WelcomeState'
 import OnboardingModal from '@/components/OnboardingModal'
 import ExportsDropdown from '@/components/ExportsDropdown'
-
-const TIER_COLORS: Record<string, string> = {
-  executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  director: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  manager: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  individual: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-}
 
 export default function Home() {
   const { user, isLoaded } = useUser()
@@ -44,13 +32,34 @@ export default function Home() {
   const [projects, setProjects] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [url, setUrl] = useState('')
-  const [researching, setResearching] = useState(false)
-  const [research, setResearch] = useState<any>(null)
-  const [news, setNews] = useState<any[]>([])
-  const [expandedSection, setExpandedSection] = useState<
-    'products' | 'competitors' | 'audiences' | 'news' | null
-  >('news')
+
+  // ── Smart Search — replaces the old inline Company Research tool here,
+  // which moved to its own page at /research alongside Recent Searches
+  // and the Companies roster. Phase 1 only: company/industry/date filters,
+  // counts and lists — see /api/dashboard-search for the real scope and
+  // why this deliberately isn't an open text-to-SQL tool.
+  const [smartQuery, setSmartQuery] = useState('')
+  const [smartLoading, setSmartLoading] = useState(false)
+  const [smartResult, setSmartResult] = useState<any>(null)
+
+  const runSmartSearch = async (q: string) => {
+    if (!q.trim()) return
+    setSmartLoading(true)
+    setSmartResult(null)
+    try {
+      const res = await fetch('/api/dashboard-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      })
+      const data = await res.json()
+      setSmartResult(data)
+    } catch (err) {
+      console.error(err)
+      setSmartResult({ matched: false, suggestion: 'Search failed — try again.', suggestions: [] })
+    }
+    setSmartLoading(false)
+  }
 
   useEffect(() => {
     if (isLoaded && !user) router.push('/sign-in')
@@ -100,42 +109,6 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [projects])
 
-  const handleResearch = async () => {
-    if (!url || !user) return
-    setResearching(true)
-    setResearch(null)
-    setNews([])
-    try {
-      const res = await fetch('/api/research', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      })
-      const data = await res.json()
-      setResearch(data)
-      setExpandedSection('news')
-      await supabase.from('company_research').insert({
-        user_id: user.id,
-        url,
-        company_name: data.company_name,
-        description: data.description,
-        products: data.products,
-        competitors: data.competitors,
-        audiences: data.audiences,
-      })
-      fetch('/api/news', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyName: data.company_name }),
-      })
-        .then((r) => r.json())
-        .then((n) => setNews(n.news || []))
-    } catch (err) {
-      console.error(err)
-    }
-    setResearching(false)
-  }
-
   const deleteProject = async (id: string, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -177,12 +150,12 @@ export default function Home() {
         </div>
 
         {/* Quick actions */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-10">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
           {[
             { icon: UploadCloud, label: 'New Project', href: '/projects/new' },
             { icon: FolderOpen, label: 'My Projects', href: '/projects' },
             { icon: BarChart2, label: 'Crowd Insights', href: '/crowd' },
-            { icon: Globe, label: 'Research', href: '#research' },
+            { icon: Globe, label: 'Research', href: '/research' },
           ].map(({ icon: Icon, label, href }) => (
             <Link
               key={href}
@@ -194,6 +167,90 @@ export default function Home() {
               {label}
             </Link>
           ))}
+        </div>
+
+        {/* Smart Search */}
+        <div className="mb-10">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={14} className="text-blue-500" />
+            <h2 className="font-semibold text-base tracking-tight">Ask ampli</h2>
+          </div>
+          <div className={`p-4 rounded-xl border ${card}`}>
+            <div className="flex gap-2">
+              <div
+                className={`flex items-center gap-2 flex-1 px-3 py-2.5 rounded-lg border ${input}`}
+              >
+                <Search size={14} className={muted} />
+                <input
+                  value={smartQuery}
+                  onChange={(e) => setSmartQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && runSmartSearch(smartQuery)}
+                  placeholder="e.g. How many decks have I built for Acme Corp?"
+                  className="flex-1 bg-transparent outline-none text-sm"
+                />
+              </div>
+              <button
+                onClick={() => runSmartSearch(smartQuery)}
+                disabled={!smartQuery.trim() || smartLoading}
+                className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
+              >
+                {smartLoading && (
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                )}
+                Ask
+              </button>
+            </div>
+
+            {smartResult && (
+              <div className="mt-4">
+                {!smartResult.matched ? (
+                  <div>
+                    <p className={`text-sm mb-3 ${muted}`}>{smartResult.suggestion}</p>
+                    {smartResult.suggestions?.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {smartResult.suggestions.map((s: string) => (
+                          <button
+                            key={s}
+                            onClick={() => {
+                              setSmartQuery(s)
+                              runSmartSearch(s)
+                            }}
+                            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${dark ? 'border-white/10 text-white/70 hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : smartResult.intent === 'count' ? (
+                  <p className="text-sm">
+                    <span className="text-2xl font-black mr-2">{smartResult.count}</span>
+                    project{smartResult.count !== 1 ? 's' : ''} match
+                    {smartResult.filters?.company && ` for "${smartResult.filters.company}"`}
+                    {smartResult.filters?.industry && ` in ${smartResult.filters.industry}`}
+                  </p>
+                ) : smartResult.projects.length === 0 ? (
+                  <p className={`text-sm ${muted}`}>No matching projects found.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {smartResult.projects.map((p: any) => (
+                      <Link
+                        key={p.id}
+                        href={`/projects/${p.id}`}
+                        className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${dark ? 'hover:bg-white/[0.04]' : 'hover:bg-zinc-50'}`}
+                      >
+                        <span className="truncate">{p.name}</span>
+                        <span className={`text-xs shrink-0 ml-3 ${muted}`}>
+                          {new Date(p.created_at).toLocaleDateString()}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Recent Projects */}
@@ -220,7 +277,6 @@ export default function Home() {
             <WelcomeState firstName={user?.firstName || undefined} />
           ) : (
             <div className="space-y-6">
-              {/* Processing */}
               {processing.length > 0 && (
                 <div>
                   <h3
@@ -250,7 +306,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Completed */}
               {completed.length > 0 && (
                 <div>
                   <h3
@@ -301,208 +356,6 @@ export default function Home() {
               )}
             </div>
           )}
-        </div>
-
-        {/* Company Research */}
-        <div id="research">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-semibold text-base tracking-tight">Company Research</h2>
-            <span className="text-xs text-blue-500 font-medium px-2 py-0.5 rounded-full bg-blue-500/10">
-              AI-Powered
-            </span>
-          </div>
-
-          <div className={`p-5 rounded-xl border ${card}`}>
-            <p className={`text-sm mb-4 ${muted}`}>
-              Enter a company website URL to get an instant AI breakdown of products, audiences, and
-              top competitors.
-            </p>
-            <div className="flex gap-2">
-              <div
-                className={`flex items-center gap-2 flex-1 px-3 py-2.5 rounded-lg border ${input}`}
-              >
-                <Globe2 size={14} className={muted} />
-                <input
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleResearch()}
-                  placeholder="https://example.com"
-                  className="flex-1 bg-transparent outline-none text-sm"
-                />
-              </div>
-              <button
-                onClick={handleResearch}
-                disabled={!url || researching}
-                className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {researching && (
-                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                )}
-                {researching ? 'Analyzing...' : 'Analyze'}
-              </button>
-            </div>
-
-            {/* Research Results */}
-            {research && (
-              <div className="mt-6 space-y-3">
-                <div>
-                  <h3 className="font-bold text-lg">{research.company_name}</h3>
-                  <p className={`text-sm mt-1 ${muted}`}>{research.description}</p>
-                </div>
-
-                {/* Accordion sections */}
-                {[
-                  {
-                    key: 'news',
-                    icon: Newspaper,
-                    label: 'Recent News',
-                    iconColor: 'text-blue-500',
-                    content: (
-                      <div
-                        className={`divide-y ${dark ? 'divide-white/[0.05]' : 'divide-zinc-100'}`}
-                      >
-                        {news.length === 0 ? (
-                          <div className="p-4 flex items-center gap-2">
-                            <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                            <span className={`text-xs ${muted}`}>Fetching latest news...</span>
-                          </div>
-                        ) : (
-                          news.map((n: any, i: number) => (
-                            <div key={i} className={`p-3 ${dark ? 'bg-[#0d0d14]' : 'bg-white'}`}>
-                              <div className="flex items-start justify-between gap-2 mb-1">
-                                <p className="text-sm font-medium leading-snug">{n.headline}</p>
-                                <span
-                                  className={`shrink-0 text-xs px-1.5 py-0.5 rounded-full ${
-                                    n.sentiment === 'positive'
-                                      ? 'bg-emerald-500/10 text-emerald-400'
-                                      : n.sentiment === 'negative'
-                                        ? 'bg-red-500/10 text-red-400'
-                                        : 'bg-white/5 text-white/30'
-                                  }`}
-                                >
-                                  {n.sentiment}
-                                </span>
-                              </div>
-                              <p className={`text-xs mb-1 ${muted}`}>{n.summary}</p>
-                              <div className="flex items-center gap-2">
-                                <span className={`text-xs font-medium ${muted}`}>
-                                  {n.publication}
-                                </span>
-                                <span className={`text-xs ${muted}`}>·</span>
-                                <span className={`text-xs ${muted}`}>{n.date}</span>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'products',
-                    icon: Package,
-                    label: 'Products & Services',
-                    iconColor: 'text-blue-500',
-                    content: (
-                      <div
-                        className={`grid grid-cols-1 sm:grid-cols-2 gap-px ${dark ? 'bg-white/[0.05]' : 'bg-zinc-100'}`}
-                      >
-                        {research.products?.map((p: any, i: number) => (
-                          <div key={i} className={`p-3 ${dark ? 'bg-[#0d0d14]' : 'bg-white'}`}>
-                            <p className="text-sm font-medium">{p.name}</p>
-                            <p className={`text-xs mt-0.5 ${muted}`}>{p.description}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'audiences',
-                    icon: Users,
-                    label: 'Audience Map',
-                    iconColor: 'text-purple-500',
-                    content: (
-                      <div className="p-3 space-y-2">
-                        {research.audiences?.map((a: any, i: number) => (
-                          <div
-                            key={i}
-                            className={`p-3 rounded-lg border ${dark ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}
-                          >
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="text-sm font-semibold">{a.role}</span>
-                              <span
-                                className={`text-xs px-2 py-0.5 rounded-full border ${TIER_COLORS[a.tier] || TIER_COLORS.individual}`}
-                              >
-                                {a.seniority}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                              <div>
-                                <p className={`font-medium mb-1 ${muted}`}>Cares about</p>
-                                <ul className="space-y-0.5">
-                                  {a.cares_about?.map((c: string, j: number) => (
-                                    <li key={j} className="flex items-center gap-1">
-                                      <span className="w-1 h-1 rounded-full bg-blue-500 inline-block" />
-                                      {c}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                              <div>
-                                <p className={`font-medium mb-1 ${muted}`}>Narrative style</p>
-                                <p className={dark ? 'text-white/70' : 'text-zinc-600'}>
-                                  {a.narrative_style}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ),
-                  },
-                  {
-                    key: 'competitors',
-                    icon: Swords,
-                    label: 'Top Competitors',
-                    iconColor: 'text-red-400',
-                    content: (
-                      <div
-                        className={`grid grid-cols-1 sm:grid-cols-2 gap-px ${dark ? 'bg-white/[0.05]' : 'bg-zinc-100'}`}
-                      >
-                        {research.competitors?.map((c: any, i: number) => (
-                          <div key={i} className={`p-3 ${dark ? 'bg-[#0d0d14]' : 'bg-white'}`}>
-                            <p className="text-sm font-medium">{c.name}</p>
-                            <p className={`text-xs mt-0.5 ${muted}`}>{c.description}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ),
-                  },
-                ].map(({ key, icon: Icon, label, iconColor, content }) => (
-                  <div
-                    key={key}
-                    className={`rounded-xl border overflow-hidden ${dark ? 'border-white/[0.07]' : 'border-zinc-200'}`}
-                  >
-                    <button
-                      onClick={() =>
-                        setExpandedSection(expandedSection === (key as any) ? null : (key as any))
-                      }
-                      className={`w-full flex items-center justify-between px-4 py-3 text-sm font-medium ${dark ? 'bg-white/[0.03] hover:bg-white/[0.05]' : 'bg-zinc-50 hover:bg-zinc-100'} transition-colors`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <Icon size={13} className={iconColor} /> {label}
-                      </span>
-                      {expandedSection === key ? (
-                        <ChevronUp size={13} className={muted} />
-                      ) : (
-                        <ChevronDown size={13} className={muted} />
-                      )}
-                    </button>
-                    {expandedSection === key && content}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       </main>
     </div>
