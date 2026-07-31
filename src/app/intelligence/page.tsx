@@ -4,7 +4,6 @@ import { useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
 import Navbar from '@/components/Navbar'
-import IntelligenceSubNav from '@/components/IntelligenceSubNav'
 import IntelligencePreview from '@/components/IntelligencePreview'
 import { useTheme } from '@/hooks/useTheme'
 import { TrendingUp, Building2, Users } from 'lucide-react'
@@ -14,6 +13,11 @@ import Link from 'next/link'
 // with an actual breakdown, since landing here with no explanation at all
 // wastes the chance to show someone what's actually in the hub before they
 // click into a specific section.
+//
+// The top pill subnav (IntelligenceSubNav) was removed from this page —
+// the three cards below now ARE the navigation into each section, so a
+// second redundant nav bar above them just duplicated the same three
+// destinations.
 export default function IntelligenceHubPage() {
   const { user, isLoaded } = useUser()
   const { dark } = useTheme()
@@ -32,8 +36,6 @@ export default function IntelligenceHubPage() {
   const cards = [
     {
       icon: TrendingUp,
-      color: 'text-blue-400',
-      bg: 'bg-blue-500/10',
       title: 'User Behavior',
       description:
         'Real-time public interest tracking — Wikipedia and YouTube signal for any topic, company, or competitor.',
@@ -41,16 +43,12 @@ export default function IntelligenceHubPage() {
     },
     {
       icon: Building2,
-      color: 'text-purple-400',
-      bg: 'bg-purple-500/10',
       title: 'Company Benchmarks',
       description: 'Your own metrics, trended over time. Coming soon.',
-      href: null,
+      href: '/intelligence/company-benchmarks',
     },
     {
       icon: Users,
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-500/10',
       title: 'Crowd Insights',
       description:
         'Anonymized industry benchmarks pooled from real contributions across every industry.',
@@ -61,9 +59,8 @@ export default function IntelligenceHubPage() {
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
-      <IntelligenceSubNav />
 
-      <main className="px-6 max-w-5xl mx-auto pb-20 pt-6">
+      <main className="px-6 max-w-5xl mx-auto pb-20 pt-20">
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight mb-1">Intelligence</h1>
           <p className={`text-sm ${muted}`}>
@@ -72,29 +69,22 @@ export default function IntelligenceHubPage() {
           </p>
         </div>
 
-        {/* Quick-nav cards */}
+        {/* Quick-nav cards — every card is now a real Link, since all three
+            sections have a live destination. Icons render plain (no colored
+            box), same treatment as the Pillars/Pipeline cards on About. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
           {cards.map((c) => {
             const Icon = c.icon
-            const content = (
-              <div
-                className={`p-5 rounded-2xl border h-full ${card} ${c.href ? 'hover:border-blue-500/40 transition-colors' : ''}`}
-              >
-                <span
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${c.bg}`}
-                >
-                  <Icon size={18} className={c.color} />
-                </span>
-                <p className="font-semibold text-sm mb-1">{c.title}</p>
-                <p className={`text-xs leading-relaxed ${muted}`}>{c.description}</p>
-              </div>
-            )
-            return c.href ? (
+            return (
               <Link key={c.title} href={c.href}>
-                {content}
+                <div
+                  className={`p-5 rounded-2xl border h-full ${card} hover:border-[#5DCAA5]/40 transition-colors`}
+                >
+                  <Icon size={26} strokeWidth={2.25} className="text-[#5DCAA5] mb-3" />
+                  <p className="font-semibold text-sm mb-1">{c.title}</p>
+                  <p className={`text-xs leading-relaxed ${muted}`}>{c.description}</p>
+                </div>
               </Link>
-            ) : (
-              <div key={c.title}>{content}</div>
             )
           })}
         </div>
