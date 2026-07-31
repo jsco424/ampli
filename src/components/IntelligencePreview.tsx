@@ -12,7 +12,7 @@ import {
   BarChart2,
 } from 'lucide-react'
 
-type SectionKey = 'behavior' | 'benchmarks' | 'crowd'
+export type SectionKey = 'behavior' | 'benchmarks' | 'crowd'
 
 const SECTIONS: {
   key: SectionKey
@@ -157,10 +157,29 @@ interface Props {
   // signed in yet). 'hub' = signed-in /intelligence overview, shows a real
   // "Open" link into the actual page for sections that exist.
   variant: 'marketing' | 'hub'
+  // Controlled active tab — optional. When a parent passes `active` +
+  // `onActiveChange`, this component defers to them entirely instead of
+  // tracking its own state, so something outside (like the quick-nav cards
+  // on the Intelligence hub page) can drive which tab is showing without
+  // this component ever navigating away on its own. When omitted (as on
+  // the public landing page, which has nothing external driving it), this
+  // falls back to its own internal state exactly as before.
+  active?: SectionKey
+  onActiveChange?: (key: SectionKey) => void
 }
 
-export default function IntelligencePreview({ dark = false, variant }: Props) {
-  const [active, setActive] = useState<SectionKey>('behavior')
+export default function IntelligencePreview({
+  dark = false,
+  variant,
+  active: activeProp,
+  onActiveChange,
+}: Props) {
+  const [internalActive, setInternalActive] = useState<SectionKey>('behavior')
+  const active = activeProp ?? internalActive
+  const setActive = (key: SectionKey) => {
+    if (onActiveChange) onActiveChange(key)
+    else setInternalActive(key)
+  }
   const activeSection = SECTIONS.find((s) => s.key === active)!
 
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-[#EAEFF1] border-zinc-200'
