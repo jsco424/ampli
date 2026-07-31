@@ -42,7 +42,7 @@ export default function ExportsDropdown({ projectId, dark }: { projectId: string
   if (exports.length === 0) return null
 
   const dropdownBg = dark ? 'bg-[#111118] border-white/[0.08]' : 'bg-white border-zinc-200'
-  const rowHover = dark ? 'hover:bg-white/[0.04]' : 'hover:bg-zinc-50'
+  const rowHover = dark ? 'hover:bg-white/[0.04]' : 'hover:bg-[#EAEFF1]'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
 
   return (
@@ -56,7 +56,7 @@ export default function ExportsDropdown({ projectId, dark }: { projectId: string
         className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border transition-colors ${
           dark
             ? 'border-white/[0.08] text-white/50 hover:bg-white/[0.04]'
-            : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'
+            : 'border-zinc-200 text-zinc-500 hover:bg-[#EAEFF1]'
         }`}
       >
         <FileDown size={11} />

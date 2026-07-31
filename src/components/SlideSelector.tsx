@@ -226,7 +226,7 @@ export default function SlideSelector({
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const inputCls = dark
     ? 'bg-zinc-800 border-zinc-700 text-zinc-200 placeholder-zinc-500'
-    : 'bg-zinc-50 border-zinc-200 text-zinc-800 placeholder-zinc-400'
+    : 'bg-[#EAEFF1] border-zinc-200 text-zinc-800 placeholder-zinc-400'
 
   const selectedCount = Object.keys(selected).length
   const atLimit = selectedCount >= MAX_SLIDES
@@ -509,7 +509,7 @@ export default function SlideSelector({
   const cardBase = (isSelected: boolean, disabled: boolean) =>
     `rounded-2xl border transition-all cursor-pointer ${
       isSelected
-        ? 'border-blue-500 bg-blue-500/8'
+        ? 'border-[#5DCAA5] bg-[#5DCAA5]/8'
         : dark
           ? 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
           : 'bg-white border-zinc-200 hover:border-zinc-300'
@@ -524,7 +524,7 @@ export default function SlideSelector({
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h2 className="font-bold text-base mb-1 flex items-center gap-2">
-              <Sparkles size={15} className="text-blue-400" />
+              <Sparkles size={15} className="text-[#5DCAA5]" />
               Select What to Export
             </h2>
             <p className={`text-xs leading-relaxed ${subtle}`}>
@@ -544,7 +544,7 @@ export default function SlideSelector({
           {Array.from({ length: MAX_SLIDES }).map((_, i) => (
             <div
               key={i}
-              className={`h-1.5 flex-1 rounded-full transition-colors ${i < selectedCount ? 'bg-blue-500' : dark ? 'bg-zinc-700' : 'bg-zinc-200'}`}
+              className={`h-1.5 flex-1 rounded-full transition-colors ${i < selectedCount ? 'bg-[#5DCAA5]' : dark ? 'bg-zinc-700' : 'bg-zinc-200'}`}
             />
           ))}
           <span className={`text-[11px] shrink-0 ml-1 ${subtle}`}>
@@ -562,7 +562,7 @@ export default function SlideSelector({
           <div
             className={`p-6 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}
           >
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             <p className={`text-xs ${subtle}`}>AI is building your visuals...</p>
           </div>
         ) : charts.length > 0 ? (
@@ -593,7 +593,7 @@ export default function SlideSelector({
                       }
                     >
                       {isSelected ? (
-                        <CheckCircle2 size={15} className="text-blue-500" />
+                        <CheckCircle2 size={15} className="text-[#5DCAA5]" />
                       ) : (
                         <Circle size={15} className={subtle} />
                       )}
@@ -608,7 +608,7 @@ export default function SlideSelector({
                         </div>
                         {canIndex && (
                           <div
-                            className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+                            className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-[#EAEFF1]'}`}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
@@ -640,7 +640,7 @@ export default function SlideSelector({
                       </div>
                       <p className="text-sm font-semibold truncate mb-1">{chart.title}</p>
                       {chart.hero_stat && (
-                        <p className="text-xl font-black leading-none text-blue-400">
+                        <p className="text-xl font-black leading-none text-[#5DCAA5]">
                           {chart.hero_stat}
                         </p>
                       )}
@@ -714,7 +714,7 @@ export default function SlideSelector({
                         }
                       >
                         {isSelected ? (
-                          <CheckCircle2 size={15} className="text-blue-500" />
+                          <CheckCircle2 size={15} className="text-[#5DCAA5]" />
                         ) : (
                           <Circle size={15} className={subtle} />
                         )}
@@ -767,7 +767,7 @@ export default function SlideSelector({
                         }
                       >
                         {isSelected ? (
-                          <CheckCircle2 size={15} className="text-blue-500" />
+                          <CheckCircle2 size={15} className="text-[#5DCAA5]" />
                         ) : (
                           <Circle size={15} className={subtle} />
                         )}
@@ -831,7 +831,7 @@ export default function SlideSelector({
                       }
                     >
                       {isSelected ? (
-                        <CheckCircle2 size={15} className="text-blue-500" />
+                        <CheckCircle2 size={15} className="text-[#5DCAA5]" />
                       ) : (
                         <Circle size={15} className={subtle} />
                       )}
@@ -844,7 +844,7 @@ export default function SlideSelector({
                         {recommendations.map((rec, idx) => (
                           <div key={idx} className="flex items-baseline gap-2">
                             {rec.stat && (
-                              <span className="text-sm font-black text-blue-400 shrink-0">
+                              <span className="text-sm font-black text-[#5DCAA5] shrink-0">
                                 {rec.stat}
                               </span>
                             )}
@@ -970,7 +970,7 @@ export default function SlideSelector({
                             }
                           >
                             {isSelected ? (
-                              <CheckCircle2 size={15} className="text-blue-500" />
+                              <CheckCircle2 size={15} className="text-[#5DCAA5]" />
                             ) : (
                               <Circle size={15} className={subtle} />
                             )}
@@ -1023,7 +1023,7 @@ export default function SlideSelector({
                             }
                           >
                             {isSelected ? (
-                              <CheckCircle2 size={15} className="text-blue-500" />
+                              <CheckCircle2 size={15} className="text-[#5DCAA5]" />
                             ) : (
                               <Circle size={15} className={subtle} />
                             )}
@@ -1085,7 +1085,7 @@ export default function SlideSelector({
             <button
               onClick={() => onExport('pdf', buildExportSelections())}
               disabled={isExporting}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shrink-0 disabled:opacity-40"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors shrink-0 disabled:opacity-40"
             >
               {isExporting ? (
                 <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />

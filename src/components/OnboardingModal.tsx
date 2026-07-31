@@ -24,8 +24,8 @@ const STEPS = [
   {
     id: 'welcome',
     icon: Sparkles,
-    color: 'text-blue-500',
-    bg: 'bg-blue-500/10',
+    color: 'text-[#5DCAA5]',
+    bg: 'bg-[#5DCAA5]/10',
     title: 'Welcome to amp-li',
     subtitle: 'stories, not spreadsheets',
     description:
@@ -40,8 +40,8 @@ const STEPS = [
     // their limits before they start using the thing that consumes them.
     id: 'plan',
     icon: Zap,
-    color: 'text-zinc-400',
-    bg: 'bg-zinc-500/10',
+    color: 'text-[#5DCAA5]',
+    bg: 'bg-[#5DCAA5]/10',
     title: "You're on the Starter plan",
     subtitle: 'Your account',
     description:
@@ -55,8 +55,8 @@ const STEPS = [
   {
     id: 'research',
     icon: Globe,
-    color: 'text-emerald-500',
-    bg: 'bg-emerald-500/10',
+    color: 'text-[#5DCAA5]',
+    bg: 'bg-[#5DCAA5]/10',
     title: 'Research your target',
     subtitle: 'Step 1',
     description:
@@ -70,8 +70,8 @@ const STEPS = [
   {
     id: 'upload',
     icon: UploadCloud,
-    color: 'text-purple-500',
-    bg: 'bg-purple-500/10',
+    color: 'text-[#5DCAA5]',
+    bg: 'bg-[#5DCAA5]/10',
     title: 'Upload your data',
     subtitle: 'Step 2',
     description:
@@ -85,8 +85,8 @@ const STEPS = [
   {
     id: 'generate',
     icon: Sparkles,
-    color: 'text-amber-500',
-    bg: 'bg-amber-500/10',
+    color: 'text-[#5DCAA5]',
+    bg: 'bg-[#5DCAA5]/10',
     title: 'Generate your story',
     subtitle: 'Step 3',
     description:
@@ -100,8 +100,8 @@ const STEPS = [
   {
     id: 'present',
     icon: Presentation,
-    color: 'text-red-400',
-    bg: 'bg-red-500/10',
+    color: 'text-[#5DCAA5]',
+    bg: 'bg-[#5DCAA5]/10',
     title: 'Present or export',
     subtitle: 'Step 4',
     description:
@@ -214,7 +214,7 @@ export default function OnboardingModal({ onComplete }: Props) {
 
           {/* Tips */}
           {current.tips && (
-            <div className={`rounded-2xl p-4 space-y-2 ${dark ? 'bg-zinc-800' : 'bg-zinc-50'}`}>
+            <div className={`rounded-2xl p-4 space-y-2 ${dark ? 'bg-zinc-800' : 'bg-[#EAEFF1]'}`}>
               {current.tips.map((tip, i) => (
                 <div key={i} className="flex items-start gap-2.5">
                   <div

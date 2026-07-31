@@ -119,7 +119,7 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
   const [showMath, setShowMath] = useState(false)
   const subtle = dark ? 'text-zinc-500' : 'text-zinc-400'
   const divider = dark ? 'border-zinc-800' : 'border-zinc-100'
-  const collapsedBg = dark ? 'bg-zinc-800/60' : 'bg-zinc-100'
+  const collapsedBg = dark ? 'bg-zinc-800/60' : 'bg-[#EAEFF1]'
   const expandedBg = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
   const bm = finding.benchmarkContext
   const hasFormula =
@@ -132,7 +132,7 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
     <button
       onClick={() => setExpanded(!expanded)}
       className={`w-full text-left rounded-2xl border transition-all overflow-hidden ${
-        expanded ? expandedBg : `${collapsedBg} border-transparent hover:border-blue-500/30`
+        expanded ? expandedBg : `${collapsedBg} border-transparent hover:border-[#5DCAA5]/30`
       }`}
     >
       {/* Collapsed — number + short label only */}
@@ -181,7 +181,7 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
                   e.stopPropagation()
                   setShowMath(!showMath)
                 }}
-                className={`inline-flex items-center gap-1 text-[10px] font-medium cursor-pointer ${dark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}
+                className="inline-flex items-center gap-1 text-[10px] font-medium cursor-pointer text-[#5DCAA5] hover:opacity-80"
               >
                 {showMath ? 'Hide' : 'Show'} the math
                 <ChevronDown
@@ -191,7 +191,7 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
               </span>
               {showMath && (
                 <div
-                  className={`mt-2 p-3 rounded-xl text-[11px] ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-zinc-50 border border-zinc-200'}`}
+                  className={`mt-2 p-3 rounded-xl text-[11px] ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-[#EAEFF1] border border-zinc-200'}`}
                 >
                   <p className={`font-mono mb-2 ${dark ? 'text-zinc-300' : 'text-zinc-700'}`}>
                     {FORMULA_LABELS[finding.formulaType as string] || finding.formulaType}
@@ -210,7 +210,7 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
 
           {bm && (
             <div
-              className={`mt-3 p-3 rounded-xl ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-zinc-50 border border-zinc-200'}`}
+              className={`mt-3 p-3 rounded-xl ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-[#EAEFF1] border border-zinc-200'}`}
             >
               <p className={`text-[10px] font-semibold uppercase tracking-wide mb-1 ${subtle}`}>
                 Industry Benchmark · {bm.metricLabel}
@@ -246,9 +246,9 @@ function AnomalyItem({ anomaly, dark }: { anomaly: Anomaly; dark: boolean }) {
   const config = {
     info: {
       icon: <Info size={13} />,
-      color: 'text-blue-400',
-      bg: dark ? 'bg-blue-500/8' : 'bg-blue-50',
-      border: dark ? 'border-blue-500/20' : 'border-blue-200',
+      color: dark ? 'text-[#5DCAA5]' : 'text-[#080C14]',
+      bg: dark ? 'bg-[#5DCAA5]/[0.06]' : 'bg-[#5DCAA5]/10',
+      border: dark ? 'border-[#5DCAA5]/20' : 'border-[#5DCAA5]/30',
     },
     warning: {
       icon: <AlertTriangle size={13} />,
@@ -300,7 +300,7 @@ function ConversationTurn({
     <div className="space-y-4">
       <div className="flex justify-end">
         <div
-          className={`max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm ${dark ? 'bg-blue-500/20 text-blue-200' : 'bg-blue-50 text-blue-800'}`}
+          className={`max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm ${dark ? 'bg-[#5DCAA5]/20 text-[#5DCAA5]' : 'bg-[#5DCAA5]/10 text-[#080C14]'}`}
         >
           {question}
         </div>
@@ -308,7 +308,7 @@ function ConversationTurn({
 
       <div className={`rounded-2xl border p-4 ${card}`}>
         <div className="flex items-center gap-2 mb-3">
-          <Sparkles size={12} className="text-blue-400" />
+          <Sparkles size={12} className="text-[#5DCAA5]" />
           <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtler}`}>
             Follow-up Analysis · Turn {turnIndex + 1}
           </p>
@@ -438,12 +438,12 @@ export default function AnalysisView({
     <div className="space-y-8">
       <div>
         <div className="flex items-center gap-2 mb-3">
-          <Sparkles size={13} className="text-blue-400" />
+          <Sparkles size={13} className="text-[#5DCAA5]" />
           <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtler}`}>
             Analysis
             {analysis.detectedDataType && analysis.detectedDataType !== 'unknown' && (
               <span
-                className={`ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}
+                className={`ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-[#EAEFF1] text-zinc-500'}`}
               >
                 {analysis.detectedDataType.replace('_', ' ')}
               </span>
@@ -516,7 +516,7 @@ export default function AnalysisView({
                     <div className={`border-t overflow-x-auto ${divider}`}>
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className={dark ? 'bg-zinc-800/60' : 'bg-zinc-50'}>
+                          <tr className={dark ? 'bg-zinc-800/60' : 'bg-[#EAEFF1]'}>
                             {table.headers.map((h, hi) => (
                               <th
                                 key={hi}
@@ -531,7 +531,7 @@ export default function AnalysisView({
                           {table.rows.map((row, ri) => (
                             <tr
                               key={ri}
-                              className={`border-t ${divider} ${dark ? 'hover:bg-zinc-800/40' : 'hover:bg-zinc-50'}`}
+                              className={`border-t ${divider} ${dark ? 'hover:bg-zinc-800/40' : 'hover:bg-[#EAEFF1]'}`}
                             >
                               {row.map((cell, ci) => (
                                 <td
@@ -573,7 +573,7 @@ export default function AnalysisView({
             <AlertTriangle size={11} className="text-amber-400" />
             Flags & Anomalies
             <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-[#EAEFF1] text-zinc-500'}`}
             >
               {analysis.anomalies.length}
             </span>
@@ -608,7 +608,7 @@ export default function AnalysisView({
         </p>
         {chartsGenerating ? (
           <div className={`p-6 rounded-2xl border text-center ${card}`}>
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             <p className={`text-xs ${subtle}`}>AI is building your visuals...</p>
           </div>
         ) : charts.length > 0 ? (
@@ -623,7 +623,7 @@ export default function AnalysisView({
                     <h3 className="font-semibold text-sm">{chart.title}</h3>
                     {canIndex && (
                       <div
-                        className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+                        className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-[#EAEFF1]'}`}
                       >
                         <button
                           onClick={() =>
@@ -682,7 +682,7 @@ export default function AnalysisView({
             </p>
             <button
               onClick={onBuildVisuals}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-xs font-medium hover:bg-blue-600 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#080C14] text-white text-xs font-medium hover:bg-[#0F1420] transition-colors"
             >
               <BarChart3 size={13} />
               Build Visuals
@@ -705,7 +705,7 @@ export default function AnalysisView({
         </p>
         {recommendationsGenerating ? (
           <div className={`p-6 rounded-2xl border text-center ${card}`}>
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             <p className={`text-xs ${subtle}`}>AI is building your recommendations...</p>
           </div>
         ) : recommendations.length > 0 ? (
@@ -717,7 +717,7 @@ export default function AnalysisView({
                   {rec.title}
                 </p>
                 {rec.stat && (
-                  <p className="text-xl font-black leading-none text-blue-400 mb-2">
+                  <p className="text-xl font-black leading-none text-[#5DCAA5] mb-2">
                     {rec.stat}
                     {rec.stat_label && (
                       <span className={`text-xs font-medium ml-1.5 ${subtle}`}>
@@ -749,7 +749,7 @@ export default function AnalysisView({
             <button
               onClick={onBuildRecommendations}
               disabled={charts.length === 0}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 text-white text-xs font-medium hover:bg-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#080C14] text-white text-xs font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Lightbulb size={13} />
               Build Recommendations
@@ -802,8 +802,8 @@ export default function AnalysisView({
                   disabled={isLoading}
                   className={`text-xs px-3 py-1.5 rounded-xl border transition-colors text-left ${
                     dark
-                      ? 'border-zinc-700 text-zinc-300 hover:border-blue-500 hover:text-blue-300'
-                      : 'border-zinc-200 text-zinc-600 hover:border-blue-400 hover:text-blue-600'
+                      ? 'border-zinc-700 text-zinc-300 hover:border-[#5DCAA5] hover:text-[#5DCAA5]'
+                      : 'border-zinc-200 text-zinc-600 hover:border-[#5DCAA5] hover:text-[#5DCAA5]'
                   } disabled:opacity-40`}
                 >
                   {q}
@@ -828,14 +828,14 @@ export default function AnalysisView({
               }
               className={`flex-1 text-sm px-4 py-2.5 rounded-xl border outline-none transition-colors disabled:opacity-40 ${
                 dark
-                  ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500 focus:border-blue-500'
-                  : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400 focus:border-blue-400'
+                  ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500 focus:border-[#5DCAA5]'
+                  : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400 focus:border-[#5DCAA5]'
               }`}
             />
             <button
               onClick={handleFollowUp}
               disabled={!followUpInput.trim() || isLoading}
-              className="px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-40 flex items-center gap-2 shrink-0"
+              className="px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 flex items-center gap-2 shrink-0"
             >
               {isLoading && <RefreshCw size={12} className="animate-spin" />}
               {isLoading ? 'Thinking…' : 'Ask'}
@@ -863,7 +863,7 @@ export default function AnalysisView({
         <button
           onClick={onBuildSlides}
           disabled={isLoading}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors shrink-0 disabled:opacity-40"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors shrink-0 disabled:opacity-40"
         >
           <PresentationIcon size={14} />
           Build Slides

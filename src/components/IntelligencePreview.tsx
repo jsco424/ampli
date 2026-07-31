@@ -98,7 +98,7 @@ function BenchmarksMock({ dark }: { dark: boolean }) {
             key={c}
             className={`text-[11px] px-2.5 py-1 rounded-full border ${
               i === 0
-                ? 'bg-blue-500/15 border-blue-500/30 text-blue-400'
+                ? 'bg-[#5DCAA5]/15 border-[#5DCAA5]/30 text-[#5DCAA5]'
                 : dark
                   ? 'border-white/10 text-zinc-400'
                   : 'border-zinc-200 text-zinc-500'
@@ -118,7 +118,7 @@ function BenchmarksMock({ dark }: { dark: boolean }) {
           {[40, 45, 42, 58, 61, 70].map((h, i) => (
             <div
               key={i}
-              className="flex-1 rounded-t-sm bg-blue-500/60"
+              className="flex-1 rounded-t-sm bg-[#5DCAA5]/60"
               style={{ height: `${h}%` }}
             />
           ))}
@@ -163,7 +163,7 @@ export default function IntelligencePreview({ dark = false, variant }: Props) {
   const [active, setActive] = useState<SectionKey>('behavior')
   const activeSection = SECTIONS.find((s) => s.key === active)!
 
-  const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-zinc-50 border-zinc-200'
+  const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-[#EAEFF1] border-zinc-200'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
 
   return (
@@ -197,7 +197,7 @@ export default function IntelligencePreview({ dark = false, variant }: Props) {
               active === s.key
                 ? dark
                   ? 'bg-white/10 text-white'
-                  : 'bg-zinc-900 text-white'
+                  : 'bg-[#080C14] text-white'
                 : dark
                   ? 'text-white/40 hover:text-white/70'
                   : 'text-zinc-500 hover:text-zinc-800'
@@ -219,7 +219,7 @@ export default function IntelligencePreview({ dark = false, variant }: Props) {
           {variant === 'hub' && activeSection.href && (
             <Link
               href={activeSection.href}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-xs font-medium hover:bg-blue-400 transition-colors shrink-0"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#080C14] text-white text-xs font-medium hover:bg-[#0F1420] transition-colors shrink-0"
             >
               Open <ArrowRight size={12} />
             </Link>
