@@ -102,3 +102,60 @@ export function extractAllMetrics(
   }
   return result
 }
+
+// Extracts metrics directly from already-built chart data, as a
+// better-quality alternative to extractAllMetrics()'s raw column
+// averages. Chart titles and data are what Claude actually curated as the
+// meaningful numbers in the deck (e.g. "Click Through Rate", "Revenue by
+// Month"), not a blind scan of every column in the dataset, and this adds
+// zero cost since charts are already computed by the time recording
+// happens, no extra Anthropic call.
+//
+// Deliberately conservative: only single-series charts (exactly one
+// numeric key per data point) are handled. Multi-series charts (e.g. a
+// chart with both a "new" and "returning" key) are skipped rather than
+// guessed at, since there's no reliable way to know which series should
+// become the standalone benchmark metric without real added complexity
+// for what's a minority of charts.
+export function extractMetricsFromCharts(
+  charts: { title: string; type?: string; data: Record<string, any>[] }[] | undefined
+): Record<string, { value: number; label: string; mode: 'level' | 'growth' }> {
+  const result: Record<string, { value: number; label: string; mode: 'level' | 'growth' }> = {}
+  for (const chart of charts || []) {
+    if (!chart?.title || !chart?.data || chart.data.length === 0) continue
+
+    const firstPoint = chart.data[0]
+    const numericKeys = Object.keys(firstPoint).filter(
+      (k) => k !== 'name' && typeof firstPoint[k] === 'number'
+    )
+    if (numericKeys.length !== 1) continue
+    const seriesKey = numericKeys[0]
+
+    const { key, label } = normalizeMetricName(chart.title)
+    const mode = metricStorageMode(chart.title)
+
+    let value: number | null = null
+    if (mode === 'level') {
+      // Rate-like metric (CTR, ROAS, conversion, etc.) — the most recent
+      // point is the current snapshot, same number a user would read
+      // straight off the chart.
+      const latest = chart.data[chart.data.length - 1][seriesKey]
+      if (typeof latest === 'number') value = latest
+    } else if (chart.data.length >= 2) {
+      // Growth-type metric (revenue, customers, etc.) — percent change
+      // from first to last point, same formula dataSummary.ts's
+      // changeFirstToLastPct already uses, computed here from the chart's
+      // own data instead of the full raw dataset.
+      const first = chart.data[0][seriesKey]
+      const last = chart.data[chart.data.length - 1][seriesKey]
+      if (typeof first === 'number' && typeof last === 'number' && first !== 0) {
+        value = ((last - first) / Math.abs(first)) * 100
+      }
+    }
+
+    if (typeof value === 'number' && !(key in result)) {
+      result[key] = { value: round2(value) as number, label, mode }
+    }
+  }
+  return result
+}

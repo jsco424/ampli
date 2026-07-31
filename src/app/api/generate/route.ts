@@ -347,16 +347,22 @@ ${rawSample || ''}`,
     // Company Benchmarks trigger — fire and forget, deliberately independent
     // of the crowd opt-in above (own-history tracking vs. pooled industry
     // data are two separate decisions). Uses the userId/email of whoever is
-    // signed in and running this generation, and the same parsed data
-    // summary already computed for chartVarietyHint. recordCompanyBenchmarks
-    // itself no-ops for personal email domains and never throws (it logs and
-    // swallows its own errors) — but this whole block is ALSO wrapped in its
-    // own try/catch, because auth()/currentUser() themselves can throw (e.g.
-    // missing Clerk context on a given request), and the project row above
-    // has already been saved with status: 'completed' and real charts by
-    // this point. Without this isolation, a thrown error here would fall
-    // into the outer catch below and overwrite that already-successful save
-    // back to status: 'failed', even though generation actually succeeded.
+    // signed in and running this generation, the already-parsed data summary
+    // (chartVarietyHint's parsedDataSummary) as a fallback source, AND now
+    // coreResult.charts as the higher-quality source — recordCompanyBenchmarks
+    // prefers metrics derived from the actual built charts over raw column
+    // stats wherever both exist, since chart data is what Claude curated as
+    // meaningful rather than a blind average of every column, at zero added
+    // Anthropic cost since these charts are already built by this point.
+    // recordCompanyBenchmarks itself no-ops for personal email domains and
+    // never throws (it logs and swallows its own errors) — but this whole
+    // block is ALSO wrapped in its own try/catch, because auth()/currentUser()
+    // themselves can throw (e.g. missing Clerk context on a given request),
+    // and the project row above has already been saved with status:
+    // 'completed' and real charts by this point. Without this isolation, a
+    // thrown error here would fall into the outer catch below and overwrite
+    // that already-successful save back to status: 'failed', even though
+    // generation actually succeeded.
     try {
       const { userId } = await auth()
       if (userId) {
@@ -368,6 +374,7 @@ ${rawSample || ''}`,
           userEmail,
           projectId,
           metrics: parsedDataSummary ?? undefined,
+          charts: coreResult.charts,
         }).catch(console.error)
       }
     } catch (benchmarkErr) {

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { extractAllMetrics } from './metricNormalization'
+import { extractAllMetrics, extractMetricsFromCharts } from './metricNormalization'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -83,18 +83,29 @@ export function deriveCompanyKey(email: string | null | undefined): string | nul
 // running average (that's what crowd_insights does for the shared pool;
 // Company Benchmarks needs each project to stay its own point in time so
 // it can be charted as a real trend).
+//
+// Two sources are merged: raw column stats from the data summary
+// (extractAllMetrics) and, where available, metrics pulled directly from
+// the deck's own charts (extractMetricsFromCharts). Chart-derived metrics
+// win on a key collision, since they reflect what Claude actually
+// surfaced as meaningful for the deck rather than a blind average of
+// every column. Raw stats still fill in anything the charts didn't cover.
 export async function recordCompanyBenchmarks(params: {
   userId: string
   userEmail: string | null
   projectId: string
   metrics: Record<string, any> | undefined
+  charts?: { title: string; type?: string; data: Record<string, any>[] }[]
 }): Promise<void> {
-  const { userId, userEmail, projectId, metrics } = params
+  const { userId, userEmail, projectId, metrics, charts } = params
 
   const companyKey = deriveCompanyKey(userEmail)
   if (!companyKey) return // personal email domain or no email — nothing to record
 
-  const extracted = extractAllMetrics(metrics)
+  const fromSummary = extractAllMetrics(metrics)
+  const fromCharts = extractMetricsFromCharts(charts)
+  const extracted = { ...fromSummary, ...fromCharts }
+
   const rows = Object.entries(extracted).map(([key, data]) => ({
     company_key: companyKey,
     project_id: projectId,

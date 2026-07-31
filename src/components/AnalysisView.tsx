@@ -687,6 +687,9 @@ export default function AnalysisView({
               <BarChart3 size={13} />
               Build Visuals
             </button>
+            <p className={`text-[11px] mt-3 ${subtle}`}>
+              This also adds a new data point to your Company Benchmarks.
+            </p>
           </div>
         )}
       </div>
