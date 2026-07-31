@@ -259,7 +259,10 @@ export default function CrowdInsightsPage() {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
 
-  const CROWD_UNLOCK_THRESHOLD = 5
+  // TEMP FOR TESTING — normally 5, set to 0 to bypass the "contribute N
+  // datasets to unlock" gate while testing. Revert to 5 before real users
+  // see this again.
+  const CROWD_UNLOCK_THRESHOLD = 0
 
   const [optedInCount, setOptedInCount] = useState(0)
 
