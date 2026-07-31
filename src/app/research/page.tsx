@@ -26,7 +26,7 @@ import {
 
 const TIER_COLORS: Record<string, string> = {
   executive: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  director: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  director: 'bg-[#5DCAA5]/10 text-[#5DCAA5] border-[#5DCAA5]/20',
   manager: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   individual: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
 }
@@ -310,11 +310,11 @@ export default function ResearchPage() {
     .sort((a, b) => b.composite_score - a.composite_score)
 
   // ── Token-based styles ──────────────────────────────────────────────
-  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-[#080C14]'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const input = dark
     ? 'bg-white/[0.04] border-white/[0.08] text-white placeholder-white/25'
-    : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'
+    : 'bg-white border-zinc-300 text-[#080C14] placeholder-zinc-400'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
 
   if (!isLoaded || !user) return null
@@ -335,7 +335,7 @@ export default function ResearchPage() {
         <div className="mb-10">
           <div className="flex items-center justify-between mb-5">
             <h2 className="font-semibold text-base tracking-tight">Company Research</h2>
-            <span className="text-xs text-blue-500 font-medium px-2 py-0.5 rounded-full bg-blue-500/10">
+            <span className="text-xs text-[#5DCAA5] font-medium px-2 py-0.5 rounded-full bg-[#5DCAA5]/10">
               AI Powered
             </span>
           </div>
@@ -361,7 +361,7 @@ export default function ResearchPage() {
               <button
                 onClick={handleResearch}
                 disabled={!url || researching}
-                className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-5 py-2.5 rounded-lg bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {researching && (
                   <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -382,14 +382,14 @@ export default function ResearchPage() {
                     key: 'news',
                     icon: Newspaper,
                     label: 'Recent News',
-                    iconColor: 'text-blue-500',
+                    iconColor: 'text-[#5DCAA5]',
                     content: (
                       <div
                         className={`divide-y ${dark ? 'divide-white/[0.05]' : 'divide-zinc-100'}`}
                       >
                         {news.length === 0 ? (
                           <div className="p-4 flex items-center gap-2">
-                            <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                            <div className="w-3 h-3 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
                             <span className={`text-xs ${muted}`}>Fetching latest news...</span>
                           </div>
                         ) : (
@@ -427,7 +427,7 @@ export default function ResearchPage() {
                     key: 'products',
                     icon: Package,
                     label: 'Products & Services',
-                    iconColor: 'text-blue-500',
+                    iconColor: 'text-[#5DCAA5]',
                     content: (
                       <div
                         className={`grid grid-cols-1 sm:grid-cols-2 gap-px ${dark ? 'bg-white/[0.05]' : 'bg-zinc-100'}`}
@@ -467,7 +467,7 @@ export default function ResearchPage() {
                                 <ul className="space-y-0.5">
                                   {a.cares_about?.map((c: string, j: number) => (
                                     <li key={j} className="flex items-center gap-1">
-                                      <span className="w-1 h-1 rounded-full bg-blue-500 inline-block" />
+                                      <span className="w-1 h-1 rounded-full bg-[#5DCAA5] inline-block" />
                                       {c}
                                     </li>
                                   ))}
@@ -540,7 +540,7 @@ export default function ResearchPage() {
           <div className={`rounded-xl border overflow-hidden ${card}`}>
             {recentLoading ? (
               <div className="flex items-center justify-center py-8">
-                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
               </div>
             ) : recentSearches.length === 0 ? (
               <p className={`text-xs p-4 ${muted}`}>No searches yet — try one above.</p>
@@ -578,7 +578,7 @@ export default function ResearchPage() {
 
           {companiesLoading ? (
             <div className="flex items-center justify-center py-16">
-              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <div className="w-5 h-5 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : companies.length === 0 ? (
             <div className={`p-10 rounded-xl border text-center ${card}`}>
@@ -594,7 +594,7 @@ export default function ResearchPage() {
                   value={companySearch}
                   onChange={(e) => setCompanySearch(e.target.value)}
                   placeholder="Filter companies…"
-                  className={`flex-1 px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${dark ? 'bg-white/[0.03] border-white/10 text-white placeholder-white/25' : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder-zinc-400'}`}
+                  className={`flex-1 px-3 py-2 rounded-lg border text-sm outline-none transition-colors ${dark ? 'bg-white/[0.03] border-white/10 text-white placeholder-white/25' : 'bg-zinc-50 border-zinc-200 text-[#080C14] placeholder-zinc-400'}`}
                 />
                 <span className={`text-xs shrink-0 ${muted}`}>
                   {filteredCompanies.length} tracked
@@ -605,7 +605,7 @@ export default function ResearchPage() {
                   <button
                     key={c.topic}
                     onClick={() => openCompanyDetail(c.topic)}
-                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-left transition-colors hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${card}`}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-left transition-colors hover:border-[#5DCAA5]/40 hover:bg-[#5DCAA5]/[0.03] ${card}`}
                   >
                     <span className="text-sm font-medium truncate">{c.topic}</span>
                     <div className="flex items-center gap-3 shrink-0">
@@ -668,7 +668,7 @@ export default function ResearchPage() {
 
               {detailLoading ? (
                 <div className="flex items-center justify-center py-10">
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : (
                 <>
@@ -690,7 +690,7 @@ export default function ResearchPage() {
                                 className={`flex-1 h-2 rounded-full overflow-hidden ${dark ? 'bg-white/5' : 'bg-zinc-100'}`}
                               >
                                 <div
-                                  className="h-full bg-blue-500 rounded-full"
+                                  className="h-full bg-[#5DCAA5] rounded-full"
                                   style={{ width: `${s.signal_score}%` }}
                                 />
                               </div>

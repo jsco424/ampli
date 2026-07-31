@@ -38,13 +38,13 @@ interface GammaTheme {
 
 const DEFAULT_SETTINGS: BrandSettings = {
   brand_name: '',
-  brand_primary_color: '#3b82f6',
+  brand_primary_color: '#5DCAA5',
   brand_logo_url: '',
   gamma_theme_id: '',
 }
 
 const COLOR_PRESETS = [
-  '#3b82f6',
+  '#5DCAA5',
   '#8b5cf6',
   '#10b981',
   '#f59e0b',
@@ -79,7 +79,7 @@ function swatchColorFromKeywords(keywords: string[] | undefined | null): string 
   if (k.some((w) => ['orange', 'coral', 'peach'].includes(w))) return '#7c2d12'
   if (k.some((w) => ['white', 'light', 'cream', 'ivory', 'snow'].includes(w))) return '#e2e8f0'
   if (k.some((w) => ['gray', 'grey', 'slate', 'ash'].includes(w))) return '#334155'
-  return '#3b82f6'
+  return '#5DCAA5'
 }
 
 function swatchTextColor(bg: string): string {
@@ -204,14 +204,14 @@ export default function BrandSettingsPage() {
     return matchesSearch && matchesFilter
   })
 
-  const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  const base = dark ? 'bg-[#080C14] text-white' : 'bg-zinc-50 text-[#080C14]'
+  const card = dark ? 'bg-[#080C14] border-zinc-800' : 'bg-white border-zinc-200'
   const input = dark
-    ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500 focus:border-blue-500'
-    : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400 focus:border-blue-400'
+    ? 'bg-[#0F1420] border-zinc-700 text-white placeholder-zinc-500 focus:border-[#5DCAA5]'
+    : 'bg-white border-zinc-300 text-[#080C14] placeholder-zinc-400 focus:border-[#5DCAA5]'
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
-  const section = dark ? 'bg-zinc-800/50 border-zinc-700' : 'bg-zinc-50 border-zinc-200'
+  const section = dark ? 'bg-[#0F1420]/50 border-zinc-700' : 'bg-zinc-50 border-zinc-200'
 
   const logoIsPublic =
     settings.brand_logo_url.startsWith('https://') && !settings.brand_logo_url.includes('localhost')
@@ -231,7 +231,7 @@ export default function BrandSettingsPage() {
         <div className="space-y-4">
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center gap-2 mb-4">
-              <Building2 size={15} className="text-blue-400" />
+              <Building2 size={15} className="text-[#5DCAA5]" />
               <p className="font-semibold text-sm">Brand Name</p>
             </div>
             <input
@@ -247,7 +247,7 @@ export default function BrandSettingsPage() {
 
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center gap-2 mb-4">
-              <Palette size={15} className="text-blue-400" />
+              <Palette size={15} className="text-[#5DCAA5]" />
               <p className="font-semibold text-sm">Primary Color</p>
             </div>
             <div className="flex flex-wrap gap-2 mb-4">
@@ -284,7 +284,7 @@ export default function BrandSettingsPage() {
                     })
                   }
                 }}
-                placeholder="#3b82f6"
+                placeholder="#5DCAA5"
                 maxLength={7}
                 className={`flex-1 px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
               />
@@ -300,7 +300,7 @@ export default function BrandSettingsPage() {
 
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center gap-2 mb-4">
-              <Image size={15} className="text-blue-400" />
+              <Image size={15} className="text-[#5DCAA5]" />
               <p className="font-semibold text-sm">Logo URL</p>
             </div>
             <input
@@ -349,13 +349,13 @@ export default function BrandSettingsPage() {
           <div className={`p-5 rounded-2xl border ${card}`}>
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
-                <Sparkles size={15} className="text-blue-400" />
+                <Sparkles size={15} className="text-[#5DCAA5]" />
                 <p className="font-semibold text-sm">Presentation Theme</p>
               </div>
               <button
                 onClick={fetchThemes}
                 disabled={themesLoading}
-                className={`p-1.5 rounded-lg transition-colors ${dark ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-100 text-zinc-500'}`}
+                className={`p-1.5 rounded-lg transition-colors ${dark ? 'hover:bg-[#0F1420] text-zinc-400' : 'hover:bg-zinc-100 text-zinc-500'}`}
                 title="Refresh themes"
               >
                 <RefreshCw size={13} className={themesLoading ? 'animate-spin' : ''} />
@@ -368,7 +368,7 @@ export default function BrandSettingsPage() {
 
             {selectedTheme && (
               <div
-                className={`flex items-center gap-3 p-3 rounded-xl border mb-4 ${dark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'}`}
+                className={`flex items-center gap-3 p-3 rounded-xl border mb-4 ${dark ? 'bg-[#5DCAA5]/10 border-[#5DCAA5]/30' : 'bg-[#5DCAA5]/10 border-[#5DCAA5]'}`}
               >
                 <div
                   className="w-8 h-8 rounded-lg shrink-0"
@@ -380,7 +380,7 @@ export default function BrandSettingsPage() {
                     {(selectedTheme.toneKeywords || []).slice(0, 4).join(', ')}
                   </p>
                 </div>
-                <CheckCircle2 size={15} className="text-blue-500 shrink-0" />
+                <CheckCircle2 size={15} className="text-[#5DCAA5] shrink-0" />
               </div>
             )}
 
@@ -421,7 +421,7 @@ export default function BrandSettingsPage() {
                           </span>
                           {isSelected && <CheckCircle2 size={13} className="text-amber-400" />}
                         </div>
-                        <div className={`px-2.5 py-2 ${dark ? 'bg-zinc-800' : 'bg-white'}`}>
+                        <div className={`px-2.5 py-2 ${dark ? 'bg-[#0F1420]' : 'bg-white'}`}>
                           <p className="text-xs font-semibold truncate">{theme.name}</p>
                         </div>
                       </button>
@@ -439,13 +439,13 @@ export default function BrandSettingsPage() {
                 className={`flex-1 px-3 py-2 rounded-xl border text-xs outline-none transition-colors ${input}`}
               />
               <div
-                className={`flex items-center rounded-xl border p-0.5 text-xs shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-zinc-100'}`}
+                className={`flex items-center rounded-xl border p-0.5 text-xs shrink-0 ${dark ? 'border-zinc-700 bg-[#0F1420]' : 'border-zinc-200 bg-zinc-100'}`}
               >
                 {(['all', 'standard', 'custom'] as const).map((f) => (
                   <button
                     key={f}
                     onClick={() => setThemeFilter(f)}
-                    className={`px-2.5 py-1 rounded-lg transition-colors capitalize ${themeFilter === f ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
+                    className={`px-2.5 py-1 rounded-lg transition-colors capitalize ${themeFilter === f ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-[#080C14] shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
                   >
                     {f}
                   </button>
@@ -479,7 +479,7 @@ export default function BrandSettingsPage() {
                       onClick={() => setSettings({ ...settings, gamma_theme_id: theme.id })}
                       className={`text-left rounded-xl border overflow-hidden transition-all hover:scale-[1.02] ${
                         isSelected
-                          ? 'border-blue-500 ring-1 ring-blue-500'
+                          ? 'border-[#5DCAA5] ring-1 ring-[#5DCAA5]'
                           : dark
                             ? 'border-zinc-700 hover:border-zinc-600'
                             : 'border-zinc-200 hover:border-zinc-300'
@@ -495,14 +495,14 @@ export default function BrandSettingsPage() {
                         >
                           Aa
                         </span>
-                        {isSelected && <CheckCircle2 size={13} className="text-blue-400" />}
+                        {isSelected && <CheckCircle2 size={13} className="text-[#5DCAA5]" />}
                         {theme.type === 'custom' && (
                           <span className="absolute top-1 right-1 text-[8px] px-1 py-0.5 rounded bg-black/30 text-white font-medium">
                             custom
                           </span>
                         )}
                       </div>
-                      <div className={`px-2.5 py-2 ${dark ? 'bg-zinc-800' : 'bg-white'}`}>
+                      <div className={`px-2.5 py-2 ${dark ? 'bg-[#0F1420]' : 'bg-white'}`}>
                         <p className="text-xs font-semibold truncate">{theme.name}</p>
                         <p className={`text-[10px] truncate mt-0.5 ${subtler}`}>
                           {(theme.toneKeywords || []).slice(0, 3).join(', ')}
@@ -567,7 +567,7 @@ export default function BrandSettingsPage() {
                 { field: 'Brand name', usage: 'Title slide and contextual references' },
               ].map(({ field, usage }) => (
                 <div key={field} className="flex items-center gap-2 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#5DCAA5] shrink-0" />
                   <span className={`font-medium w-24 shrink-0 ${subtle}`}>{field}</span>
                   <span className={subtler}>{usage}</span>
                 </div>
@@ -578,7 +578,7 @@ export default function BrandSettingsPage() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-400 transition-colors disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors disabled:opacity-50"
           >
             {saved ? (
               <>

@@ -133,11 +133,11 @@ export default function AdminPage() {
     }
   }
 
-  const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  const base = dark ? 'bg-[#080C14] text-white' : 'bg-zinc-50 text-[#080C14]'
+  const card = dark ? 'bg-[#080C14] border-zinc-800' : 'bg-white border-zinc-200'
   const input = dark
-    ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500 focus:border-blue-500'
-    : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400 focus:border-blue-400'
+    ? 'bg-[#0F1420] border-zinc-700 text-white placeholder-zinc-500 focus:border-[#5DCAA5]'
+    : 'bg-white border-zinc-300 text-[#080C14] placeholder-zinc-400 focus:border-[#5DCAA5]'
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
 
@@ -181,7 +181,7 @@ export default function AdminPage() {
             <button
               onClick={handleSearch}
               disabled={searching}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors disabled:opacity-50 shrink-0"
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-50 shrink-0"
             >
               <Search size={14} /> {searching ? 'Searching…' : 'Look Up'}
             </button>
@@ -277,7 +277,7 @@ export default function AdminPage() {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-400 transition-colors disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors disabled:opacity-50"
             >
               {saved ? (
                 <>

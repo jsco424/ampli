@@ -47,11 +47,11 @@ export default function Navbar() {
         {/* Logo */}
         <Link href="/dashboard" className="flex flex-col leading-none shrink-0 group">
           <span className="text-[17px] font-bold tracking-tight">
-            <span className="text-blue-500">a</span>
+            <span className="text-[#5DCAA5]">a</span>
             <span className={dark ? 'text-white/90' : 'text-zinc-500'}>mp</span>
-            <span className="text-blue-400/70">-</span>
+            <span className="text-[#F4A7B9]/70">-</span>
             <span className={dark ? 'text-white/90' : 'text-zinc-500'}>l</span>
-            <span className="text-blue-500">i</span>
+            <span className="text-[#5DCAA5]">i</span>
           </span>
           <span
             className={`text-[9px] tracking-widest font-medium uppercase ${dark ? 'text-white/25' : 'text-zinc-400'}`}
@@ -79,7 +79,7 @@ export default function Navbar() {
             >
               {link.label}
               {isActive(link.href) && (
-                <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-px rounded-full bg-blue-500" />
+                <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-px rounded-full bg-[#5DCAA5]" />
               )}
             </Link>
           ))}
@@ -91,7 +91,7 @@ export default function Navbar() {
           <Link
             href="/projects/new"
             className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150
-              bg-blue-500 text-white hover:bg-blue-400 shadow-sm shadow-blue-500/20`}
+              bg-[#080C14] text-white hover:bg-[#0F1420] shadow-sm shadow-[#080C14]/20`}
           >
             <UploadCloud size={12} strokeWidth={2.5} />
             New Project
@@ -174,7 +174,7 @@ export default function Navbar() {
             <Link
               href="/projects/new"
               onClick={() => setMobileOpen(false)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-blue-500 text-white hover:bg-blue-400 transition-colors mt-1"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold bg-[#080C14] text-white hover:bg-[#0F1420] transition-colors mt-1"
             >
               <UploadCloud size={14} />
               New Project

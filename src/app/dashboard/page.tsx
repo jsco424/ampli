@@ -125,11 +125,11 @@ export default function Home() {
   const completed = filtered.filter((p) => p.status === 'completed')
 
   // ── Token-based styles ──────────────────────────────────────────────────────
-  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-[#080C14]'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const input = dark
     ? 'bg-white/[0.04] border-white/[0.08] text-white placeholder-white/25'
-    : 'bg-white border-zinc-300 text-zinc-900 placeholder-zinc-400'
+    : 'bg-white border-zinc-300 text-[#080C14] placeholder-zinc-400'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
   const sectionLabel = dark ? 'text-white/30' : 'text-zinc-400'
 
@@ -161,9 +161,9 @@ export default function Home() {
               key={href}
               href={href}
               className={`flex items-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium transition-all
-                hover:border-blue-500/50 hover:bg-blue-500/5 ${card}`}
+                hover:border-[#5DCAA5]/50 hover:bg-[#5DCAA5]/5 ${card}`}
             >
-              <Icon size={15} className="text-blue-500 shrink-0" />
+              <Icon size={15} className="text-[#5DCAA5] shrink-0" />
               {label}
             </Link>
           ))}
@@ -172,7 +172,7 @@ export default function Home() {
         {/* Smart Search */}
         <div className="mb-10">
           <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={14} className="text-blue-500" />
+            <Sparkles size={14} className="text-[#5DCAA5]" />
             <h2 className="font-semibold text-base tracking-tight">Ask ampli</h2>
           </div>
           <div className={`p-4 rounded-xl border ${card}`}>
@@ -192,7 +192,7 @@ export default function Home() {
               <button
                 onClick={() => runSmartSearch(smartQuery)}
                 disabled={!smartQuery.trim() || smartLoading}
-                className="px-5 py-2.5 rounded-lg bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
+                className="px-5 py-2.5 rounded-lg bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
               >
                 {smartLoading && (
                   <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -262,11 +262,11 @@ export default function Home() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search projects..."
-                className={`px-3 py-1.5 rounded-lg border text-sm outline-none w-44 focus:border-blue-500/50 transition-colors ${input}`}
+                className={`px-3 py-1.5 rounded-lg border text-sm outline-none w-44 focus:border-[#5DCAA5]/50 transition-colors ${input}`}
               />
               <Link
                 href="/projects"
-                className="text-sm text-blue-500 flex items-center gap-1 hover:text-blue-400 transition-colors"
+                className="text-sm text-[#5DCAA5] flex items-center gap-1 hover:text-[#5DCAA5] transition-colors"
               >
                 View All <ArrowRight size={13} />
               </Link>
@@ -319,11 +319,11 @@ export default function Home() {
                       <div key={p.id} className="relative group">
                         <Link
                           href={`/projects/${p.id}`}
-                          className={`block p-4 rounded-xl border transition-all hover:border-blue-500/40 hover:bg-blue-500/[0.03] ${card}`}
+                          className={`block p-4 rounded-xl border transition-all hover:border-[#5DCAA5]/40 hover:bg-[#5DCAA5]/[0.03] ${card}`}
                         >
                           <div className="flex items-start justify-between mb-3">
-                            <div className="p-1.5 rounded-lg bg-blue-500/10">
-                              <BarChart2 size={14} className="text-blue-500" />
+                            <div className="p-1.5 rounded-lg bg-[#5DCAA5]/10">
+                              <BarChart2 size={14} className="text-[#5DCAA5]" />
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="flex items-center gap-1 text-xs text-emerald-500">
@@ -344,7 +344,7 @@ export default function Home() {
                             <Clock size={10} /> {new Date(p.created_at).toLocaleDateString()}
                           </div>
                           <div
-                            className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-blue-500 ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
+                            className={`mt-3 pt-3 border-t flex items-center gap-1 text-xs font-medium text-[#5DCAA5] ${dark ? 'border-white/[0.06]' : 'border-zinc-100'}`}
                           >
                             View Results <ArrowRight size={11} />
                           </div>

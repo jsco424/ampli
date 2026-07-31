@@ -511,15 +511,15 @@ export default function TrendsPage() {
   )
 
   // ── Token-based styles ────────────────────────────────────────────────
-  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-[#080C14]'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
   const tabBase =
     'px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2'
-  const tabActive = dark ? 'bg-white/10 text-white' : 'bg-zinc-900 text-white'
+  const tabActive = dark ? 'bg-white/10 text-white' : 'bg-[#080C14] text-white'
   const tabInactive = dark
     ? 'text-white/35 hover:text-white/70'
-    : 'text-zinc-500 hover:text-zinc-900'
+    : 'text-zinc-500 hover:text-[#080C14]'
 
   if (!isLoaded || !user) return null
 
@@ -548,7 +548,7 @@ export default function TrendsPage() {
                 }}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
                   compareMode
-                    ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
+                    ? 'border-[#5DCAA5]/50 bg-[#5DCAA5]/10 text-[#5DCAA5]'
                     : dark
                       ? 'border-white/[0.08] text-white/50 hover:bg-white/[0.04]'
                       : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
@@ -563,11 +563,11 @@ export default function TrendsPage() {
 
         {/* Info banner */}
         <div
-          className={`flex items-start gap-2.5 px-4 py-3 rounded-lg border mb-4 ${dark ? 'bg-blue-500/[0.06] border-blue-500/20' : 'bg-blue-50 border-blue-100'}`}
+          className={`flex items-start gap-2.5 px-4 py-3 rounded-lg border mb-4 ${dark ? 'bg-[#5DCAA5]/[0.06] border-[#5DCAA5]/20' : 'bg-[#5DCAA5]/10 border-[#5DCAA5]'}`}
         >
-          <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
+          <Info size={14} className="text-[#5DCAA5] shrink-0 mt-0.5" />
           <p
-            className={`text-xs leading-relaxed ${dark ? 'text-blue-200/70' : 'text-blue-900/70'}`}
+            className={`text-xs leading-relaxed ${dark ? 'text-[#5DCAA5]/70' : 'text-[#080C14]/70'}`}
           >
             Each dot is one topic. Horizontal position is current interest level relative to today's
             mix (dashed line marks the median); vertical position is momentum vs. last week.
@@ -582,7 +582,7 @@ export default function TrendsPage() {
         {/* Category rollup */}
         {category && categoryRollup !== null && (
           <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border mb-6 ${card}`}>
-            <Zap size={16} className="text-blue-500 shrink-0" />
+            <Zap size={16} className="text-[#5DCAA5] shrink-0" />
             <p className="text-sm">
               <span className="font-semibold">{categoryLabel(category)} overall</span> is{' '}
               <span className={`font-bold ${deltaColor(categoryRollup)}`}>
@@ -621,16 +621,16 @@ export default function TrendsPage() {
         {/* Compare mode banner */}
         {compareMode && (
           <div
-            className={`flex items-center justify-between gap-3 mb-4 px-4 py-3 rounded-lg border ${dark ? 'bg-blue-500/[0.06] border-blue-500/20' : 'bg-blue-50 border-blue-100'}`}
+            className={`flex items-center justify-between gap-3 mb-4 px-4 py-3 rounded-lg border ${dark ? 'bg-[#5DCAA5]/[0.06] border-[#5DCAA5]/20' : 'bg-[#5DCAA5]/10 border-[#5DCAA5]'}`}
           >
-            <p className={`text-xs ${dark ? 'text-blue-200/70' : 'text-blue-900/70'}`}>
+            <p className={`text-xs ${dark ? 'text-[#5DCAA5]/70' : 'text-[#080C14]/70'}`}>
               Select 2-{MAX_COMPARE_TOPICS} topics to overlay ({compareSelection.length}/
               {MAX_COMPARE_TOPICS} selected)
             </p>
             <button
               onClick={openComparison}
               disabled={compareSelection.length < 2}
-              className="px-3 py-1.5 rounded-lg bg-blue-500 text-white text-xs font-medium hover:bg-blue-400 transition-colors disabled:opacity-40 shrink-0"
+              className="px-3 py-1.5 rounded-lg bg-[#080C14] text-white text-xs font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 shrink-0"
             >
               View Comparison
             </button>
@@ -640,7 +640,7 @@ export default function TrendsPage() {
         {/* Quadrant matrix */}
         {categoriesLoading || loading ? (
           <div className="flex items-center justify-center py-20">
-            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : availableCategories.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
@@ -657,7 +657,7 @@ export default function TrendsPage() {
           </div>
         ) : (
           <div className={`relative p-4 rounded-xl border ${card}`}>
-            <div className="absolute top-4 left-4 text-[10px] font-semibold uppercase tracking-wide text-blue-500 z-10">
+            <div className="absolute top-4 left-4 text-[10px] font-semibold uppercase tracking-wide text-[#5DCAA5] z-10">
               Emerging
             </div>
             <div className="absolute top-4 right-4 text-[10px] font-semibold uppercase tracking-wide text-emerald-500 z-10">
@@ -724,7 +724,7 @@ export default function TrendsPage() {
                         >
                           <p className="font-semibold flex items-center gap-1">
                             {d.topic}
-                            {d.isNew && <Sparkles size={10} className="text-blue-400" />}
+                            {d.isNew && <Sparkles size={10} className="text-[#5DCAA5]" />}
                           </p>
                           <p className={muted}>
                             Score {d.composite_score} ·{' '}
@@ -782,10 +782,12 @@ export default function TrendsPage() {
                           key={d.topic}
                           onClick={() => handlePointClick(d.topic)}
                           className={`flex items-center gap-1 text-xs text-left hover:underline ${
-                            compareSelection.includes(d.topic) ? 'text-blue-500 font-medium' : muted
+                            compareSelection.includes(d.topic)
+                              ? 'text-[#5DCAA5] font-medium'
+                              : muted
                           }`}
                         >
-                          {d.isNew && <Sparkles size={9} className="text-blue-400 shrink-0" />}
+                          {d.isNew && <Sparkles size={9} className="text-[#5DCAA5] shrink-0" />}
                           {d.topic}
                         </button>
                       ))}
@@ -818,7 +820,7 @@ export default function TrendsPage() {
                   <h3 className="font-bold text-lg flex items-center gap-1.5">
                     {selectedTopic}
                     {isNewTopic(selectedTopic) && (
-                      <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-semibold">
+                      <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-[#5DCAA5]/15 text-[#5DCAA5] font-semibold">
                         <Sparkles size={9} /> New
                       </span>
                     )}
@@ -847,7 +849,7 @@ export default function TrendsPage() {
 
               {detailLoading ? (
                 <div className="flex items-center justify-center py-10">
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : (
                 <>
@@ -928,7 +930,7 @@ export default function TrendsPage() {
                                 className={`flex-1 h-2 rounded-full overflow-hidden ${dark ? 'bg-white/5' : 'bg-zinc-100'}`}
                               >
                                 <div
-                                  className="h-full bg-blue-500 rounded-full"
+                                  className="h-full bg-[#5DCAA5] rounded-full"
                                   style={{ width: `${s.signal_score}%` }}
                                 />
                               </div>
@@ -1004,7 +1006,7 @@ export default function TrendsPage() {
 
               {comparisonLoading ? (
                 <div className="flex items-center justify-center py-16">
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : comparisonData.length < 2 ? (
                 <p className={`text-xs ${muted}`}>

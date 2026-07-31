@@ -44,7 +44,7 @@ export default function AccountPage() {
       .catch(() => setLoading(false))
   }, [user])
 
-  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-[#080C14]'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
 
@@ -64,7 +64,7 @@ export default function AccountPage() {
 
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
           <div className="space-y-4">
@@ -74,14 +74,14 @@ export default function AccountPage() {
                 <div className="flex items-center gap-2">
                   <Sparkles
                     size={16}
-                    className={status?.isPaid ? 'text-blue-400' : 'text-zinc-400'}
+                    className={status?.isPaid ? 'text-[#5DCAA5]' : 'text-zinc-400'}
                   />
                   <p className="font-semibold">Current Plan</p>
                 </div>
                 <span
                   className={`text-xs font-semibold px-3 py-1 rounded-full ${
                     status?.tier === 'business'
-                      ? 'bg-blue-500/15 text-blue-400'
+                      ? 'bg-[#5DCAA5]/15 text-[#5DCAA5]'
                       : status?.tier === 'starter'
                         ? 'bg-amber-500/15 text-amber-400'
                         : dark
@@ -100,7 +100,7 @@ export default function AccountPage() {
               {status?.tier !== 'business' && (
                 <Link
                   href="/pricing"
-                  className="block text-center py-2.5 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
+                  className="block text-center py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-semibold hover:bg-[#0F1420] transition-colors"
                 >
                   {status?.tier === 'starter' ? 'Upgrade to Business' : 'View Plans'}
                 </Link>
@@ -115,7 +115,7 @@ export default function AccountPage() {
             {status?.tier === 'business' && (
               <div className={`p-6 rounded-2xl border ${card}`}>
                 <div className="flex items-center gap-2 mb-2">
-                  <Users size={16} className="text-blue-400" />
+                  <Users size={16} className="text-[#5DCAA5]" />
                   <p className="font-semibold">Team</p>
                 </div>
                 {status.isSeatHolder ? (
@@ -130,7 +130,7 @@ export default function AccountPage() {
                     </p>
                     <Link
                       href="/account/seats"
-                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors"
+                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-semibold hover:bg-[#0F1420] transition-colors"
                     >
                       Manage Seats
                     </Link>
@@ -160,7 +160,7 @@ export default function AccountPage() {
                   >
                     <div
                       className={`h-full rounded-full transition-all ${
-                        isNearLimit ? 'bg-amber-500' : 'bg-blue-500'
+                        isNearLimit ? 'bg-amber-500' : 'bg-[#5DCAA5]'
                       }`}
                       style={{ width: `${usagePct}%` }}
                     />
@@ -171,7 +171,7 @@ export default function AccountPage() {
                       <>
                         {' '}
                         Getting close to your limit —{' '}
-                        <Link href="/pricing" className="text-blue-400 hover:underline">
+                        <Link href="/pricing" className="text-[#5DCAA5] hover:underline">
                           upgrade for more room
                         </Link>
                         .
@@ -199,7 +199,7 @@ export default function AccountPage() {
               <button
                 onClick={() => openUserProfile()}
                 className={`flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                  dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
+                  dark ? 'border-zinc-700 hover:bg-[#0F1420]' : 'border-zinc-200 hover:bg-zinc-50'
                 }`}
               >
                 Manage Billing <ExternalLink size={13} />
@@ -219,7 +219,7 @@ export default function AccountPage() {
               <a
                 href="mailto:support@am-pli.com"
                 className={`flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                  dark ? 'border-zinc-700 hover:bg-zinc-800' : 'border-zinc-200 hover:bg-zinc-50'
+                  dark ? 'border-zinc-700 hover:bg-[#0F1420]' : 'border-zinc-200 hover:bg-zinc-50'
                 }`}
               >
                 Contact Support

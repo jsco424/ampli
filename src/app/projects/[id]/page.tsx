@@ -436,12 +436,16 @@ export default function ProjectViewPage() {
     XLSX.writeFile(workbook, `${project.file_name || 'charts'}_charts.xlsx`)
   }
 
+  // Chart color sequence for multi-series visuals — brand.primaryColor and
+  // secondaryColor come first since those are the user's own set colors,
+  // then the new site palette (green, pink) before the remaining distinct
+  // hues used for charts needing more than 4 series.
   const BRAND_COLORS = [
     brand.primaryColor,
     brand.secondaryColor,
-    '#10b981',
+    '#5DCAA5',
+    '#F4A7B9',
     '#f59e0b',
-    '#ef4444',
     '#06b6d4',
   ]
 

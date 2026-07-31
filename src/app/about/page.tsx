@@ -91,10 +91,10 @@ const ACCENT_STYLES: Record<
   { light: string; dark: string; text: string; textDark: string }
 > = {
   blue: {
-    light: 'bg-blue-50 border-blue-200',
-    dark: 'bg-blue-500/10 border-blue-500/20',
-    text: 'text-blue-600',
-    textDark: 'text-blue-400',
+    light: 'bg-[#5DCAA5]/10 border-[#5DCAA5]',
+    dark: 'bg-[#5DCAA5]/10 border-[#5DCAA5]/20',
+    text: 'text-[#5DCAA5]',
+    textDark: 'text-[#5DCAA5]',
   },
   amber: {
     light: 'bg-amber-50 border-amber-200',
@@ -183,7 +183,7 @@ export default function AboutPage() {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
 
-  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-zinc-900'
+  const base = dark ? 'bg-[#0a0a0f] text-white' : 'bg-[#f8f8fa] text-[#080C14]'
   const card = dark ? 'bg-[#111118] border-white/[0.07]' : 'bg-white border-zinc-200'
   const muted = dark ? 'text-white/40' : 'text-zinc-500'
 
@@ -200,7 +200,7 @@ export default function AboutPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
                 <div>
                   <div
-                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold mb-6 tracking-wide ${dark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600'}`}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold mb-6 tracking-wide ${dark ? 'bg-[#5DCAA5]/10 border-[#5DCAA5]/20 text-[#5DCAA5]' : 'bg-[#5DCAA5]/10 border-[#5DCAA5] text-[#5DCAA5]'}`}
                   >
                     <Sparkles size={11} />
                     What is ampli
@@ -216,7 +216,7 @@ export default function AboutPage() {
                   <div className="flex flex-wrap gap-3">
                     <Link
                       href="/projects/new"
-                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-400 transition-colors shadow-lg shadow-blue-500/20"
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors shadow-lg shadow-[#080C14]/20"
                     >
                       Start a Project <ArrowRight size={15} />
                     </Link>
@@ -232,12 +232,12 @@ export default function AboutPage() {
                 {/* Decorative icon collage, standing in for a data stack graphic */}
                 <div className="relative h-72 hidden md:block">
                   <div
-                    className={`absolute inset-0 m-auto w-56 h-56 rounded-full ${dark ? 'bg-blue-500/[0.06]' : 'bg-blue-50'}`}
+                    className={`absolute inset-0 m-auto w-56 h-56 rounded-full ${dark ? 'bg-[#5DCAA5]/[0.06]' : 'bg-[#5DCAA5]/10'}`}
                   />
                   <div
-                    className={`absolute top-2 right-6 w-24 h-24 rounded-3xl border flex items-center justify-center ${dark ? 'bg-blue-500/10 border-blue-500/20' : 'bg-blue-50 border-blue-200'}`}
+                    className={`absolute top-2 right-6 w-24 h-24 rounded-3xl border flex items-center justify-center ${dark ? 'bg-[#5DCAA5]/10 border-[#5DCAA5]/20' : 'bg-[#5DCAA5]/10 border-[#5DCAA5]'}`}
                   >
-                    <UploadCloud size={30} className={dark ? 'text-blue-400' : 'text-blue-600'} />
+                    <UploadCloud size={30} className={dark ? 'text-[#5DCAA5]' : 'text-[#5DCAA5]'} />
                   </div>
                   <div
                     className={`absolute top-24 left-2 w-28 h-28 rounded-3xl border flex items-center justify-center ${dark ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200'}`}
@@ -265,7 +265,7 @@ export default function AboutPage() {
             <section className="max-w-5xl mb-20">
               <div className="text-center mb-10">
                 <p
-                  className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? 'text-blue-400' : 'text-blue-600'}`}
+                  className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? 'text-[#5DCAA5]' : 'text-[#5DCAA5]'}`}
                 >
                   The pipeline
                 </p>
@@ -305,7 +305,7 @@ export default function AboutPage() {
             <section id="why-ampli" className="max-w-5xl mb-20 pt-8">
               <div className="text-center mb-10">
                 <p
-                  className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? 'text-blue-400' : 'text-blue-600'}`}
+                  className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? 'text-[#5DCAA5]' : 'text-[#5DCAA5]'}`}
                 >
                   A fair question
                 </p>
@@ -345,7 +345,7 @@ export default function AboutPage() {
             <section className="max-w-5xl mb-20">
               <div className="text-center mb-8">
                 <p
-                  className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? 'text-blue-400' : 'text-blue-600'}`}
+                  className={`text-xs font-semibold uppercase tracking-widest mb-2 ${dark ? 'text-[#5DCAA5]' : 'text-[#5DCAA5]'}`}
                 >
                   Side by side
                 </p>
@@ -366,7 +366,7 @@ export default function AboutPage() {
                   </div>
                   <div className="p-4">
                     <p
-                      className={`text-xs font-semibold uppercase tracking-wide ${dark ? 'text-blue-400' : 'text-blue-600'}`}
+                      className={`text-xs font-semibold uppercase tracking-wide ${dark ? 'text-[#5DCAA5]' : 'text-[#5DCAA5]'}`}
                     >
                       With ampli
                     </p>
@@ -422,7 +422,7 @@ export default function AboutPage() {
                   </p>
                   <Link
                     href="/projects/new"
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-400 transition-colors shadow-lg shadow-blue-500/20"
+                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors shadow-lg shadow-[#080C14]/20"
                   >
                     Start a Project <ArrowRight size={15} />
                   </Link>
@@ -450,7 +450,7 @@ export default function AboutPage() {
                         <a
                           key={item.label}
                           href={item.href}
-                          className={`flex items-center gap-1.5 text-xs hover:underline ${dark ? 'text-white/60 hover:text-white' : 'text-zinc-600 hover:text-zinc-900'}`}
+                          className={`flex items-center gap-1.5 text-xs hover:underline ${dark ? 'text-white/60 hover:text-white' : 'text-zinc-600 hover:text-[#080C14]'}`}
                         >
                           <Mail size={11} />
                           {item.label}
@@ -459,7 +459,7 @@ export default function AboutPage() {
                         <Link
                           key={item.label}
                           href={item.href}
-                          className={`block text-xs hover:underline ${dark ? 'text-white/60 hover:text-white' : 'text-zinc-600 hover:text-zinc-900'}`}
+                          className={`block text-xs hover:underline ${dark ? 'text-white/60 hover:text-white' : 'text-zinc-600 hover:text-[#080C14]'}`}
                         >
                           {item.label}
                         </Link>
