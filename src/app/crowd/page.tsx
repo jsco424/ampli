@@ -25,6 +25,7 @@ import {
   Lightbulb,
   RefreshCw,
   Download,
+  Info,
   ShoppingBag,
   HeartPulse,
   Cpu,
@@ -498,6 +499,13 @@ export default function CrowdInsightsPage() {
               {industries.reduce((sum, i) => sum + i.contribution_count, 0)} contributions across{' '}
               {industries.length} industries
             </p>
+            <Link
+              href="/crowd/methodology"
+              className="inline-flex items-center gap-1.5 text-xs font-medium mt-2 text-[#5DCAA5] hover:underline"
+            >
+              <Info size={12} />
+              How this is calculated
+            </Link>
           </div>
           <div
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}
