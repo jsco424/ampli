@@ -146,7 +146,15 @@ interface ResolvedStat {
   contributionCount: number
 }
 
+// Anonymization guardrail — a category backed by only one contribution is
+// both statistically meaningless and closer to identifying that single
+// contributor than a real pooled benchmark. Mirrors the same ≥2
+// contribution threshold already used for industry-level benchmark
+// injection in analyze/route.ts.
+const MIN_CATEGORY_CONTRIBUTIONS = 2
+
 function resolvePooledStat(stat: PooledCategoryMetric): ResolvedStat | null {
+  if (stat.contributionCount < MIN_CATEGORY_CONTRIBUTIONS) return null
   if (stat.mode === 'rate') {
     if (stat.sumOfRowCountInCategory === 0) return null
     const value = round2(stat.sumOfMetricInCategory / stat.sumOfRowCountInCategory) as number
@@ -174,6 +182,15 @@ function resolvePooledStat(stat: PooledCategoryMetric): ResolvedStat | null {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100
+}
+
+// Display-only rounding for raw row counts shown alongside pooled stats
+// (state map, category breakdowns) — an exact count is one more small
+// signal that could help fingerprint a specific contributor's dataset size
+// when the pool is thin. This never touches the underlying sums used for
+// percentage/index math, only the human-readable count shown next to it.
+function roundForDisplay(n: number, nearest = 5): number {
+  return Math.round(n / nearest) * nearest
 }
 
 function downloadIndustryCSV(industry: any) {
@@ -728,7 +745,9 @@ export default function CrowdInsightsPage() {
                                               >
                                                 {stat.value.toLocaleString()}
                                                 {mapSuffix}{' '}
-                                                <span className={subtler}>(n={stat.n})</span>
+                                                <span className={subtler}>
+                                                  (n={roundForDisplay(stat.n)})
+                                                </span>
                                               </span>
                                             </div>
                                           ))}
@@ -781,7 +800,10 @@ export default function CrowdInsightsPage() {
                                       />
                                     </div>
                                     <span className={`text-xs w-24 text-right shrink-0 ${subtle}`}>
-                                      {s.sharePct}% <span className={subtler}>(rows={s.rows})</span>
+                                      {s.sharePct}%{' '}
+                                      <span className={subtler}>
+                                        (rows={roundForDisplay(s.rows)})
+                                      </span>
                                     </span>
                                   </div>
                                 ))}

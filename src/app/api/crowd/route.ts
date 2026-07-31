@@ -188,13 +188,18 @@ function extractAllMetrics(
   return result
 }
 
-// Common synonyms for dimension TYPES (the column itself — region vs
-// territory vs zone — not the category values inside it). Deliberately
-// conservative: only merges cases where the synonymy is high-confidence and
-// low-ambiguity. Generic terms like "category" or "segment" alone are NOT
-// merged, since a wrong merge (e.g. silently combining a product-category
-// breakdown with a customer-tier breakdown) actively corrupts the data —
-// worse than a missed merge, which just means slower pool growth.
+// ── Dimension pooling allowlist ─────────────────────────────────────────────
+// Only dimension TYPES on this list are ever pooled into the shared crowd
+// pool — anything that doesn't match a known synonym here is silently
+// dropped from the pool (it remains fully visible in the contributor's own
+// individual dataSummary view, unaffected — this only governs what gets
+// shared). This replaces the old approach of pooling any non-campaign-like
+// column under its own raw slug: an unbounded set of arbitrary column names
+// was too easy to accidentally pool as a "dimension" (a near-constant
+// product/program field, a fragmented SKU-style field), even though nothing
+// about those columns is a genuine, comparable segment across different
+// companies' uploads. Only small, standardized vocabularies that show up
+// across most companies regardless of industry are allowed through.
 const DIMENSION_TYPE_SYNONYMS: Record<string, string> = {
   region: 'region',
   territory: 'region',
@@ -220,6 +225,78 @@ const DIMENSION_TYPE_SYNONYMS: Record<string, string> = {
   state_code: 'state',
   ship_state: 'state',
   billing_state: 'state',
+  // Sales/deal stage — deliberately specific column names only. A generic
+  // name like "status" alone is NOT mapped, since it could mean almost
+  // anything depending on the dataset, and a wrong merge silently corrupts
+  // the pool (same conservatism as the rest of this table already used).
+  stage: 'sales_stage',
+  sales_stage: 'sales_stage',
+  deal_stage: 'sales_stage',
+  opportunity_stage: 'sales_stage',
+  pipeline_stage: 'sales_stage',
+  // Ad creative format — video/static/banner/carousel, a standardized
+  // vocabulary across basically every ad platform.
+  ad_type: 'ad_format',
+  ad_format: 'ad_format',
+  creative_type: 'ad_format',
+  creative_format: 'ad_format',
+  // New vs. returning / prospecting vs. retargeting — a near-universal
+  // binary flag in ad performance data.
+  audience_type: 'audience_type',
+  customer_type: 'audience_type',
+  new_returning: 'audience_type',
+  prospecting_retargeting: 'audience_type',
+  // Campaign objective (awareness/consideration/conversion) — the ad
+  // funnel stage, distinct from sales_stage above (the deal funnel).
+  objective: 'campaign_objective',
+  campaign_objective: 'campaign_objective',
+}
+
+// Maximum plausible distinct category count per dimension type. A genuine
+// "sales stage" column should have a handful of values (qualified, proposal,
+// closed won, etc.), not dozens — if a column normalized to a given type has
+// far more distinct values than that type could plausibly have, it was
+// likely misidentified (e.g. some other field that happens to share a
+// normalized slug), and gets dropped from the pool for this contribution
+// rather than pooled anyway. State is the one type genuinely expected to
+// have a large count (50 states + DC + occasional odd entries).
+const MAX_PLAUSIBLE_CATEGORIES: Record<string, number> = {
+  state: 60,
+  region: 20,
+  channel: 20,
+  product_category: 30,
+  customer_segment: 20,
+  device_platform: 10,
+  sales_stage: 15,
+  ad_format: 15,
+  audience_type: 10,
+  campaign_objective: 10,
+}
+const DEFAULT_MAX_PLAUSIBLE_CATEGORIES = 20
+
+// A dimension is skipped entirely for this contribution if its single
+// largest category holds this much share or more of the rows — nothing
+// meaningful to benchmark against a near-constant field (e.g. a "program"
+// column that's 100% one value for this contributor isn't a genuine
+// segment, it's closer to metadata).
+const NEAR_CONSTANT_SHARE_THRESHOLD = 95
+
+function normalizeDimensionName(raw: string): string | null {
+  const slug = raw.toLowerCase().trim().replace(/\s+/g, '_')
+  return DIMENSION_TYPE_SYNONYMS[slug] || null
+}
+
+// Cheap, deliberately conservative check for a category VALUE that looks
+// like an identifying label (a SKU code, an ID, a URL/email, or just an
+// implausibly long string) rather than a genuine short category name. This
+// does NOT attempt to detect "is this a person or company name" reliably —
+// that's a real NLP problem with no cheap, trustworthy answer — it only
+// catches the clearest, cheapest-to-detect cases of a non-generic value.
+function looksLikeIdentifyingValue(raw: string): boolean {
+  if (raw.length > 40) return true
+  if (/\d{4,}/.test(raw)) return true
+  if (/@/.test(raw) || /https?:\/\//i.test(raw)) return true
+  return false
 }
 
 // Campaign-name-style dimensions are excluded from the SHARED crowd pool
@@ -231,11 +308,6 @@ const DIMENSION_TYPE_SYNONYMS: Record<string, string> = {
 // campaign breakdown is genuinely useful in a user's own individual deck.
 function isCampaignLikeDimensionName(raw: string): boolean {
   return /campaign|ad[\s_-]?(name|set)/i.test(raw)
-}
-
-function normalizeDimensionName(raw: string): string {
-  const slug = raw.toLowerCase().trim().replace(/\s+/g, '_')
-  return DIMENSION_TYPE_SYNONYMS[slug] || slug
 }
 
 // What gets carried PER CATEGORY PER METRIC from a single contribution into
@@ -251,18 +323,22 @@ interface ContributionCategoryMetric {
   totalRowCount: number
 }
 
-// Extracts top-category shares for every dimension column (region, channel,
-// segment, etc.) so they can be merged into a running benchmark per category.
-// Pulls the RAW per-category accumulators (sum, rowCount, and this
-// contribution's grand totals) rather than a resolved average/index — see
-// PooledCategoryMetric for why resolving per-contributor and then averaging
-// is mathematically wrong for index-mode metrics, and a weaker approximation
-// even for rate-mode ones.
+// Extracts top-category shares for every ALLOWED dimension column (region,
+// channel, segment, sales stage, ad format, etc. — see
+// DIMENSION_TYPE_SYNONYMS) so they can be merged into a running benchmark
+// per category. Pulls the RAW per-category accumulators (sum, rowCount, and
+// this contribution's grand totals) rather than a resolved average/index —
+// see PooledCategoryMetric for why resolving per-contributor and then
+// averaging is mathematically wrong for index-mode metrics, and a weaker
+// approximation even for rate-mode ones.
 //
-// Campaign-like dimension columns are skipped entirely here (see
-// isCampaignLikeDimensionName) — they never enter the shared pool, though
-// they remain visible in the contributor's own single-upload view via
-// dataSummary.ts directly.
+// A dimension column is skipped ENTIRELY for this contribution (not merged
+// at all) in four cases: it isn't on the pooling allowlist, it's
+// campaign-like, its top category is near-constant, or it has implausibly
+// many distinct categories for its type. Category values that look like
+// identifying labels (SKU codes, IDs, URLs) are filtered out individually
+// rather than dropping the whole dimension. See the guardrail constants and
+// comments above for the reasoning behind each.
 //
 // NOTE: this normalizes the dimension TYPE name (so "Region"/"Territory"
 // merge), but does NOT normalize the category VALUES inside it (so "West"
@@ -286,30 +362,48 @@ function extractDimensionShares(
   for (const [dimName, dimSummary] of Object.entries(dimensions || {})) {
     if (isCampaignLikeDimensionName(dimName)) continue
 
+    const key = normalizeDimensionName(dimName)
+    if (!key) continue // not on the pooling allowlist
+    if (key in result) continue
+
     const top = dimSummary?.top
     const metricsByCategory = dimSummary?.metricsByCategory || {}
-    const key = normalizeDimensionName(dimName)
-    if (Array.isArray(top) && top.length > 0 && !(key in result)) {
-      result[key] = top.map((t: any) => {
-        const rawMetrics: Record<string, CategoryMetricStat> = metricsByCategory[t.name] || {}
-        const normalizedMetrics: Record<string, ContributionCategoryMetric> = {}
-        for (const [rawMetricName, stat] of Object.entries(rawMetrics)) {
-          if (!stat || typeof stat !== 'object' || !stat.raw) continue
-          const { key: mKey, label } = normalizeMetricName(rawMetricName)
-          if (!(mKey in normalizedMetrics)) {
-            normalizedMetrics[mKey] = {
-              mode: stat.mode,
-              label,
-              sum: stat.raw.sum,
-              rowCount: stat.raw.rowCount,
-              metricGrandTotal: stat.raw.metricGrandTotal,
-              totalRowCount: stat.raw.totalRowCount,
-            }
+    if (!Array.isArray(top) || top.length === 0) continue
+
+    // Near-constant guardrail.
+    if (typeof top[0]?.sharePct === 'number' && top[0].sharePct >= NEAR_CONSTANT_SHARE_THRESHOLD) {
+      continue
+    }
+
+    // Fragmentation guardrail — metricsByCategory holds an entry for every
+    // distinct category value in the file (not just the top 6), so this is
+    // the true distinct-category count for this dimension.
+    const totalDistinctCategories = Object.keys(metricsByCategory).length
+    const maxPlausible = MAX_PLAUSIBLE_CATEGORIES[key] ?? DEFAULT_MAX_PLAUSIBLE_CATEGORIES
+    if (totalDistinctCategories > maxPlausible) continue
+
+    const filteredTop = top.filter((t: any) => !looksLikeIdentifyingValue(String(t.name)))
+    if (filteredTop.length === 0) continue
+
+    result[key] = filteredTop.map((t: any) => {
+      const rawMetrics: Record<string, CategoryMetricStat> = metricsByCategory[t.name] || {}
+      const normalizedMetrics: Record<string, ContributionCategoryMetric> = {}
+      for (const [rawMetricName, stat] of Object.entries(rawMetrics)) {
+        if (!stat || typeof stat !== 'object' || !stat.raw) continue
+        const { key: mKey, label } = normalizeMetricName(rawMetricName)
+        if (!(mKey in normalizedMetrics)) {
+          normalizedMetrics[mKey] = {
+            mode: stat.mode,
+            label,
+            sum: stat.raw.sum,
+            rowCount: stat.raw.rowCount,
+            metricGrandTotal: stat.raw.metricGrandTotal,
+            totalRowCount: stat.raw.totalRowCount,
           }
         }
-        return { name: t.name, sharePct: t.sharePct, metrics: normalizedMetrics }
-      })
-    }
+      }
+      return { name: t.name, sharePct: t.sharePct, metrics: normalizedMetrics }
+    })
   }
   return result
 }
