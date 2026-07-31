@@ -334,11 +334,11 @@ export default function AboutPage() {
               return (
                 <div key={i} className="relative">
                   <div className={`p-5 rounded-2xl border h-full ${card}`}>
-                    <div
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center mb-4 border ${dark ? accent.dark : accent.light}`}
-                    >
-                      <Icon size={17} className={dark ? accent.textDark : accent.text} />
-                    </div>
+                    <Icon
+                      size={24}
+                      strokeWidth={2.25}
+                      className={`mb-4 ${dark ? accent.textDark : accent.text}`}
+                    />
                     <h3 className="font-bold text-sm mb-1.5">{step.title}</h3>
                     <p className={`text-xs leading-relaxed ${muted}`}>{step.description}</p>
                   </div>
@@ -381,11 +381,11 @@ export default function AboutPage() {
                   key={i}
                   className={`p-6 rounded-2xl border ${card} ${isWide ? 'sm:col-span-2' : ''}`}
                 >
-                  <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center mb-4 border ${dark ? accent.dark : accent.light}`}
-                  >
-                    <Icon size={17} className={dark ? accent.textDark : accent.text} />
-                  </div>
+                  <Icon
+                    size={26}
+                    strokeWidth={2.25}
+                    className={`mb-4 ${dark ? accent.textDark : accent.text}`}
+                  />
                   <h3 className="font-bold text-base mb-2">{p.title}</h3>
                   <p className={`text-sm leading-relaxed ${muted}`}>{p.description}</p>
                 </div>

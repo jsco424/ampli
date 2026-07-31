@@ -237,10 +237,12 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      {/* ── Hero ───────────────────────────────────────────────────────── */}
-      <section className="relative pt-36 pb-20 px-6">
+      {/* ── Hero — full bleed green band, matching the About page's
+          treatment, starting from the very top of the page behind the
+          fixed Navbar. ──────────────────────────────────────────────── */}
+      <section className="relative bg-[#5DCAA5] pt-32 pb-20 px-6 overflow-hidden">
         <div className="relative max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-zinc-200 text-zinc-500 text-xs font-medium mb-8 tracking-wide">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#080C14] text-white text-xs font-medium mb-8 tracking-wide">
             <Sparkles size={11} />
             Built for analysts who present, not just analyze
           </div>
@@ -253,7 +255,7 @@ export default function LandingPage() {
             </em>
           </h1>
 
-          <p className="text-lg sm:text-xl text-zinc-500 max-w-xl mx-auto mb-10 leading-relaxed">
+          <p className="text-lg sm:text-xl text-[#080C14]/70 max-w-xl mx-auto mb-10 leading-relaxed">
             ampli turns a spreadsheet into a verified, branded story built for the account and the
             decision maker in front of you.
           </p>
@@ -261,19 +263,19 @@ export default function LandingPage() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
             <Link
               href="/sign-up"
-              className="flex items-center gap-2 px-6 py-3.5 rounded-xl bg-[#080C14] text-white font-semibold hover:bg-[#0F1420] transition-all text-sm"
+              className="flex items-center gap-2 px-6 py-3.5 rounded-xl bg-[#080C14] text-white font-semibold hover:bg-[#0F1420] transition-all text-sm shadow-lg shadow-black/10"
             >
               Request a Demo <ArrowRight size={15} />
             </Link>
             <a
               href="#how-it-works"
-              className="flex items-center gap-2 px-6 py-3.5 rounded-xl border border-zinc-200 text-zinc-600 hover:text-[#080C14] hover:border-zinc-300 transition-all text-sm font-medium"
+              className="flex items-center gap-2 px-6 py-3.5 rounded-xl border border-[#080C14]/20 bg-white/40 text-[#080C14] hover:bg-white/70 transition-all text-sm font-medium"
             >
               <Play size={13} /> See how it works
             </a>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-zinc-200 rounded-2xl overflow-hidden border border-zinc-200">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/40 rounded-2xl overflow-hidden shadow-xl shadow-black/5">
             {STATS.map((stat, i) => (
               <div key={i} className="bg-white px-6 py-5 text-center">
                 <div className="text-3xl font-black text-[#080C14] mb-1">{stat.value}</div>
