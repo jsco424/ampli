@@ -532,7 +532,7 @@ export default function TrendsPage() {
         {/* Header */}
         <div className="mt-8 mb-4 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold mb-1 tracking-tight">User Behaviors</h1>
+            <h1 className="text-2xl font-bold mb-1 tracking-tight">Trending Content</h1>
             <p className={`text-sm ${muted}`}>
               What the public is actively researching right now — both topics and the categories
               themselves are discovered organically from real trending activity, not a fixed list,

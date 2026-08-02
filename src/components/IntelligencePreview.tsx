@@ -27,8 +27,8 @@ const SECTIONS: {
 }[] = [
   {
     key: 'behavior',
-    label: 'User Behavior',
-    shortLabel: 'Behavior',
+    label: 'Trending Content',
+    shortLabel: 'Trending',
     description:
       'Real-time public interest tracking — Wikipedia and YouTube signal for any topic, company, or competitor, updated daily.',
     href: '/trends',

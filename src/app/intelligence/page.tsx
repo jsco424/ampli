@@ -43,7 +43,7 @@ export default function IntelligenceHubPage() {
       {
         key: 'behavior',
         icon: TrendingUp,
-        title: 'User Behavior',
+        title: 'Trending Content',
         description:
           'Real-time public interest tracking — Wikipedia and YouTube signal for any topic, company, or competitor.',
       },

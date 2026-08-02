@@ -6,13 +6,13 @@ import { useTheme } from '@/hooks/useTheme'
 import { TrendingUp, Building2, Users } from 'lucide-react'
 
 // Shared tab bar rendered at the top of every Intelligence Hub section
-// (User Behavior, Company Benchmarks, Crowd Insights). Each section keeps
+// (Trending Content, Company Benchmarks, Crowd Insights). Each section keeps
 // its own existing URL (/trends, /crowd, etc.) rather than being physically
 // relocated under /intelligence — this component is what gives the
 // cohesive "hub" feel without the risk of moving large, already-working
 // page files and hunting down every internal link to their old URLs.
 const SECTIONS = [
-  { label: 'User Behavior', href: '/trends', icon: TrendingUp, active: true },
+  { label: 'Trending Content', href: '/trends', icon: TrendingUp, active: true },
   {
     label: 'Company Benchmarks',
     href: '/intelligence/company-benchmarks',
