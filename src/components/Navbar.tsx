@@ -49,7 +49,7 @@ export default function Navbar() {
             version reads on the light background, the light/white version
             reads on the dark background. Replaces the old CSS-styled text
             wordmark. */}
-        <Link href="/dashboard" className="flex flex-col leading-none shrink-0 group">
+        <Link href="/dashboard" className="flex items-center shrink-0 group">
           <Image
             src={dark ? '/logo-white.png' : '/logo-black.png'}
             alt="am-pli"
@@ -58,11 +58,6 @@ export default function Navbar() {
             className="h-[26px] w-auto"
             priority
           />
-          <span
-            className={`text-[9px] tracking-widest font-medium uppercase mt-1 ${dark ? 'text-white/25' : 'text-zinc-400'}`}
-          >
-            stories, not spreadsheets
-          </span>
         </Link>
 
         {/* Center nav — desktop */}
