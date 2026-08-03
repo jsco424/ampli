@@ -84,20 +84,31 @@ export function deriveCompanyKey(email: string | null | undefined): string | nul
 // Company Benchmarks needs each project to stay its own point in time so
 // it can be charted as a real trend).
 //
-// Two sources are merged: raw column stats from the data summary
+// Two metric sources are merged: raw column stats from the data summary
 // (extractAllMetrics) and, where available, metrics pulled directly from
 // the deck's own charts (extractMetricsFromCharts). Chart-derived metrics
 // win on a key collision, since they reflect what Claude actually
 // surfaced as meaningful for the deck rather than a blind average of
 // every column. Raw stats still fill in anything the charts didn't cover.
+//
+// targetCompany is stored alongside each row (nullable — most projects
+// have no target company at all) specifically so a later query can join a
+// benchmark contribution back to that company's own trend_topics/
+// trend_composite history, e.g. "was public interest in this company above
+// or below its own typical level around the time of this contribution."
+// Requires a target_company column on company_benchmark_history — see the
+// accompanying one-time SQL. Existing rows written before this column
+// existed simply have target_company = null and won't participate in that
+// correlation, only new contributions going forward will.
 export async function recordCompanyBenchmarks(params: {
   userId: string
   userEmail: string | null
   projectId: string
   metrics: Record<string, any> | undefined
   charts?: { title: string; type?: string; data: Record<string, any>[] }[]
+  targetCompany?: string | null
 }): Promise<void> {
-  const { userId, userEmail, projectId, metrics, charts } = params
+  const { userId, userEmail, projectId, metrics, charts, targetCompany } = params
 
   const companyKey = deriveCompanyKey(userEmail)
   if (!companyKey) return // personal email domain or no email — nothing to record
@@ -114,6 +125,7 @@ export async function recordCompanyBenchmarks(params: {
     metric_label: data.label,
     value: data.value,
     mode: data.mode,
+    target_company: targetCompany?.trim() || null,
   }))
 
   if (rows.length === 0) return

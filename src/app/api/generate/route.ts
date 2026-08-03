@@ -375,6 +375,7 @@ ${rawSample || ''}`,
           projectId,
           metrics: parsedDataSummary ?? undefined,
           charts: coreResult.charts,
+          targetCompany: targetCompany ?? null,
         }).catch(console.error)
       }
     } catch (benchmarkErr) {

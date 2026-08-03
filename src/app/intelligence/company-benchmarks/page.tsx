@@ -7,7 +7,7 @@ import Navbar from '@/components/Navbar'
 import IntelligenceSubNav from '@/components/IntelligenceSubNav'
 import ChartRenderer from '@/components/ChartRenderer'
 import { useTheme } from '@/hooks/useTheme'
-import { TrendingUp, TrendingDown, Minus, X, Info, Scale, Building2 } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, X, Info, Scale, Building2, Sparkles } from 'lucide-react'
 import {
   LineChart,
   Line,
@@ -45,6 +45,16 @@ interface HistoryPoint {
   value: number
   mode: string
   contributed_at: string
+}
+
+interface TrendImpactResult {
+  targetCompany: string
+  metricKey: string
+  metricLabel: string
+  mode: string
+  companyMedianScore: number
+  highInterest: { avg: number; count: number }
+  lowInterest: { avg: number; count: number }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -100,6 +110,13 @@ export default function CompanyBenchmarksPage() {
   const [showComparison, setShowComparison] = useState(false)
   const [comparisonLoading, setComparisonLoading] = useState(false)
 
+  // Trend Impact — correlates a tracked target company's public interest
+  // (from the Trending Content pipeline) against this account's own
+  // benchmark history for projects that targeted that company. See
+  // /api/company-benchmarks/trend-impact for the actual bucketing logic.
+  const [trendImpact, setTrendImpact] = useState<TrendImpactResult[]>([])
+  const [trendImpactLoading, setTrendImpactLoading] = useState(true)
+
   useEffect(() => {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
@@ -114,6 +131,17 @@ export default function CompanyBenchmarksPage() {
         setLoading(false)
       })
       .catch(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    setTrendImpactLoading(true)
+    fetch('/api/company-benchmarks/trend-impact')
+      .then((res) => res.json())
+      .then((json) => {
+        setTrendImpact(json.results || [])
+        setTrendImpactLoading(false)
+      })
+      .catch(() => setTrendImpactLoading(false))
   }, [])
 
   const openMetricDetail = (metricKey: string) => {
@@ -204,8 +232,9 @@ export default function CompanyBenchmarksPage() {
           <div>
             <h1 className="text-2xl font-bold mb-1 tracking-tight">Company Benchmarks</h1>
             <p className={`text-sm ${muted}`}>
-              Your own company's metrics over time, recorded automatically each time you run an
-              analysis. Distinct from Crowd Insights, which pools anonymized data across companies.
+              Your own company's metrics over time, recorded automatically each time you build
+              visuals on a project. Distinct from Crowd Insights, which pools anonymized data across
+              companies.
             </p>
           </div>
           {metrics.length >= 2 && (
@@ -236,9 +265,10 @@ export default function CompanyBenchmarksPage() {
           <p
             className={`text-xs leading-relaxed ${dark ? 'text-blue-200/70' : 'text-blue-900/70'}`}
           >
-            Each analysis you run adds a new timestamped data point per metric, so this builds into
-            a real trend line over time rather than a single running average. Grouped by your
-            company's email domain, not shared or visible to anyone outside your organization.
+            Each time you build visuals on a project, this adds a new timestamped data point per
+            metric, so this builds into a real trend line over time rather than a single running
+            average. Grouped by your company's email domain, not shared or visible to anyone outside
+            your organization.
           </p>
         </div>
 
@@ -278,7 +308,8 @@ export default function CompanyBenchmarksPage() {
         ) : metrics.length === 0 ? (
           <div className={`p-10 rounded-xl border text-center ${card}`}>
             <p className={`text-sm ${muted}`}>
-              No benchmark history yet, run an analysis and it'll show up here automatically.
+              No benchmark history yet, build visuals on a project and it'll show up here
+              automatically.
             </p>
           </div>
         ) : (
@@ -319,6 +350,59 @@ export default function CompanyBenchmarksPage() {
                 </button>
               )
             })}
+          </div>
+        )}
+
+        {/* Trend Impact — new. Correlates a tracked target company's public
+            interest (Trending Content pipeline) against this account's own
+            benchmark metrics for projects that targeted that company. Only
+            ever shows a pairing once both the "interest was high" and
+            "interest was low" buckets have at least 2 contributions each —
+            see MIN_PER_BUCKET in the API route. Uses the new green brand
+            accent deliberately, even though the rest of this page hasn't
+            been through the brand palette pass yet — flagging that as a
+            known, separate gap, not something fixed here. */}
+        {!trendImpactLoading && trendImpact.length > 0 && (
+          <div className="mt-8">
+            <div className="flex items-center gap-2 mb-1">
+              <Sparkles size={14} className="text-[#5DCAA5]" />
+              <h2 className="font-semibold text-sm">Trend Impact</h2>
+            </div>
+            <p className={`text-xs mb-4 ${muted}`}>
+              Whether your own numbers actually moved when public interest in a tracked company was
+              higher or lower than usual. Only shown once there's enough history in both conditions,
+              small sample sizes are shown next to every number so you can judge confidence for
+              yourself.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {trendImpact.map((r) => (
+                <div
+                  key={`${r.targetCompany}::${r.metricKey}`}
+                  className={`p-4 rounded-xl border ${card}`}
+                >
+                  <p className="text-sm font-semibold mb-0.5">{r.targetCompany}</p>
+                  <p className={`text-xs mb-3 ${muted}`}>{r.metricLabel}</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className={`text-[10px] uppercase tracking-wide mb-1 ${muted}`}>
+                        Interest above typical
+                      </p>
+                      <p className="text-lg font-bold text-[#5DCAA5]">
+                        {formatValue(r.highInterest.avg, r.mode)}
+                      </p>
+                      <p className={`text-[10px] mt-0.5 ${muted}`}>n={r.highInterest.count}</p>
+                    </div>
+                    <div>
+                      <p className={`text-[10px] uppercase tracking-wide mb-1 ${muted}`}>
+                        Interest below typical
+                      </p>
+                      <p className="text-lg font-bold">{formatValue(r.lowInterest.avg, r.mode)}</p>
+                      <p className={`text-[10px] mt-0.5 ${muted}`}>n={r.lowInterest.count}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
