@@ -3,6 +3,7 @@
 import { UserButton } from '@clerk/nextjs'
 import { useTheme } from '@/hooks/useTheme'
 import { Moon, Sun, Menu, X, UploadCloud, Palette, CreditCard } from 'lucide-react'
+import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
@@ -44,17 +45,21 @@ export default function Navbar() {
             : 'bg-white/95 border-zinc-200/80 backdrop-blur-xl'
         }`}
       >
-        {/* Logo */}
+        {/* Logo — real PNG wordmark, swapped by theme: the navy-on-transparent
+            version reads on the light background, the light/white version
+            reads on the dark background. Replaces the old CSS-styled text
+            wordmark. */}
         <Link href="/dashboard" className="flex flex-col leading-none shrink-0 group">
-          <span className="text-[17px] font-bold tracking-tight">
-            <span className="text-[#5DCAA5]">a</span>
-            <span className={dark ? 'text-white/90' : 'text-zinc-500'}>mp</span>
-            <span className="text-[#F4A7B9]/70">-</span>
-            <span className={dark ? 'text-white/90' : 'text-zinc-500'}>l</span>
-            <span className="text-[#5DCAA5]">i</span>
-          </span>
+          <Image
+            src={dark ? '/logo-white.png' : '/logo-black.png'}
+            alt="am-pli"
+            width={175}
+            height={71}
+            className="h-[26px] w-auto"
+            priority
+          />
           <span
-            className={`text-[9px] tracking-widest font-medium uppercase ${dark ? 'text-white/25' : 'text-zinc-400'}`}
+            className={`text-[9px] tracking-widest font-medium uppercase mt-1 ${dark ? 'text-white/25' : 'text-zinc-400'}`}
           >
             stories, not spreadsheets
           </span>
