@@ -553,23 +553,28 @@ async function upsertIndustry(
     .eq('industry', industry)
     .single()
 
+  // The three fixed metrics live as real columns on crowd_insights now,
+  // not nested inside the metrics JSON blob — see the accompanying
+  // migration. Real columns let these be filtered/sorted in plain SQL
+  // someday, and stop them being duplicated inside a JSON blob that
+  // otherwise only ever grows (extendedMetrics/dimensionBreakdowns have no
+  // natural cap the way recentSamples does).
   const prev = existing?.metrics || {}
   const fallbackN = existing?.contribution_count || 0
 
-  // Original 3-bucket merge — unchanged, still backs the existing display page.
   const rev = mergeMetric(
-    prev.avg_revenue_growth ?? null,
-    prev.avg_revenue_growth_n ?? fallbackN,
+    existing?.avg_revenue_growth ?? null,
+    existing?.avg_revenue_growth_n ?? fallbackN,
     bucketed.avg_revenue_growth
   )
   const conv = mergeMetric(
-    prev.avg_conversion_rate ?? null,
-    prev.avg_conversion_rate_n ?? fallbackN,
+    existing?.avg_conversion_rate ?? null,
+    existing?.avg_conversion_rate_n ?? fallbackN,
     bucketed.avg_conversion_rate
   )
   const cust = mergeMetric(
-    prev.avg_customer_growth ?? null,
-    prev.avg_customer_growth_n ?? fallbackN,
+    existing?.avg_customer_growth ?? null,
+    existing?.avg_customer_growth_n ?? fallbackN,
     bucketed.avg_customer_growth
   )
 
@@ -611,13 +616,10 @@ async function upsertIndustry(
       : {},
   })
 
+  // metrics blob no longer carries the three fixed metrics — those go in
+  // fixedColumns below instead, as real top-level columns on the same
+  // insert/update.
   const newMetrics = {
-    avg_revenue_growth: rev.avg,
-    avg_revenue_growth_n: rev.n,
-    avg_conversion_rate: conv.avg,
-    avg_conversion_rate_n: conv.n,
-    avg_customer_growth: cust.avg,
-    avg_customer_growth_n: cust.n,
     top_trends: mergeStrings(prev.top_trends || [], topTrend),
     key_insights: mergeStrings(prev.key_insights || [], keyInsight),
     extendedMetrics,
@@ -625,11 +627,21 @@ async function upsertIndustry(
     recentSamples,
   }
 
+  const fixedColumns = {
+    avg_revenue_growth: rev.avg,
+    avg_revenue_growth_n: rev.n,
+    avg_conversion_rate: conv.avg,
+    avg_conversion_rate_n: conv.n,
+    avg_customer_growth: cust.avg,
+    avg_customer_growth_n: cust.n,
+  }
+
   if (existing) {
     await supabase
       .from('crowd_insights')
       .update({
         metrics: newMetrics,
+        ...fixedColumns,
         contribution_count: existing.contribution_count + 1,
         last_updated: new Date().toISOString(),
       })
@@ -638,6 +650,7 @@ async function upsertIndustry(
     await supabase.from('crowd_insights').insert({
       industry,
       metrics: newMetrics,
+      ...fixedColumns,
       contribution_count: 1,
     })
   }

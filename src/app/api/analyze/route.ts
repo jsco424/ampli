@@ -389,30 +389,37 @@ async function injectBenchmarkContext(
 ): Promise<void> {
   if (!industry) return
 
+  // The three fixed metrics (avg_conversion_rate, avg_revenue_growth,
+  // avg_customer_growth) live as real columns on crowd_insights now, not
+  // nested inside the metrics JSON blob — selected explicitly alongside it
+  // here. extendedMetrics/dimensionBreakdowns/etc. still live in the JSON
+  // blob, unaffected by that change.
   const { data: crowdRow } = await supabase
     .from('crowd_insights')
-    .select('metrics')
+    .select(
+      'metrics, avg_conversion_rate, avg_conversion_rate_n, avg_revenue_growth, avg_revenue_growth_n, avg_customer_growth, avg_customer_growth_n'
+    )
     .eq('industry', industry)
     .single()
 
-  if (!crowdRow?.metrics) return
+  if (!crowdRow) return
 
-  const extendedMetrics = crowdRow.metrics.extendedMetrics || {}
+  const extendedMetrics = crowdRow.metrics?.extendedMetrics || {}
   const fixedMetrics = {
     conversion_rate: {
       mode: 'rate',
-      avg: crowdRow.metrics.avg_conversion_rate,
-      n: crowdRow.metrics.avg_conversion_rate_n,
+      avg: crowdRow.avg_conversion_rate,
+      n: crowdRow.avg_conversion_rate_n,
     },
     revenue_growth: {
       mode: 'rate',
-      avg: crowdRow.metrics.avg_revenue_growth,
-      n: crowdRow.metrics.avg_revenue_growth_n,
+      avg: crowdRow.avg_revenue_growth,
+      n: crowdRow.avg_revenue_growth_n,
     },
     customer_growth: {
       mode: 'rate',
-      avg: crowdRow.metrics.avg_customer_growth,
-      n: crowdRow.metrics.avg_customer_growth_n,
+      avg: crowdRow.avg_customer_growth,
+      n: crowdRow.avg_customer_growth_n,
     },
   }
   const allMetrics = { ...fixedMetrics, ...extendedMetrics }

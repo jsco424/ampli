@@ -502,9 +502,9 @@ function CrowdLive({ dark }: { dark: boolean }) {
 
   const top = industries[0]
   const rows = [
-    { label: 'Avg Conversion Rate', value: top.metrics?.avg_conversion_rate },
-    { label: 'Avg Revenue Growth', value: top.metrics?.avg_revenue_growth },
-    { label: 'Avg Customer Growth', value: top.metrics?.avg_customer_growth },
+    { label: 'Avg Conversion Rate', value: top.avg_conversion_rate },
+    { label: 'Avg Revenue Growth', value: top.avg_revenue_growth },
+    { label: 'Avg Customer Growth', value: top.avg_customer_growth },
   ]
 
   return (

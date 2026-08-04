@@ -110,16 +110,16 @@ function isRateLikeKey(key: string): boolean {
 const FIXED_BUCKET_KEYS = ['revenue', 'conversion_rate', 'customers']
 
 function getMetricValue(industry: any, key: string): number | null {
-  if (key === 'avg_revenue_growth') return industry.metrics?.avg_revenue_growth ?? null
-  if (key === 'avg_conversion_rate') return industry.metrics?.avg_conversion_rate ?? null
-  if (key === 'avg_customer_growth') return industry.metrics?.avg_customer_growth ?? null
+  if (key === 'avg_revenue_growth') return industry.avg_revenue_growth ?? null
+  if (key === 'avg_conversion_rate') return industry.avg_conversion_rate ?? null
+  if (key === 'avg_customer_growth') return industry.avg_customer_growth ?? null
   return industry.metrics?.extendedMetrics?.[key]?.avg ?? null
 }
 
 function getMetricSampleSize(industry: any, key: string): number | null {
-  if (key === 'avg_revenue_growth') return industry.metrics?.avg_revenue_growth_n ?? null
-  if (key === 'avg_conversion_rate') return industry.metrics?.avg_conversion_rate_n ?? null
-  if (key === 'avg_customer_growth') return industry.metrics?.avg_customer_growth_n ?? null
+  if (key === 'avg_revenue_growth') return industry.avg_revenue_growth_n ?? null
+  if (key === 'avg_conversion_rate') return industry.avg_conversion_rate_n ?? null
+  if (key === 'avg_customer_growth') return industry.avg_customer_growth_n ?? null
   return industry.metrics?.extendedMetrics?.[key]?.n ?? null
 }
 
@@ -201,13 +201,13 @@ function downloadIndustryCSV(industry: any) {
   lines.push('')
   lines.push('Metric,Average,Sample Size')
   lines.push(
-    `Revenue Growth,${industry.metrics?.avg_revenue_growth ?? ''},${industry.metrics?.avg_revenue_growth_n ?? ''}`
+    `Revenue Growth,${industry.avg_revenue_growth ?? ''},${industry.avg_revenue_growth_n ?? ''}`
   )
   lines.push(
-    `Conversion Rate,${industry.metrics?.avg_conversion_rate ?? ''},${industry.metrics?.avg_conversion_rate_n ?? ''}`
+    `Conversion Rate,${industry.avg_conversion_rate ?? ''},${industry.avg_conversion_rate_n ?? ''}`
   )
   lines.push(
-    `Customer Growth,${industry.metrics?.avg_customer_growth ?? ''},${industry.metrics?.avg_customer_growth_n ?? ''}`
+    `Customer Growth,${industry.avg_customer_growth ?? ''},${industry.avg_customer_growth_n ?? ''}`
   )
   for (const [key, m] of Object.entries(industry.metrics?.extendedMetrics || {})) {
     if (FIXED_BUCKET_KEYS.includes(key)) continue
