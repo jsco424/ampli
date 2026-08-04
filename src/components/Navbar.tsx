@@ -55,7 +55,7 @@ export default function Navbar() {
             alt="am-pli"
             width={175}
             height={71}
-            className="h-[26px] w-auto"
+            className="h-10 w-auto"
             priority
           />
         </Link>
