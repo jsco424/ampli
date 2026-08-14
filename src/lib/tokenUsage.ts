@@ -18,6 +18,7 @@ export type TokenUsageRoute =
   | 'analyze_followup'
   | 'generate_core'
   | 'generate_recommendations'
+  | 'schema_stories'
 
 // Logs one Claude API call's real token usage — call this right after
 // every client.messages.create() response, passing response.usage directly.
