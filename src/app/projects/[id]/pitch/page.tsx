@@ -24,13 +24,25 @@ import {
   ArrowLeft,
   Download,
   FileDown,
+  Trash2,
+  Copy,
+  Undo2,
+  Redo2,
+  Check,
+  Loader2,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type Box = { x: number; y: number; w: number; h: number }
 type LayoutPreset = 'split-right' | 'split-left' | 'full-bleed' | 'top-bottom'
-type TextStyle = { bold?: boolean; italic?: boolean; sizePx?: number; color?: string }
+type TextStyle = {
+  bold?: boolean
+  italic?: boolean
+  sizePx?: number
+  color?: string
+  fontFamily?: string
+}
 
 type Slide =
   | { type: 'title'; project: any }
@@ -40,12 +52,15 @@ type Slide =
   | { type: 'recommendations'; recommendations: any[]; narrative: string }
 
 type GenerationState = 'idle' | 'generating' | 'ready' | 'no_data'
+type SaveState = 'saved' | 'saving' | 'error'
 
 const DEFAULT_SIZE_PX = 16
 const MIN_SIZE_PX = 10
 const MAX_SIZE_PX = 96
 const POLL_INTERVAL_MS = 2500
 const POLL_MAX_ATTEMPTS = 40
+const HISTORY_LIMIT = 50
+const SNAP_THRESHOLD = 6
 
 const GENERATION_STEPS = [
   'Reading confirmed analysis findings',
@@ -60,6 +75,28 @@ const LAYOUT_OPTIONS: { key: LayoutPreset; label: string }[] = [
   { key: 'split-left', label: 'Split Left' },
   { key: 'full-bleed', label: 'Full Bleed' },
   { key: 'top-bottom', label: 'Top / Bottom' },
+]
+
+const FONT_OPTIONS: { label: string; value: string }[] = [
+  { label: 'Sans', value: 'Inter, ui-sans-serif, sans-serif' },
+  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
+  { label: 'Mono', value: 'ui-monospace, "SF Mono", monospace' },
+]
+
+// Fields the editor is actually allowed to mutate — every commit writes
+// exactly this set back to Supabase, whichever of them actually changed.
+// A full-set write every time is a deliberate simplification over a
+// per-field diff — slightly more data on the wire per edit, but it means
+// every commit, undo, and redo persists correctly with one code path
+// instead of six slightly different ones.
+const EDITABLE_FIELDS = [
+  'charts',
+  'insights',
+  'recommendations',
+  'pitch_title',
+  'title_text_style',
+  'narrative_text_style',
+  'analysis_handoff',
 ]
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -206,6 +243,46 @@ function boxesForLayout(
         chart: { x: padX, y: padY, w: width - padX * 2 - heroW - gap, h: height - padY - 24 },
         hero: { x: width - padX - heroW, y: padY, w: heroW, h: height - padY - 24 },
       }
+  }
+}
+
+// Snaps a box's edges/center against a set of candidate x/y positions
+// (canvas center, the other element on the slide) within SNAP_THRESHOLD
+// pixels, and reports which candidates it actually snapped to so the
+// caller can render live guide lines. Move-only — resize is left
+// unsnapped for this pass, a deliberate scoping choice, not an oversight.
+function computeSnap(
+  box: Box,
+  candidatesX: number[],
+  candidatesY: number[]
+): { box: Box; activeX: number[]; activeY: number[] } {
+  let { x, y } = box
+  const { w, h } = box
+  const activeX: number[] = []
+  const activeY: number[] = []
+
+  const edgesX = [x, x + w / 2, x + w]
+  for (const target of candidatesX) {
+    for (const edge of edgesX) {
+      if (Math.abs(edge - target) <= SNAP_THRESHOLD) {
+        x += target - edge
+        activeX.push(target)
+      }
+    }
+  }
+  const edgesY = [y, y + h / 2, y + h]
+  for (const target of candidatesY) {
+    for (const edge of edgesY) {
+      if (Math.abs(edge - target) <= SNAP_THRESHOLD) {
+        y += target - edge
+        activeY.push(target)
+      }
+    }
+  }
+  return {
+    box: { x, y, w, h },
+    activeX: Array.from(new Set(activeX)),
+    activeY: Array.from(new Set(activeY)),
   }
 }
 
@@ -434,6 +511,20 @@ function StyleToolbar({
         <Plus size={11} />
       </button>
       <div className={`w-px h-5 mx-0.5 ${divider}`} />
+      <select
+        data-no-drag="true"
+        value={style.fontFamily || FONT_OPTIONS[0].value}
+        onChange={(e) => onChange({ ...style, fontFamily: e.target.value })}
+        onMouseDown={(e) => e.stopPropagation()}
+        className={`text-[10px] rounded-lg border px-1.5 py-1 outline-none bg-transparent ${btnBase}`}
+      >
+        {FONT_OPTIONS.map((f) => (
+          <option key={f.value} value={f.value}>
+            {f.label}
+          </option>
+        ))}
+      </select>
+      <div className={`w-px h-5 mx-0.5 ${divider}`} />
       {brandColors.map((c) => (
         <button
           key={c}
@@ -454,6 +545,9 @@ function DraggableBox({
   onCommit,
   selected,
   onSelect,
+  snapX,
+  snapY,
+  onGuides,
   children,
 }: {
   box: Box
@@ -461,6 +555,9 @@ function DraggableBox({
   onCommit: (b: Box) => void
   selected: boolean
   onSelect: () => void
+  snapX?: number[]
+  snapY?: number[]
+  onGuides?: (g: { x: number[]; y: number[] } | null) => void
   children: React.ReactNode
 }) {
   const dragRef = useRef<{
@@ -489,14 +586,24 @@ function DraggableBox({
       dy = e.clientY - d.startY
     if (!d.moved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return
     d.moved = true
-    if (d.mode === 'move') onChange({ ...d.orig, x: d.orig.x + dx, y: d.orig.y + dy })
-    else onChange({ ...d.orig, w: Math.max(80, d.orig.w + dx), h: Math.max(60, d.orig.h + dy) })
+    if (d.mode === 'move') {
+      let next: Box = { ...d.orig, x: d.orig.x + dx, y: d.orig.y + dy }
+      if ((snapX && snapX.length > 0) || (snapY && snapY.length > 0)) {
+        const snapped = computeSnap(next, snapX || [], snapY || [])
+        next = snapped.box
+        onGuides?.({ x: snapped.activeX, y: snapped.activeY })
+      }
+      onChange(next)
+    } else {
+      onChange({ ...d.orig, w: Math.max(80, d.orig.w + dx), h: Math.max(60, d.orig.h + dy) })
+    }
   }
   const onPointerUp = () => {
     const d = dragRef.current
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
     if (d?.moved) onCommit(currentBoxRef.current)
+    onGuides?.(null)
     dragRef.current = null
   }
 
@@ -579,6 +686,7 @@ function EditableText({
     fontStyle: textStyle?.italic ? 'italic' : undefined,
     color: textStyle?.color || style?.color,
     fontSize: textStyle?.sizePx ? `${textStyle.sizePx}px` : style?.fontSize,
+    fontFamily: textStyle?.fontFamily || style?.fontFamily,
   }
 
   if (editing) {
@@ -653,6 +761,7 @@ export default function PitchDeckPage() {
   const slideAreaRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollAttempts = useRef(0)
+  const historyRef = useRef<{ past: any[]; future: any[] }>({ past: [], future: [] })
 
   const [project, setProject] = useState<any>(null)
   const [slides, setSlides] = useState<Slide[]>([])
@@ -672,6 +781,10 @@ export default function PitchDeckPage() {
   const [gammaError, setGammaError] = useState<string | null>(null)
   const [selectedBox, setSelectedBox] = useState<'chart' | 'hero' | null>(null)
   const [showLayoutPicker, setShowLayoutPicker] = useState(false)
+  const [saveState, setSaveState] = useState<SaveState>('saved')
+  const [historyTick, setHistoryTick] = useState(0) // bumps to force undo/redo button enable-state re-renders
+  const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null)
+  const [draggedSlideIdx, setDraggedSlideIdx] = useState<number | null>(null)
 
   const handleGammaExport = async (format: 'pptx' | 'pdf') => {
     if (!project) return
@@ -788,6 +901,81 @@ export default function PitchDeckPage() {
       recsSlide,
     ]
   }
+
+  // ── Central commit path ────────────────────────────────────────────────
+  // Every mutation in this file (chart edits, table edits, recommendation
+  // edits, slide reorder/duplicate/delete/add) funnels through this one
+  // function. That's deliberate: it's what makes undo/redo work uniformly
+  // instead of needing separate history logic bolted onto six different
+  // update functions, and it's the one place that talks to Supabase, so
+  // save-state tracking stays consistent no matter what changed.
+  const persistProject = useCallback(async (next: any) => {
+    setSaveState('saving')
+    const payload: Record<string, any> = {}
+    for (const field of EDITABLE_FIELDS) payload[field] = next[field]
+    const { error } = await supabase.from('projects').update(payload).eq('id', next.id)
+    setSaveState(error ? 'error' : 'saved')
+    if (error) console.error('Failed to save pitch deck edit:', error)
+  }, [])
+
+  const commitProjectChange = useCallback(
+    (updater: (prev: any) => any, focusContentIndex?: number) => {
+      if (!project) return
+      const snapshot = structuredClone(project)
+      historyRef.current.past = [...historyRef.current.past, snapshot].slice(-HISTORY_LIMIT)
+      historyRef.current.future = []
+      setHistoryTick((t) => t + 1)
+
+      const next = updater(project)
+      setProject(next)
+      const nextSlides = buildSlides(next)
+      setSlides(nextSlides)
+
+      if (focusContentIndex !== undefined) {
+        const idx = nextSlides.findIndex(
+          (s) =>
+            (s.type === 'chart' || s.type === 'table') && (s as any).index === focusContentIndex
+        )
+        if (idx !== -1) setCurrent(idx)
+      } else {
+        setCurrent((c) => Math.min(c, nextSlides.length - 1))
+      }
+
+      persistProject(next)
+    },
+    [project, persistProject]
+  )
+
+  const undo = useCallback(() => {
+    if (!project || historyRef.current.past.length === 0) return
+    const previous = historyRef.current.past[historyRef.current.past.length - 1]
+    historyRef.current.past = historyRef.current.past.slice(0, -1)
+    historyRef.current.future = [structuredClone(project), ...historyRef.current.future].slice(
+      0,
+      HISTORY_LIMIT
+    )
+    setHistoryTick((t) => t + 1)
+    setProject(previous)
+    const nextSlides = buildSlides(previous)
+    setSlides(nextSlides)
+    setCurrent((c) => Math.min(c, nextSlides.length - 1))
+    persistProject(previous)
+  }, [project, persistProject])
+
+  const redo = useCallback(() => {
+    if (!project || historyRef.current.future.length === 0) return
+    const nextState = historyRef.current.future[0]
+    historyRef.current.future = historyRef.current.future.slice(1)
+    historyRef.current.past = [...historyRef.current.past, structuredClone(project)].slice(
+      -HISTORY_LIMIT
+    )
+    setHistoryTick((t) => t + 1)
+    setProject(nextState)
+    const nextSlides = buildSlides(nextState)
+    setSlides(nextSlides)
+    setCurrent((c) => Math.min(c, nextSlides.length - 1))
+    persistProject(nextState)
+  }, [project, persistProject])
 
   const startPolling = useCallback((projectId: string) => {
     pollAttempts.current = 0
@@ -956,58 +1144,53 @@ export default function PitchDeckPage() {
     const h = (e: KeyboardEvent) => {
       const active = document.activeElement
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
+      const isMod = e.metaKey || e.ctrlKey
+      if (isMod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        undo()
+        return
+      }
+      if (isMod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+        e.preventDefault()
+        redo()
+        return
+      }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go('next')
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') go('prev')
       if (e.key === 'Escape' && !document.fullscreenElement) router.push(`/projects/${id}`)
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [go, id, router])
+  }, [go, undo, redo, id, router])
 
   // ── Patch helpers ──────────────────────────────────────────────────────
+  // All rewritten to funnel through commitProjectChange so every edit,
+  // from any slide type, participates in the same undo/redo history and
+  // the same save-state tracking.
 
-  const updateChart = async (chartIndex: number, patch: any) => {
-    if (!project) return
-    const updated = [...(project.charts || [])]
-    updated[chartIndex] = { ...updated[chartIndex], ...patch }
-    setProject((p: any) => ({ ...p, charts: updated }))
-    setSlides((s) =>
-      s.map((sl) =>
-        sl.type === 'chart' && sl.index === chartIndex ? { ...sl, chart: updated[chartIndex] } : sl
-      )
-    )
-    await supabase.from('projects').update({ charts: updated }).eq('id', id)
+  const updateChart = (chartIndex: number, patch: any) => {
+    commitProjectChange((prev: any) => {
+      const updated = [...(prev.charts || [])]
+      updated[chartIndex] = { ...updated[chartIndex], ...patch }
+      return { ...prev, charts: updated }
+    })
   }
-  const updateInsight = async (insightIndex: number, patch: any) => {
-    if (!project) return
-    const updated = [...(project.insights || [])]
-    updated[insightIndex] = { ...updated[insightIndex], ...patch }
-    setProject((p: any) => ({ ...p, insights: updated }))
-    setSlides((s) => s.map((sl) => (sl.type === 'insights' ? { ...sl, insights: updated } : sl)))
-    await supabase.from('projects').update({ insights: updated }).eq('id', id)
+  const updateInsight = (insightIndex: number, patch: any) => {
+    commitProjectChange((prev: any) => {
+      const updated = [...(prev.insights || [])]
+      updated[insightIndex] = { ...updated[insightIndex], ...patch }
+      return { ...prev, insights: updated }
+    })
   }
-  const updateRecommendation = async (recIndex: number, patch: any) => {
-    if (!project) return
-    const updated = [...(project.recommendations || [])]
-    updated[recIndex] = { ...updated[recIndex], ...patch }
-    setProject((p: any) => ({ ...p, recommendations: updated }))
-    setSlides((s) =>
-      s.map((sl) => (sl.type === 'recommendations' ? { ...sl, recommendations: updated } : sl))
-    )
-    await supabase.from('projects').update({ recommendations: updated }).eq('id', id)
+  const updateRecommendation = (recIndex: number, patch: any) => {
+    commitProjectChange((prev: any) => {
+      const updated = [...(prev.recommendations || [])]
+      updated[recIndex] = { ...updated[recIndex], ...patch }
+      return { ...prev, recommendations: updated }
+    })
   }
-  const updateProjectField = async (field: string, value: any) => {
-    if (!project) return
-    setProject((p: any) => ({ ...p, [field]: value }))
-    setSlides((s) =>
-      s.map((sl) =>
-        sl.type === 'title' ? { ...sl, project: { ...sl.project, [field]: value } } : sl
-      )
-    )
-    await supabase
-      .from('projects')
-      .update({ [field]: value })
-      .eq('id', id)
+  const updateProjectField = (field: string, value: any) => {
+    commitProjectChange((prev: any) => ({ ...prev, [field]: value }))
   }
   const applyLayout = (chartIndex: number, layout: LayoutPreset) => {
     const boxes = boxesForLayout(layout, slideSize.width, slideSize.height)
@@ -1018,6 +1201,150 @@ export default function PitchDeckPage() {
     const layout: LayoutPreset = chart.layout || 'split-right'
     const boxes = boxesForLayout(layout, slideSize.width, slideSize.height)
     updateChart(chartIndex, { chart_box: boxes.chart, hero_box: boxes.hero })
+  }
+
+  // Table edits — table data lives inside analysis_handoff.selectedFindings,
+  // not in the charts array, so this has its own commit path.
+  const updateTableSlide = (selIndex: number, patch: { table?: any; takeaway?: string }) => {
+    commitProjectChange((prev: any) => {
+      const handoff = prev.analysis_handoff
+      const sel = handoff?.selectedFindings
+      if (!Array.isArray(sel) || !sel[selIndex]) return prev
+      const newSel = [...sel]
+      newSel[selIndex] = {
+        ...newSel[selIndex],
+        ...(patch.table ? { table: patch.table } : {}),
+        ...(patch.takeaway !== undefined ? { takeaway: patch.takeaway } : {}),
+      }
+      return { ...prev, analysis_handoff: { ...handoff, selectedFindings: newSel } }
+    })
+  }
+  const updateTableField = (
+    selIndex: number,
+    field: 'title' | 'description' | 'footnote',
+    value: string
+  ) => {
+    const table = project?.analysis_handoff?.selectedFindings?.[selIndex]?.table
+    if (!table) return
+    updateTableSlide(selIndex, { table: { ...table, [field]: value } })
+  }
+  const updateTableHeader = (selIndex: number, headerIndex: number, value: string) => {
+    const table = project?.analysis_handoff?.selectedFindings?.[selIndex]?.table
+    if (!table) return
+    const newHeaders = (table.headers || []).map((h: string, i: number) =>
+      i === headerIndex ? value : h
+    )
+    updateTableSlide(selIndex, { table: { ...table, headers: newHeaders } })
+  }
+  const updateTableCell = (
+    selIndex: number,
+    rowIndex: number,
+    cellIndex: number,
+    value: string
+  ) => {
+    const table = project?.analysis_handoff?.selectedFindings?.[selIndex]?.table
+    if (!table) return
+    const newRows = (table.rows || []).map((row: any[], ri: number) =>
+      ri !== rowIndex
+        ? row
+        : row.map((cell: any, ci: number) => {
+            if (ci !== cellIndex) return cell
+            return typeof cell === 'object' && cell !== null ? { ...cell, display: value } : value
+          })
+    )
+    updateTableSlide(selIndex, { table: { ...table, rows: newRows } })
+  }
+
+  // ── Slide management ───────────────────────────────────────────────────
+  // Operates on chart and table content slides only — title, insights, and
+  // recommendations are fixed singleton slides in this data model, not
+  // reorderable/duplicable content. charts[] and analysis_handoff's
+  // selectedFindings[] (when present) are kept in lockstep, since
+  // buildSlides pairs them by index — the same permutation is applied to
+  // both, unconditionally, since even an unused charts[] slot for a
+  // table-type selection is harmless to move alongside it.
+  const moveContentSlide = (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return
+    commitProjectChange((prev: any) => {
+      const charts = [...(prev.charts || [])]
+      if (fromIdx < charts.length && toIdx < charts.length) {
+        const [moved] = charts.splice(fromIdx, 1)
+        charts.splice(toIdx, 0, moved)
+      }
+      let analysis_handoff = prev.analysis_handoff
+      const sel = analysis_handoff?.selectedFindings
+      if (Array.isArray(sel) && fromIdx < sel.length && toIdx < sel.length) {
+        const newSel = [...sel]
+        const [movedSel] = newSel.splice(fromIdx, 1)
+        newSel.splice(toIdx, 0, movedSel)
+        analysis_handoff = { ...analysis_handoff, selectedFindings: newSel }
+      }
+      return { ...prev, charts, analysis_handoff }
+    }, toIdx)
+  }
+  const duplicateContentSlide = (idx: number) => {
+    commitProjectChange((prev: any) => {
+      const charts = [...(prev.charts || [])]
+      if (idx < charts.length) charts.splice(idx + 1, 0, structuredClone(charts[idx]))
+      let analysis_handoff = prev.analysis_handoff
+      const sel = analysis_handoff?.selectedFindings
+      if (Array.isArray(sel) && idx < sel.length) {
+        const newSel = [...sel]
+        newSel.splice(idx + 1, 0, structuredClone(sel[idx]))
+        analysis_handoff = { ...analysis_handoff, selectedFindings: newSel }
+      }
+      return { ...prev, charts, analysis_handoff }
+    }, idx + 1)
+  }
+  const deleteContentSlide = (idx: number) => {
+    commitProjectChange((prev: any) => {
+      const charts = [...(prev.charts || [])]
+      if (idx < charts.length) charts.splice(idx, 1)
+      let analysis_handoff = prev.analysis_handoff
+      const sel = analysis_handoff?.selectedFindings
+      if (Array.isArray(sel) && idx < sel.length) {
+        const newSel = [...sel]
+        newSel.splice(idx, 1)
+        analysis_handoff = { ...analysis_handoff, selectedFindings: newSel }
+      }
+      return { ...prev, charts, analysis_handoff }
+    })
+  }
+  const addBlankSlide = () => {
+    if (!project) return
+    const newIndex = (project.charts || []).length
+    commitProjectChange((prev: any) => {
+      const charts = [
+        ...(prev.charts || []),
+        {
+          type: 'bar',
+          data: [],
+          title: '',
+          description: '',
+          hero_stat: '',
+          takeaway: '',
+          layout: 'split-right',
+        },
+      ]
+      let analysis_handoff = prev.analysis_handoff
+      const sel = analysis_handoff?.selectedFindings
+      if (Array.isArray(sel)) {
+        analysis_handoff = {
+          ...analysis_handoff,
+          selectedFindings: [
+            ...sel,
+            {
+              type: 'finding',
+              heroStat: '',
+              takeaway: '',
+              chartType: 'bar',
+              chartData: [],
+            },
+          ],
+        }
+      }
+      return { ...prev, charts, analysis_handoff }
+    }, newIndex)
   }
 
   // ── Slide renderers ────────────────────────────────────────────────────
@@ -1064,6 +1391,33 @@ export default function PitchDeckPage() {
     const liveHeroBox = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
     const chartKey = `${index}-${layout}-${Math.round(slideSize.width)}x${Math.round(slideSize.height)}`
     const hasChartData = Array.isArray(chart?.data) && chart.data.length > 0
+
+    const canvasCenterX = slideSize.width / 2
+    const canvasCenterY = slideSize.height / 2
+    const chartSnapX = [
+      canvasCenterX,
+      liveHeroBox.x,
+      liveHeroBox.x + liveHeroBox.w / 2,
+      liveHeroBox.x + liveHeroBox.w,
+    ]
+    const chartSnapY = [
+      canvasCenterY,
+      liveHeroBox.y,
+      liveHeroBox.y + liveHeroBox.h / 2,
+      liveHeroBox.y + liveHeroBox.h,
+    ]
+    const heroSnapX = [
+      canvasCenterX,
+      liveChartBox.x,
+      liveChartBox.x + liveChartBox.w / 2,
+      liveChartBox.x + liveChartBox.w,
+    ]
+    const heroSnapY = [
+      canvasCenterY,
+      liveChartBox.y,
+      liveChartBox.y + liveChartBox.h / 2,
+      liveChartBox.y + liveChartBox.h,
+    ]
 
     return (
       <div
@@ -1136,6 +1490,21 @@ export default function PitchDeckPage() {
           </div>
         )}
 
+        {guides?.x.map((gx) => (
+          <div
+            key={`gx-${gx}`}
+            className="absolute top-0 bottom-0 pointer-events-none"
+            style={{ left: gx, width: 1, background: '#3b82f6', zIndex: 40 }}
+          />
+        ))}
+        {guides?.y.map((gy) => (
+          <div
+            key={`gy-${gy}`}
+            className="absolute left-0 right-0 pointer-events-none"
+            style={{ top: gy, height: 1, background: '#3b82f6', zIndex: 40 }}
+          />
+        ))}
+
         <DraggableBox
           box={liveChartBox}
           onChange={(b) =>
@@ -1150,6 +1519,9 @@ export default function PitchDeckPage() {
           onCommit={(b) => updateChart(index, { chart_box: b })}
           selected={selectedBox === 'chart'}
           onSelect={() => setSelectedBox('chart')}
+          snapX={chartSnapX}
+          snapY={chartSnapY}
+          onGuides={setGuides}
         >
           {hasChartData ? (
             <ChartRenderer
@@ -1183,6 +1555,9 @@ export default function PitchDeckPage() {
           onCommit={(b) => updateChart(index, { hero_box: b })}
           selected={selectedBox === 'hero'}
           onSelect={() => setSelectedBox('hero')}
+          snapX={heroSnapX}
+          snapY={heroSnapY}
+          onGuides={setGuides}
         >
           <HeroPanelContent chart={chart} chartIndex={index} />
         </DraggableBox>
@@ -1190,49 +1565,79 @@ export default function PitchDeckPage() {
     )
   }
 
-  const renderTableSlide = (slide: Extract<Slide, { type: 'table' }>) => (
-    <div className="flex flex-col h-full px-8 py-6">
-      <div className="mb-5">
-        <h2 className="text-2xl font-bold leading-tight">{slide.table?.title || 'Data Table'}</h2>
-        {slide.table?.description && (
-          <p className="text-sm mt-1" style={{ color: T.dimColor }}>
-            {slide.table.description}
-          </p>
-        )}
-      </div>
-      <div className="flex-1 overflow-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr>
-              {(slide.table?.headers || []).map((h: string, i: number) => (
-                <th
-                  key={i}
-                  className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-wide"
-                  style={{ color: T.dimColor, borderBottom: `1px solid ${T.divider}` }}
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(slide.table?.rows || []).map((row: any[], ri: number) => (
-              <tr key={ri} style={{ borderBottom: `1px solid ${T.divider}` }}>
-                {row.map((cell: any, ci: number) => (
-                  <td
-                    key={ci}
-                    className="px-3 py-2.5"
-                    style={{ color: ci === 0 ? T.textColor : T.dimColor2 }}
+  const renderTableSlide = (slide: Extract<Slide, { type: 'table' }>) => {
+    const selIndex = slide.index
+    return (
+      <div className="flex flex-col h-full px-8 py-6">
+        <div className="mb-5">
+          <EditableText
+            value={slide.table?.title || ''}
+            onCommit={(v) => updateTableField(selIndex, 'title', v)}
+            placeholder="Table title"
+            theme={T.slideTheme}
+            className="text-2xl font-bold leading-tight"
+            brandColors={BRAND_COLORS}
+          />
+          <EditableText
+            value={slide.table?.description || ''}
+            onCommit={(v) => updateTableField(selIndex, 'description', v)}
+            placeholder="Add a description..."
+            theme={T.slideTheme}
+            className="text-sm mt-1"
+            style={{ color: T.dimColor }}
+            brandColors={BRAND_COLORS}
+          />
+        </div>
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr>
+                {(slide.table?.headers || []).map((h: string, i: number) => (
+                  <th
+                    key={i}
+                    className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-wide"
+                    style={{ color: T.dimColor, borderBottom: `1px solid ${T.divider}` }}
                   >
-                    {typeof cell === 'object' && cell !== null ? cell.display : String(cell ?? '')}
-                  </td>
+                    <EditableText
+                      value={h}
+                      onCommit={(v) => updateTableHeader(selIndex, i, v)}
+                      placeholder="Header"
+                      theme={T.slideTheme}
+                      className="text-[11px] font-semibold uppercase tracking-wide"
+                      brandColors={BRAND_COLORS}
+                    />
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {slide.takeaway && (
+            </thead>
+            <tbody>
+              {(slide.table?.rows || []).map((row: any[], ri: number) => (
+                <tr key={ri} style={{ borderBottom: `1px solid ${T.divider}` }}>
+                  {row.map((cell: any, ci: number) => {
+                    const cellText =
+                      typeof cell === 'object' && cell !== null ? cell.display : String(cell ?? '')
+                    return (
+                      <td
+                        key={ci}
+                        className="px-3 py-2.5"
+                        style={{ color: ci === 0 ? T.textColor : T.dimColor2 }}
+                      >
+                        <EditableText
+                          value={cellText}
+                          onCommit={(v) => updateTableCell(selIndex, ri, ci, v)}
+                          placeholder=""
+                          theme={T.slideTheme}
+                          className="text-xs"
+                          brandColors={BRAND_COLORS}
+                        />
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div
           className="mt-4 pt-4 flex items-center gap-4"
           style={{ borderTop: `1px solid ${T.divider}` }}
@@ -1241,18 +1646,29 @@ export default function PitchDeckPage() {
             className="w-1 h-10 rounded-full shrink-0"
             style={{ background: brand.primaryColor }}
           />
-          <p className="text-sm font-medium leading-relaxed" style={{ color: T.dimColor2 }}>
-            {slide.takeaway}
-          </p>
+          <EditableText
+            value={slide.takeaway || ''}
+            onCommit={(v) => updateTableSlide(selIndex, { takeaway: v })}
+            placeholder="Add a takeaway..."
+            theme={T.slideTheme}
+            multiline
+            className="text-sm font-medium leading-relaxed flex-1"
+            style={{ color: T.dimColor2 }}
+            brandColors={BRAND_COLORS}
+          />
         </div>
-      )}
-      {slide.table?.footnote && (
-        <p className="text-[11px] mt-2" style={{ color: T.dimColor }}>
-          {slide.table.footnote}
-        </p>
-      )}
-    </div>
-  )
+        <EditableText
+          value={slide.table?.footnote || ''}
+          onCommit={(v) => updateTableField(selIndex, 'footnote', v)}
+          placeholder="Add a footnote (optional)..."
+          theme={T.slideTheme}
+          className="text-[11px] mt-2"
+          style={{ color: T.dimColor }}
+          brandColors={BRAND_COLORS}
+        />
+      </div>
+    )
+  }
 
   const renderSlide = (slide: Slide) => {
     if (slide.type === 'title') {
@@ -1529,6 +1945,8 @@ export default function PitchDeckPage() {
   // ── Full deck render ───────────────────────────────────────────────────
 
   const slide = slides[current]
+  const canUndo = historyRef.current.past.length > 0
+  const canRedo = historyRef.current.future.length > 0
 
   return (
     <div
@@ -1550,8 +1968,45 @@ export default function PitchDeckPage() {
           <span className={`text-sm font-medium truncate max-w-xs ${T.dimOpacity}`}>
             {project.pitch_title || project.name}
           </span>
+          {/* Save state indicator */}
+          <span
+            className={`flex items-center gap-1 text-[11px] ${dark ? 'text-white/30' : 'text-zinc-400'}`}
+          >
+            {saveState === 'saving' && (
+              <>
+                <Loader2 size={11} className="animate-spin" /> Saving
+              </>
+            )}
+            {saveState === 'saved' && (
+              <>
+                <Check size={11} /> Saved
+              </>
+            )}
+            {saveState === 'error' && <span className="text-red-400">Save failed</span>}
+          </span>
         </div>
         <div className="flex items-center gap-4">
+          {/* Undo / redo */}
+          <div className="flex items-center gap-1">
+            <button
+              key={`undo-${historyTick}`}
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Cmd+Z)"
+              className={`p-2 rounded-xl transition-colors disabled:opacity-20 ${T.btnHover}`}
+            >
+              <Undo2 size={15} />
+            </button>
+            <button
+              key={`redo-${historyTick}`}
+              onClick={redo}
+              disabled={!canRedo}
+              title="Redo (Cmd+Shift+Z)"
+              className={`p-2 rounded-xl transition-colors disabled:opacity-20 ${T.btnHover}`}
+            >
+              <Redo2 size={15} />
+            </button>
+          </div>
           {/* Gamma export buttons */}
           <div className="flex items-center gap-2">
             {gammaError && (
@@ -1624,32 +2079,84 @@ export default function PitchDeckPage() {
         <div
           className={`w-40 shrink-0 border-r overflow-y-auto px-2.5 py-3 space-y-3 ${T.chromeBorder} ${T.railBg} ${dark ? '' : 'backdrop-blur-sm'}`}
         >
-          {slides.map((s, i) => (
-            <button
-              key={i}
-              title={`${i + 1}. ${slideCaption(s)}`}
-              onClick={() => goTo(i)}
-              className="w-full text-left block group"
-            >
-              <div
-                className="rounded-lg"
-                style={{
-                  outline:
-                    i === current
-                      ? `2px solid ${brand.primaryColor}`
-                      : `1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)'}`,
-                  outlineOffset: i === current ? '1px' : '0px',
-                }}
-              >
-                <SlideThumbnailPreview slide={s} brand={brand} brandColors={BRAND_COLORS} />
+          {slides.map((s, i) => {
+            const isMovable = s.type === 'chart' || s.type === 'table'
+            return (
+              <div key={i} className="relative group/thumb">
+                <button
+                  title={`${i + 1}. ${slideCaption(s)}`}
+                  onClick={() => goTo(i)}
+                  draggable={isMovable}
+                  onDragStart={() => isMovable && setDraggedSlideIdx(i)}
+                  onDragOver={(e) => {
+                    if (isMovable) e.preventDefault()
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    if (draggedSlideIdx === null || draggedSlideIdx === i) return
+                    const fromSlide = slides[draggedSlideIdx]
+                    const toSlide = slides[i]
+                    if (
+                      (fromSlide.type === 'chart' || fromSlide.type === 'table') &&
+                      (toSlide.type === 'chart' || toSlide.type === 'table')
+                    ) {
+                      moveContentSlide((fromSlide as any).index, (toSlide as any).index)
+                    }
+                    setDraggedSlideIdx(null)
+                  }}
+                  className="w-full text-left block"
+                >
+                  <div
+                    className="rounded-lg"
+                    style={{
+                      outline:
+                        i === current
+                          ? `2px solid ${brand.primaryColor}`
+                          : `1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)'}`,
+                      outlineOffset: i === current ? '1px' : '0px',
+                    }}
+                  >
+                    <SlideThumbnailPreview slide={s} brand={brand} brandColors={BRAND_COLORS} />
+                  </div>
+                  <div
+                    className={`mt-1 text-[10px] truncate transition-opacity ${i === current ? 'opacity-90' : `${T.dimOpacity} group-hover/thumb:opacity-70`}`}
+                  >
+                    {i + 1} · {slideCaption(s)}
+                  </div>
+                </button>
+                {isMovable && (
+                  <div className="absolute top-1 right-1 hidden group-hover/thumb:flex items-center gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        duplicateContentSlide((s as any).index)
+                      }}
+                      title="Duplicate slide"
+                      className="p-1 rounded-md bg-black/60 text-white hover:bg-black/80"
+                    >
+                      <Copy size={10} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteContentSlide((s as any).index)
+                      }}
+                      title="Delete slide"
+                      className="p-1 rounded-md bg-black/60 text-white hover:bg-red-500"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </div>
+                )}
               </div>
-              <div
-                className={`mt-1 text-[10px] truncate transition-opacity ${i === current ? 'opacity-90' : `${T.dimOpacity} group-hover:opacity-70`}`}
-              >
-                {i + 1} · {slideCaption(s)}
-              </div>
-            </button>
-          ))}
+            )
+          })}
+          <button
+            onClick={addBlankSlide}
+            className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed text-[11px] font-medium transition-colors ${dark ? 'border-white/15 text-white/40 hover:text-white/70 hover:border-white/30' : 'border-zinc-300 text-zinc-400 hover:text-zinc-700 hover:border-zinc-400'}`}
+          >
+            <Plus size={12} /> Add slide
+          </button>
         </div>
 
         {/* Slide + footer */}
