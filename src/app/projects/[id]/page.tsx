@@ -26,6 +26,7 @@ import {
   Newspaper,
   Download,
   Table2,
+  Presentation,
 } from 'lucide-react'
 
 const TONE_META: Record<string, { label: string; icon: any; color: string }> = {
@@ -558,18 +559,35 @@ export default function ProjectViewPage() {
           </div>
         )}
 
-        <div
-          className={`flex gap-1 mb-6 p-1 rounded-xl w-fit ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
-        >
-          {(['analysis', 'data', 'charts', 'notes'] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`${tabBase} ${tab === t ? tabActive : tabInactive}`}
+        <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
+          <div
+            className={`flex gap-1 p-1 rounded-xl w-fit ${dark ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}
+          >
+            {(['analysis', 'data', 'charts', 'notes'] as Tab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`${tabBase} ${tab === t ? tabActive : tabInactive}`}
+              >
+                {t === 'notes' ? 'CRM Notes' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          {/* Pitch Mode — the standalone slide editor at /projects/[id]/pitch.
+              Previously reachable from this row, then lost when the tabs
+              were rebuilt with no link back to it. It's safe to link to
+              directly at any time: that page already reuses project.charts
+              if they exist, and only falls back to a fresh generation when
+              nothing's been built yet. */}
+          {analysisOutput && (
+            <Link
+              href={`/projects/${id}/pitch`}
+              className={`flex items-center gap-1.5 ${tabBase} border ${dark ? 'border-white/[0.08] text-white/70 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
             >
-              {t === 'notes' ? 'CRM Notes' : t.charAt(0).toUpperCase() + t.slice(1)}
-            </button>
-          ))}
+              <Presentation size={14} />
+              Pitch Mode
+            </Link>
+          )}
         </div>
 
         {showSlideSelector && analysisOutput && (
