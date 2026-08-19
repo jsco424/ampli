@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react'
+import { useEffect, useState, useCallback, useRef, useLayoutEffect, Component } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { useBrand } from '@/hooks/useBrand'
@@ -363,6 +363,45 @@ function slideCaption(slide: Slide): string {
   if (slide.type === 'table') return slide.table?.title || `Table ${slide.index + 1}`
   if (slide.type === 'recommendations') return 'Recommendations'
   return ''
+}
+
+// Scoped specifically around ChartRenderer — if a chart's own render throws
+// (currently under active investigation: same crash signature has now
+// survived two real content changes plus a confirmed deploy and hard
+// refresh, strong evidence it's inside an unrelated vendor chunk rather
+// than anything in this file), this contains the failure to that one
+// chart's box instead of taking down the whole editor. Everything else on
+// the slide, and every other slide, keeps working regardless.
+class ChartErrorBoundary extends Component<
+  { children: React.ReactNode; dark: boolean },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; dark: boolean }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  componentDidCatch(error: unknown, info: unknown) {
+    console.error('Chart render crashed, caught by boundary:', error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          className="w-full h-full flex items-center justify-center rounded-2xl text-sm text-center px-4"
+          style={{
+            border: `1px dashed ${this.props.dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
+            color: this.props.dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
+          }}
+        >
+          Couldn't render this chart
+        </div>
+      )
+    }
+    return this.props.children
+  }
 }
 
 // ── SlideThumbnailPreview ──────────────────────────────────────────────────
@@ -1636,13 +1675,15 @@ export default function PitchDeckPage() {
           accentColor={accent}
         >
           {hasChartData ? (
-            <ChartRenderer
-              key={chartKey}
-              chart={chart}
-              colors={BRAND_COLORS}
-              height={Math.max(MIN_BOX_DIM, liveChartBox.h)}
-              dark={dark}
-            />
+            <ChartErrorBoundary dark={dark}>
+              <ChartRenderer
+                key={chartKey}
+                chart={chart}
+                colors={BRAND_COLORS}
+                height={Math.max(MIN_BOX_DIM, liveChartBox.h)}
+                dark={dark}
+              />
+            </ChartErrorBoundary>
           ) : (
             <div
               className="w-full h-full flex items-center justify-center rounded-2xl text-sm"
