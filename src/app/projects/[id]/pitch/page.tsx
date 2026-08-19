@@ -61,6 +61,14 @@ const POLL_INTERVAL_MS = 2500
 const POLL_MAX_ATTEMPTS = 40
 const HISTORY_LIMIT = 50
 const SNAP_THRESHOLD = 6
+// No box (chart or hero) is ever allowed to render below this, on either
+// axis. Exists specifically to stop a degenerate 0/negative dimension —
+// from a stale saved box that no longer fits the current canvas size, or
+// from an edge case in the layout math on an unusually short slide area —
+// from ever reaching ChartRenderer's ResponsiveContainer, which is a known
+// way to crash Recharts entirely (an internal null-dereference inside its
+// own layout pass when given a zero-size container).
+const MIN_BOX_DIM = 60
 
 const GENERATION_STEPS = [
   'Reading confirmed analysis findings',
@@ -240,40 +248,70 @@ function boxesForLayout(
     gap = 20,
     heroW = 256,
     takeawayStripH = 130
+  // Every returned box is clamped to MIN_BOX_DIM on both axes before it
+  // ever leaves this function — the layout math below can produce a
+  // degenerate (even negative) width/height on an unusually small or
+  // short canvas, and nothing downstream should ever have to guard
+  // against that separately.
+  const clamp = (b: Box): Box => ({
+    ...b,
+    w: Math.max(MIN_BOX_DIM, b.w),
+    h: Math.max(MIN_BOX_DIM, b.h),
+  })
   switch (layout) {
     case 'split-left':
       return {
-        hero: { x: padX, y: padY, w: heroW, h: height - padY - 24 },
-        chart: {
+        hero: clamp({ x: padX, y: padY, w: heroW, h: height - padY - 24 }),
+        chart: clamp({
           x: padX + heroW + gap,
           y: padY,
           w: width - padX * 2 - heroW - gap,
           h: height - padY - 24,
-        },
+        }),
       }
     case 'full-bleed': {
       const fbHeroW = 280,
         fbHeroH = 160,
         fbGap = 20
       return {
-        chart: { x: padX, y: padY, w: width - padX * 2, h: height - padY - 24 - fbHeroH - fbGap },
-        hero: { x: width - padX - fbHeroW, y: height - 24 - fbHeroH, w: fbHeroW, h: fbHeroH },
+        chart: clamp({
+          x: padX,
+          y: padY,
+          w: width - padX * 2,
+          h: height - padY - 24 - fbHeroH - fbGap,
+        }),
+        hero: clamp({
+          x: width - padX - fbHeroW,
+          y: height - 24 - fbHeroH,
+          w: fbHeroW,
+          h: fbHeroH,
+        }),
       }
     }
     case 'top-bottom':
       return {
-        chart: {
+        chart: clamp({
           x: padX,
           y: padY,
           w: width - padX * 2,
           h: height - padY - takeawayStripH - gap - 16,
-        },
-        hero: { x: padX, y: height - takeawayStripH - 16, w: width - padX * 2, h: takeawayStripH },
+        }),
+        hero: clamp({
+          x: padX,
+          y: height - takeawayStripH - 16,
+          w: width - padX * 2,
+          h: takeawayStripH,
+        }),
       }
     default:
       return {
-        chart: { x: padX, y: padY, w: width - padX * 2 - heroW - gap, h: height - padY - 24 },
-        hero: { x: width - padX - heroW, y: padY, w: heroW, h: height - padY - 24 },
+        chart: clamp({
+          x: padX,
+          y: padY,
+          w: width - padX * 2 - heroW - gap,
+          h: height - padY - 24,
+        }),
+        hero: clamp({ x: width - padX - heroW, y: padY, w: heroW, h: height - padY - 24 }),
       }
   }
 }
@@ -1428,8 +1466,26 @@ export default function PitchDeckPage() {
   const renderChartSlide = (chart: any, index: number) => {
     const layout: LayoutPreset = chart.layout || 'split-right'
     const defaults = boxesForLayout(layout, slideSize.width, slideSize.height)
+    // A saved box is only trusted if it's shaped like a real box (numeric,
+    // non-degenerate w/h) AND still roughly fits the CURRENT canvas — a box
+    // saved while the slide area measured one size, then rendered later at
+    // a meaningfully different size (a different window width, a resize
+    // race on first load, fullscreen toggling), is stale and should fall
+    // back to freshly computed defaults for the size it's actually on now,
+    // rather than being trusted at face value forever. This is the fix for
+    // "placement looks too large/small in places" — a stale box wasn't
+    // literally wrong, it was correct for a canvas size that's no longer
+    // the one it's rendering on.
     const isValidBox = (b: any): b is Box =>
-      b && typeof b.w === 'number' && typeof b.h === 'number' && b.w > 20 && b.h > 20
+      b &&
+      typeof b.x === 'number' &&
+      typeof b.y === 'number' &&
+      typeof b.w === 'number' &&
+      typeof b.h === 'number' &&
+      b.w >= MIN_BOX_DIM &&
+      b.h >= MIN_BOX_DIM &&
+      b.x + b.w <= slideSize.width * 1.5 &&
+      b.y + b.h <= slideSize.height * 1.5
     const liveChartBox = isValidBox(chart.chart_box) ? chart.chart_box : defaults.chart
     const liveHeroBox = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
     const chartKey = `${index}-${layout}-${Math.round(slideSize.width)}x${Math.round(slideSize.height)}`
@@ -1584,7 +1640,7 @@ export default function PitchDeckPage() {
               key={chartKey}
               chart={chart}
               colors={BRAND_COLORS}
-              height={liveChartBox.h}
+              height={Math.max(MIN_BOX_DIM, liveChartBox.h)}
               dark={dark}
             />
           ) : (
