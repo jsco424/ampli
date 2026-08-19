@@ -97,6 +97,26 @@ export default function ChartRenderer({
     // series that are genuine parts of a whole (e.g. new vs returning
     // customers) — Recharts stacks any Bars sharing the same stackId.
     const stacked = !!chart.stacked
+    // Built as a real array and filtered to actual elements before
+    // rendering — several Recharts versions internally re-walk their own
+    // children and assume every entry has a real .type, which a bare
+    // `{isMulti && <Legend/>}` violates the instant isMulti is false (that
+    // evaluates to the literal value false, not "nothing"). Filtering here
+    // guarantees Recharts never sees anything but real elements, regardless
+    // of which conditional below is the one actually responsible.
+    const barChildren = [
+      isMulti ? <Legend key="legend" wrapperStyle={{ fontSize: 11, opacity: 0.6 }} /> : null,
+      ...dataKeys.map((key, i) => (
+        <Bar
+          key={key}
+          dataKey={key}
+          stackId={stacked ? 'stack' : undefined}
+          fill={colors[i % colors.length]}
+          radius={stacked && i < dataKeys.length - 1 ? undefined : [4, 4, 0, 0]}
+          name={key.replace(/_/g, ' ')}
+        />
+      )),
+    ].filter(Boolean)
     return (
       <ResponsiveContainer width="100%" height={height}>
         <BarChart {...props}>
@@ -104,23 +124,26 @@ export default function ChartRenderer({
           <XAxis dataKey="name" tick={tickStyle(dark)} />
           <YAxis tick={tickStyle(dark)} />
           <Tooltip contentStyle={tooltipStyle(dark)} />
-          {isMulti && <Legend wrapperStyle={{ fontSize: 11, opacity: 0.6 }} />}
-          {dataKeys.map((key, i) => (
-            <Bar
-              key={key}
-              dataKey={key}
-              stackId={stacked ? 'stack' : undefined}
-              fill={colors[i % colors.length]}
-              radius={stacked && i < dataKeys.length - 1 ? undefined : [4, 4, 0, 0]}
-              name={key.replace(/_/g, ' ')}
-            />
-          ))}
+          {barChildren}
         </BarChart>
       </ResponsiveContainer>
     )
   }
 
-  if (chart.type === 'line')
+  if (chart.type === 'line') {
+    const lineChildren = [
+      isMulti ? <Legend key="legend" wrapperStyle={{ fontSize: 11, opacity: 0.6 }} /> : null,
+      ...dataKeys.map((key, i) => (
+        <Line
+          key={key}
+          dataKey={key}
+          stroke={colors[i % colors.length]}
+          strokeWidth={2}
+          dot={false}
+          name={key.replace(/_/g, ' ')}
+        />
+      )),
+    ].filter(Boolean)
     return (
       <ResponsiveContainer width="100%" height={height}>
         <LineChart {...props}>
@@ -128,22 +151,26 @@ export default function ChartRenderer({
           <XAxis dataKey="name" tick={tickStyle(dark)} />
           <YAxis tick={tickStyle(dark)} />
           <Tooltip contentStyle={tooltipStyle(dark)} />
-          {isMulti && <Legend wrapperStyle={{ fontSize: 11, opacity: 0.6 }} />}
-          {dataKeys.map((key, i) => (
-            <Line
-              key={key}
-              dataKey={key}
-              stroke={colors[i % colors.length]}
-              strokeWidth={2}
-              dot={false}
-              name={key.replace(/_/g, ' ')}
-            />
-          ))}
+          {lineChildren}
         </LineChart>
       </ResponsiveContainer>
     )
+  }
 
-  if (chart.type === 'area')
+  if (chart.type === 'area') {
+    const areaChildren = [
+      isMulti ? <Legend key="legend" wrapperStyle={{ fontSize: 11, opacity: 0.6 }} /> : null,
+      ...dataKeys.map((key, i) => (
+        <Area
+          key={key}
+          dataKey={key}
+          stroke={colors[i % colors.length]}
+          fill={`${colors[i % colors.length]}33`}
+          strokeWidth={2}
+          name={key.replace(/_/g, ' ')}
+        />
+      )),
+    ].filter(Boolean)
     return (
       <ResponsiveContainer width="100%" height={height}>
         <AreaChart {...props}>
@@ -151,20 +178,11 @@ export default function ChartRenderer({
           <XAxis dataKey="name" tick={tickStyle(dark)} />
           <YAxis tick={tickStyle(dark)} />
           <Tooltip contentStyle={tooltipStyle(dark)} />
-          {isMulti && <Legend wrapperStyle={{ fontSize: 11, opacity: 0.6 }} />}
-          {dataKeys.map((key, i) => (
-            <Area
-              key={key}
-              dataKey={key}
-              stroke={colors[i % colors.length]}
-              fill={`${colors[i % colors.length]}33`}
-              strokeWidth={2}
-              name={key.replace(/_/g, ' ')}
-            />
-          ))}
+          {areaChildren}
         </AreaChart>
       </ResponsiveContainer>
     )
+  }
 
   if (chart.type === 'pie')
     return (
@@ -178,7 +196,7 @@ export default function ChartRenderer({
             cy="50%"
             outerRadius={height * 0.36}
           >
-            {chart.data?.map((_: any, i: number) => (
+            {(chart.data || []).map((_: any, i: number) => (
               <Cell key={i} fill={colors[i % colors.length]} />
             ))}
           </Pie>
@@ -194,6 +212,33 @@ export default function ChartRenderer({
   // axis so it stays visible regardless of scale difference.
   if (chart.type === 'composed') {
     const [barKey, lineKey] = dataKeys
+    // Same filter-to-real-elements treatment as above — barKey/lineKey are
+    // strings or undefined, so `{barKey && <Bar/>}` can also hand Recharts
+    // a bare `undefined` as a child when a chart only has one series.
+    const composedChildren = [
+      <Legend key="legend" wrapperStyle={{ fontSize: 11, opacity: 0.6 }} />,
+      barKey ? (
+        <Bar
+          key="bar"
+          yAxisId="left"
+          dataKey={barKey}
+          fill={colors[0]}
+          radius={[4, 4, 0, 0]}
+          name={barKey.replace(/_/g, ' ')}
+        />
+      ) : null,
+      lineKey ? (
+        <Line
+          key="line"
+          yAxisId="right"
+          dataKey={lineKey}
+          stroke={colors[1 % colors.length]}
+          strokeWidth={2}
+          dot={false}
+          name={lineKey.replace(/_/g, ' ')}
+        />
+      ) : null,
+    ].filter(Boolean)
     return (
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart {...props}>
@@ -202,26 +247,7 @@ export default function ChartRenderer({
           <YAxis yAxisId="left" tick={tickStyle(dark)} />
           {lineKey && <YAxis yAxisId="right" orientation="right" tick={tickStyle(dark)} />}
           <Tooltip contentStyle={tooltipStyle(dark)} />
-          <Legend wrapperStyle={{ fontSize: 11, opacity: 0.6 }} />
-          {barKey && (
-            <Bar
-              yAxisId="left"
-              dataKey={barKey}
-              fill={colors[0]}
-              radius={[4, 4, 0, 0]}
-              name={barKey.replace(/_/g, ' ')}
-            />
-          )}
-          {lineKey && (
-            <Line
-              yAxisId="right"
-              dataKey={lineKey}
-              stroke={colors[1 % colors.length]}
-              strokeWidth={2}
-              dot={false}
-              name={lineKey.replace(/_/g, ' ')}
-            />
-          )}
+          {composedChildren}
         </ComposedChart>
       </ResponsiveContainer>
     )
@@ -250,7 +276,7 @@ export default function ChartRenderer({
         <FunnelChart>
           <Tooltip contentStyle={tooltipStyle(dark)} />
           <Funnel data={chart.data} dataKey="value" nameKey="name" isAnimationActive>
-            {chart.data?.map((_: any, i: number) => (
+            {(chart.data || []).map((_: any, i: number) => (
               <Cell key={i} fill={colors[i % colors.length]} />
             ))}
             <LabelList
