@@ -77,11 +77,12 @@ const LAYOUT_OPTIONS: { key: LayoutPreset; label: string }[] = [
   { key: 'top-bottom', label: 'Top / Bottom' },
 ]
 
-const FONT_OPTIONS: { label: string; value: string }[] = [
-  { label: 'Sans', value: 'Inter, ui-sans-serif, sans-serif' },
-  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
-  { label: 'Mono', value: 'ui-monospace, "SF Mono", monospace' },
-]
+// Font simplified to Lexend only, per direct decision — the reference
+// deck's Funnel Display / Manrope pairing was deliberately dropped rather
+// than loaded as two extra web fonts. Kept as a real applied CSS value
+// (with sane system fallbacks), not just a UI label, so it actually
+// renders wherever EditableText is used, not only in exported output.
+const EDITOR_FONT_FAMILY = '"Lexend", ui-sans-serif, sans-serif'
 
 // Fields the editor is actually allowed to mutate — every commit writes
 // exactly this set back to Supabase, whichever of them actually changed.
@@ -101,9 +102,40 @@ const EDITABLE_FIELDS = [
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function LayoutIcon({ layout, active }: { layout: LayoutPreset; active?: boolean }) {
-  const stroke = active ? '#3b82f6' : 'rgba(128,128,128,0.5)'
-  const fill = active ? 'rgba(59,130,246,0.25)' : 'rgba(128,128,128,0.08)'
+// Converts a brand hex color to an rgba() string at a given alpha — used
+// everywhere the editor's own UI chrome (selection outlines, guide lines,
+// toolbar active states) needs a translucent version of the account's own
+// accent color, rather than a fixed hardcoded blue. Accepts 3- or 6-digit
+// hex; falls back to a neutral gray if given something unparseable, so a
+// malformed brand color value can never crash the editor.
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = (hex || '').replace('#', '').trim()
+  const full =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean
+  const parsed = parseInt(full, 16)
+  if (full.length !== 6 || Number.isNaN(parsed)) return `rgba(148, 163, 184, ${alpha})`
+  const r = (parsed >> 16) & 255
+  const g = (parsed >> 8) & 255
+  const b = parsed & 255
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function LayoutIcon({
+  layout,
+  active,
+  accentColor,
+}: {
+  layout: LayoutPreset
+  active?: boolean
+  accentColor: string
+}) {
+  const stroke = active ? accentColor : 'rgba(128,128,128,0.5)'
+  const fill = active ? hexToRgba(accentColor, 0.25) : 'rgba(128,128,128,0.08)'
   if (layout === 'split-right')
     return (
       <svg width={28} height={20} viewBox="0 0 32 22">
@@ -456,10 +488,12 @@ function StyleToolbar({
   style,
   onChange,
   brandColors,
+  accentColor,
 }: {
   style: TextStyle
   onChange: (s: TextStyle) => void
   brandColors: string[]
+  accentColor: string
 }) {
   const { dark } = useTheme()
   const currentSize = style.sizePx ?? DEFAULT_SIZE_PX
@@ -472,7 +506,11 @@ function StyleToolbar({
   const btnBase = dark
     ? 'border-white/10 opacity-60 hover:opacity-90'
     : 'border-black/10 opacity-60 hover:opacity-90'
-  const btnActive = 'border-blue-500 bg-blue-500/20 text-blue-500'
+  const activeStyle: React.CSSProperties = {
+    borderColor: accentColor,
+    background: hexToRgba(accentColor, 0.2),
+    color: accentColor,
+  }
   const divider = dark ? 'bg-white/10' : 'bg-black/10'
   return (
     <div
@@ -482,13 +520,15 @@ function StyleToolbar({
     >
       <button
         onMouseDown={press(() => onChange({ ...style, bold: !style.bold }))}
-        className={`p-1.5 rounded-lg border ${style.bold ? btnActive : btnBase}`}
+        className={`p-1.5 rounded-lg border ${style.bold ? '' : btnBase}`}
+        style={style.bold ? activeStyle : undefined}
       >
         <Bold size={12} />
       </button>
       <button
         onMouseDown={press(() => onChange({ ...style, italic: !style.italic }))}
-        className={`p-1.5 rounded-lg border ${style.italic ? btnActive : btnBase}`}
+        className={`p-1.5 rounded-lg border ${style.italic ? '' : btnBase}`}
+        style={style.italic ? activeStyle : undefined}
       >
         <Italic size={12} />
       </button>
@@ -510,20 +550,6 @@ function StyleToolbar({
       >
         <Plus size={11} />
       </button>
-      <div className={`w-px h-5 mx-0.5 ${divider}`} />
-      <select
-        data-no-drag="true"
-        value={style.fontFamily || FONT_OPTIONS[0].value}
-        onChange={(e) => onChange({ ...style, fontFamily: e.target.value })}
-        onMouseDown={(e) => e.stopPropagation()}
-        className={`text-[10px] rounded-lg border px-1.5 py-1 outline-none bg-transparent ${btnBase}`}
-      >
-        {FONT_OPTIONS.map((f) => (
-          <option key={f.value} value={f.value}>
-            {f.label}
-          </option>
-        ))}
-      </select>
       <div className={`w-px h-5 mx-0.5 ${divider}`} />
       {brandColors.map((c) => (
         <button
@@ -548,6 +574,7 @@ function DraggableBox({
   snapX,
   snapY,
   onGuides,
+  accentColor,
   children,
 }: {
   box: Box
@@ -558,6 +585,7 @@ function DraggableBox({
   snapX?: number[]
   snapY?: number[]
   onGuides?: (g: { x: number[]; y: number[] } | null) => void
+  accentColor: string
   children: React.ReactNode
 }) {
   const dragRef = useRef<{
@@ -615,7 +643,7 @@ function DraggableBox({
         top: box.y,
         width: box.w,
         height: box.h,
-        outline: selected ? '1.5px dashed rgba(59,130,246,0.7)' : 'none',
+        outline: selected ? `1.5px dashed ${hexToRgba(accentColor, 0.7)}` : 'none',
       }}
       onPointerDown={(e) => onPointerDown(e, 'move')}
       onClick={(e) => {
@@ -631,7 +659,8 @@ function DraggableBox({
             e.stopPropagation()
             onPointerDown(e, 'resize')
           }}
-          className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-sm bg-blue-500 border-2 border-white cursor-nwse-resize z-50"
+          className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-sm border-2 border-white cursor-nwse-resize z-50"
+          style={{ background: accentColor }}
         />
       )}
     </div>
@@ -651,6 +680,7 @@ function EditableText({
   textStyle,
   onStyleChange,
   brandColors,
+  accentColor,
 }: {
   value: string
   onCommit: (v: string) => void
@@ -662,6 +692,7 @@ function EditableText({
   textStyle?: TextStyle
   onStyleChange?: (s: TextStyle) => void
   brandColors?: string[]
+  accentColor?: string
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
@@ -680,17 +711,19 @@ function EditableText({
     setEditing(false)
     if (draft !== value) onCommit(draft)
   }
+  const resolvedAccent = accentColor || '#5DCAA5'
   const appliedStyle: React.CSSProperties = {
     ...style,
     fontWeight: textStyle?.bold ? 700 : style?.fontWeight,
     fontStyle: textStyle?.italic ? 'italic' : undefined,
     color: textStyle?.color || style?.color,
     fontSize: textStyle?.sizePx ? `${textStyle.sizePx}px` : style?.fontSize,
-    fontFamily: textStyle?.fontFamily || style?.fontFamily,
+    fontFamily: textStyle?.fontFamily || style?.fontFamily || EDITOR_FONT_FAMILY,
   }
 
   if (editing) {
-    const inputCls = `${className} bg-transparent outline-none border-b-2 ${theme === 'dark' ? 'border-blue-400' : 'border-blue-500'} w-full resize-none`
+    const inputCls = `${className} bg-transparent outline-none border-b-2 w-full resize-none`
+    const editingStyle: React.CSSProperties = { ...appliedStyle, borderColor: resolvedAccent }
     return (
       <div className="relative inline-block w-full">
         {onStyleChange && brandColors && (
@@ -698,6 +731,7 @@ function EditableText({
             style={textStyle || {}}
             onChange={onStyleChange}
             brandColors={brandColors}
+            accentColor={resolvedAccent}
           />
         )}
         {multiline ? (
@@ -706,7 +740,7 @@ function EditableText({
             data-no-drag="true"
             value={draft}
             className={inputCls}
-            style={appliedStyle}
+            style={editingStyle}
             rows={3}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
@@ -723,7 +757,7 @@ function EditableText({
             data-no-drag="true"
             value={draft}
             className={inputCls}
-            style={appliedStyle}
+            style={editingStyle}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
             onKeyDown={(e) => {
@@ -742,7 +776,7 @@ function EditableText({
     <div
       data-no-drag="true"
       onPointerUp={() => setEditing(true)}
-      className={`${className} cursor-text rounded transition-colors hover:bg-blue-500/10 px-0.5 -mx-0.5`}
+      className={`${className} cursor-text rounded transition-colors hover:bg-white/10 px-0.5 -mx-0.5`}
       style={appliedStyle}
     >
       {value || <span className="opacity-30">{placeholder}</span>}
@@ -785,6 +819,13 @@ export default function PitchDeckPage() {
   const [historyTick, setHistoryTick] = useState(0) // bumps to force undo/redo button enable-state re-renders
   const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null)
   const [draggedSlideIdx, setDraggedSlideIdx] = useState<number | null>(null)
+
+  // Single source of truth for the editor's own interactive chrome color
+  // (selection outlines, drag handles, toolbar active states, snap guides,
+  // loading screens) — this is what makes the WHOLE tool, not just slide
+  // content, follow the account's adjustable brand color. Falls back to
+  // ampli's own accent only if brand hasn't loaded yet.
+  const accent = brand.primaryColor || '#5DCAA5'
 
   const handleGammaExport = async (format: 'pptx' | 'pdf') => {
     if (!project) return
@@ -1366,6 +1407,7 @@ export default function PitchDeckPage() {
         textStyle={chart.hero_text_style || {}}
         onStyleChange={(s) => updateChart(chartIndex, { hero_text_style: s })}
         brandColors={BRAND_COLORS}
+        accentColor={accent}
       />
       <EditableText
         value={chart.takeaway || ''}
@@ -1378,6 +1420,7 @@ export default function PitchDeckPage() {
         textStyle={chart.takeaway_text_style || {}}
         onStyleChange={(s) => updateChart(chartIndex, { takeaway_text_style: s })}
         brandColors={BRAND_COLORS}
+        accentColor={accent}
       />
     </div>
   )
@@ -1439,6 +1482,7 @@ export default function PitchDeckPage() {
             textStyle={chart.title_text_style || {}}
             onStyleChange={(s) => updateChart(index, { title_text_style: s })}
             brandColors={BRAND_COLORS}
+            accentColor={accent}
           />
           <EditableText
             value={chart.description || ''}
@@ -1450,6 +1494,7 @@ export default function PitchDeckPage() {
             textStyle={chart.description_text_style || {}}
             onStyleChange={(s) => updateChart(index, { description_text_style: s })}
             brandColors={BRAND_COLORS}
+            accentColor={accent}
           />
         </div>
 
@@ -1460,7 +1505,12 @@ export default function PitchDeckPage() {
           >
             <button
               onClick={() => setShowLayoutPicker(!showLayoutPicker)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${showLayoutPicker ? 'border-blue-500 bg-blue-500/20 text-blue-500' : `${T.btnBorder} ${T.dimOpacity} hover:opacity-100`}`}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${showLayoutPicker ? '' : `${T.btnBorder} ${T.dimOpacity} hover:opacity-100`}`}
+              style={
+                showLayoutPicker
+                  ? { borderColor: accent, background: hexToRgba(accent, 0.2), color: accent }
+                  : undefined
+              }
             >
               <LayoutGrid size={12} /> Layout
             </button>
@@ -1480,9 +1530,14 @@ export default function PitchDeckPage() {
                     key={opt.key}
                     onClick={() => applyLayout(index, opt.key)}
                     title={opt.label}
-                    className={`flex flex-col items-center gap-1 p-1.5 rounded-lg border transition-colors ${layout === opt.key ? 'border-blue-500 bg-blue-500/15' : `${T.btnBorder} hover:border-blue-500/40`}`}
+                    className={`flex flex-col items-center gap-1 p-1.5 rounded-lg border transition-colors ${layout === opt.key ? '' : `${T.btnBorder} hover:border-white/40`}`}
+                    style={
+                      layout === opt.key
+                        ? { borderColor: accent, background: hexToRgba(accent, 0.15) }
+                        : undefined
+                    }
                   >
-                    <LayoutIcon layout={opt.key} active={layout === opt.key} />
+                    <LayoutIcon layout={opt.key} active={layout === opt.key} accentColor={accent} />
                   </button>
                 ))}
               </div>
@@ -1494,14 +1549,14 @@ export default function PitchDeckPage() {
           <div
             key={`gx-${gx}`}
             className="absolute top-0 bottom-0 pointer-events-none"
-            style={{ left: gx, width: 1, background: '#3b82f6', zIndex: 40 }}
+            style={{ left: gx, width: 1, background: accent, zIndex: 40 }}
           />
         ))}
         {guides?.y.map((gy) => (
           <div
             key={`gy-${gy}`}
             className="absolute left-0 right-0 pointer-events-none"
-            style={{ top: gy, height: 1, background: '#3b82f6', zIndex: 40 }}
+            style={{ top: gy, height: 1, background: accent, zIndex: 40 }}
           />
         ))}
 
@@ -1522,6 +1577,7 @@ export default function PitchDeckPage() {
           snapX={chartSnapX}
           snapY={chartSnapY}
           onGuides={setGuides}
+          accentColor={accent}
         >
           {hasChartData ? (
             <ChartRenderer
@@ -1558,6 +1614,7 @@ export default function PitchDeckPage() {
           snapX={heroSnapX}
           snapY={heroSnapY}
           onGuides={setGuides}
+          accentColor={accent}
         >
           <HeroPanelContent chart={chart} chartIndex={index} />
         </DraggableBox>
@@ -1577,6 +1634,7 @@ export default function PitchDeckPage() {
             theme={T.slideTheme}
             className="text-2xl font-bold leading-tight"
             brandColors={BRAND_COLORS}
+            accentColor={accent}
           />
           <EditableText
             value={slide.table?.description || ''}
@@ -1586,6 +1644,7 @@ export default function PitchDeckPage() {
             className="text-sm mt-1"
             style={{ color: T.dimColor }}
             brandColors={BRAND_COLORS}
+            accentColor={accent}
           />
         </div>
         <div className="flex-1 overflow-auto">
@@ -1605,6 +1664,7 @@ export default function PitchDeckPage() {
                       theme={T.slideTheme}
                       className="text-[11px] font-semibold uppercase tracking-wide"
                       brandColors={BRAND_COLORS}
+                      accentColor={accent}
                     />
                   </th>
                 ))}
@@ -1629,6 +1689,7 @@ export default function PitchDeckPage() {
                           theme={T.slideTheme}
                           className="text-xs"
                           brandColors={BRAND_COLORS}
+                          accentColor={accent}
                         />
                       </td>
                     )
@@ -1655,6 +1716,7 @@ export default function PitchDeckPage() {
             className="text-sm font-medium leading-relaxed flex-1"
             style={{ color: T.dimColor2 }}
             brandColors={BRAND_COLORS}
+            accentColor={accent}
           />
         </div>
         <EditableText
@@ -1665,6 +1727,7 @@ export default function PitchDeckPage() {
           className="text-[11px] mt-2"
           style={{ color: T.dimColor }}
           brandColors={BRAND_COLORS}
+          accentColor={accent}
         />
       </div>
     )
@@ -1698,6 +1761,7 @@ export default function PitchDeckPage() {
               textStyle={project?.title_text_style || {}}
               onStyleChange={(s) => updateProjectField('title_text_style', s)}
               brandColors={BRAND_COLORS}
+              accentColor={accent}
             />
           </div>
           <div
@@ -1734,6 +1798,7 @@ export default function PitchDeckPage() {
                   textStyle={insight.title_text_style || {}}
                   onStyleChange={(s) => updateInsight(i, { title_text_style: s })}
                   brandColors={BRAND_COLORS}
+                  accentColor={accent}
                 />
                 <EditableText
                   value={insight.value || ''}
@@ -1745,6 +1810,7 @@ export default function PitchDeckPage() {
                   textStyle={insight.value_text_style || {}}
                   onStyleChange={(s) => updateInsight(i, { value_text_style: s })}
                   brandColors={BRAND_COLORS}
+                  accentColor={accent}
                 />
                 <EditableText
                   value={insight.description || ''}
@@ -1757,6 +1823,7 @@ export default function PitchDeckPage() {
                   textStyle={insight.description_text_style || {}}
                   onStyleChange={(s) => updateInsight(i, { description_text_style: s })}
                   brandColors={BRAND_COLORS}
+                  accentColor={accent}
                 />
               </div>
             ))}
@@ -1787,6 +1854,7 @@ export default function PitchDeckPage() {
               textStyle={project?.narrative_text_style || {}}
               onStyleChange={(s) => updateProjectField('narrative_text_style', s)}
               brandColors={BRAND_COLORS}
+              accentColor={accent}
             />
           </div>
           <div className="flex-1 grid grid-cols-3 gap-5">
@@ -1811,6 +1879,7 @@ export default function PitchDeckPage() {
                   textStyle={rec.title_text_style || {}}
                   onStyleChange={(s) => updateRecommendation(i, { title_text_style: s })}
                   brandColors={BRAND_COLORS}
+                  accentColor={accent}
                 />
                 <EditableText
                   value={rec.description || ''}
@@ -1823,6 +1892,7 @@ export default function PitchDeckPage() {
                   textStyle={rec.description_text_style || {}}
                   onStyleChange={(s) => updateRecommendation(i, { description_text_style: s })}
                   brandColors={BRAND_COLORS}
+                  accentColor={accent}
                 />
                 {(rec.stat || rec.stat_label) && (
                   <div
@@ -1839,6 +1909,7 @@ export default function PitchDeckPage() {
                       textStyle={rec.stat_text_style || {}}
                       onStyleChange={(s) => updateRecommendation(i, { stat_text_style: s })}
                       brandColors={BRAND_COLORS}
+                      accentColor={accent}
                     />
                     <EditableText
                       value={rec.stat_label || ''}
@@ -1850,6 +1921,7 @@ export default function PitchDeckPage() {
                       textStyle={rec.stat_label_text_style || {}}
                       onStyleChange={(s) => updateRecommendation(i, { stat_label_text_style: s })}
                       brandColors={BRAND_COLORS}
+                      accentColor={accent}
                     />
                   </div>
                 )}
@@ -1875,6 +1947,10 @@ export default function PitchDeckPage() {
     )[logoPos] || 'bottom-3 right-4'
 
   // ── Loading / error states ─────────────────────────────────────────────
+  // These render before the main deck, but brand/accent are already loaded
+  // by this point (useBrand() runs at the top of the component regardless
+  // of which return path fires), so they follow the same adjustable
+  // palette as everything else rather than a separate hardcoded blue.
 
   if (genState === 'idle' || (genState !== 'ready' && genState !== 'no_data')) {
     return (
@@ -1885,8 +1961,11 @@ export default function PitchDeckPage() {
         <div
           className={`w-full max-w-sm p-8 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-white/[0.08]' : 'bg-white border-zinc-200'}`}
         >
-          <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-5">
-            <Sparkles size={22} className="text-blue-500" />
+          <div
+            className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-5"
+            style={{ background: hexToRgba(accent, 0.12) }}
+          >
+            <Sparkles size={22} style={{ color: accent }} />
           </div>
           <h2 className={`text-lg font-bold mb-1 ${T.text}`}>Building your slides</h2>
           <p className={`text-sm mb-6 ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
@@ -1896,7 +1975,10 @@ export default function PitchDeckPage() {
             {GENERATION_STEPS.map((step, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div
-                  className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors ${i <= genStep ? 'bg-blue-500' : dark ? 'bg-zinc-700' : 'bg-zinc-300'}`}
+                  className="w-1.5 h-1.5 rounded-full shrink-0 transition-colors"
+                  style={{
+                    background: i <= genStep ? accent : dark ? 'rgb(63 63 70)' : 'rgb(212 212 216)',
+                  }}
                 />
                 <span
                   className={`text-xs transition-opacity ${i <= genStep ? (dark ? 'text-white/80' : 'text-zinc-700') : dark ? 'text-white/25' : 'text-zinc-400'}`}
@@ -1904,7 +1986,10 @@ export default function PitchDeckPage() {
                   {step}
                 </span>
                 {i === genStep && (
-                  <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                  <div
+                    className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin shrink-0"
+                    style={{ borderColor: accent, borderTopColor: 'transparent' }}
+                  />
                 )}
               </div>
             ))}
@@ -1933,7 +2018,8 @@ export default function PitchDeckPage() {
           </p>
           <button
             onClick={() => router.push(`/projects/${id}`)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium transition-colors"
+            style={{ background: accent }}
           >
             <ArrowLeft size={14} /> Go to Analysis
           </button>
@@ -1952,7 +2038,7 @@ export default function PitchDeckPage() {
     <div
       ref={containerRef}
       className={`fixed inset-0 flex flex-col overflow-hidden ${T.text}`}
-      style={{ background: T.pageBg }}
+      style={{ background: T.pageBg, fontFamily: EDITOR_FONT_FAMILY }}
     >
       {/* Header */}
       <div
@@ -1979,7 +2065,7 @@ export default function PitchDeckPage() {
             )}
             {saveState === 'saved' && (
               <>
-                <Check size={11} /> Saved
+                <Check size={11} className="text-emerald-400" /> Saved
               </>
             )}
             {saveState === 'error' && <span className="text-red-400">Save failed</span>}
@@ -2007,7 +2093,9 @@ export default function PitchDeckPage() {
               <Redo2 size={15} />
             </button>
           </div>
-          {/* Gamma export buttons */}
+          {/* Gamma export buttons — deliberately left neutral/unbranded,
+              this is a separate third-party integration, not part of the
+              account's own deck design system. */}
           <div className="flex items-center gap-2">
             {gammaError && (
               <span className="text-[11px] text-red-400 max-w-[180px] truncate">{gammaError}</span>

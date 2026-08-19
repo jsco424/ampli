@@ -12,10 +12,22 @@ export interface BrandSettings {
   logoPosition: string
 }
 
+// Defaults for a brand-new account with no brand_settings row yet — these
+// are just the starting point, never a ceiling. Every value here is fully
+// overridable per account from Settings > Brand, and everything that reads
+// useBrand() (the pitch editor, onboarding, exports) picks up whatever the
+// account has actually set, live.
+//
+// primaryColor/secondaryColor set to the reference deck's real two core
+// colors (lime green, navy). Genuinely only an approximation of that deck's
+// actual three-role system — navy plays a structural panel/background role
+// there, not just a second accent — but that's the best fit within today's
+// two-color model; a real third "panel" role would need a schema change,
+// not just new default values.
 const DEFAULTS: BrandSettings = {
-  primaryColor: '#3b82f6',
-  secondaryColor: '#8b5cf6',
-  presets: ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'],
+  primaryColor: '#D3F4A3',
+  secondaryColor: '#242F35',
+  presets: ['#D3F4A3', '#242F35', '#475F5F', '#f59e0b', '#ef4444'],
   logoUrl: null,
   logoPosition: 'bottom-right',
 }
