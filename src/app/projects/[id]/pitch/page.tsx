@@ -967,6 +967,12 @@ export default function PitchDeckPage() {
   const buildSlides = (data: any): Slide[] => {
     const handoff = data.analysis_handoff
     const selections: any[] = handoff?.selectedFindings || []
+    // Same defensive filter as AnalysisView.tsx, against the same root
+    // cause: a stray null in project.charts crashes the instant something
+    // reads a property off it. This is the array Pitch Mode's own
+    // buildSlides() maps over below, so it needs the identical guard.
+    const rawCharts: any[] = data.charts || []
+    const safeCharts = rawCharts.filter((c) => c && typeof c === 'object')
     const titleSlide: Slide = { type: 'title', project: data }
     const recsSlide: Slide = {
       type: 'recommendations',
@@ -983,7 +989,7 @@ export default function PitchDeckPage() {
         // Match generated chart by index — but always override hero_stat and
         // takeaway with the user-confirmed values from the selection. The AI
         // may have reworded or changed these; the user's explicit choices win.
-        const generatedChart = data.charts?.[i]
+        const generatedChart = safeCharts[i]
         const chart = {
           // Chart type and data come from generation (AI filled in data points)
           type:
@@ -1011,7 +1017,7 @@ export default function PitchDeckPage() {
     return [
       titleSlide,
       { type: 'insights', insights: data.insights || [] },
-      ...(data.charts || []).map((chart: any, i: number) => ({
+      ...safeCharts.map((chart: any, i: number) => ({
         type: 'chart' as const,
         chart,
         index: i,
