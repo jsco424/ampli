@@ -35,7 +35,14 @@ import {
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type Box = { x: number; y: number; w: number; h: number }
-type LayoutPreset = 'split-right' | 'split-left' | 'full-bleed' | 'top-bottom'
+// 'full-bleed' was removed as a selectable layout — it placed the callout
+// box in the bottom right corner of the chart, overlapping the data. The
+// three remaining presets are the only ones that ever made sense: callout
+// right, callout left, callout below. A chart previously saved with
+// layout: 'full-bleed' still renders fine — boxesForLayout's default case
+// falls back to split-right-style boxes for any unrecognized value, so no
+// migration is needed for existing data.
+type LayoutPreset = 'split-right' | 'split-left' | 'top-bottom'
 type TextStyle = {
   bold?: boolean
   italic?: boolean
@@ -79,11 +86,21 @@ const GENERATION_STEPS = [
 ]
 
 const LAYOUT_OPTIONS: { key: LayoutPreset; label: string }[] = [
-  { key: 'split-right', label: 'Split Right' },
-  { key: 'split-left', label: 'Split Left' },
-  { key: 'full-bleed', label: 'Full Bleed' },
-  { key: 'top-bottom', label: 'Top / Bottom' },
+  { key: 'split-right', label: 'Callout Right' },
+  { key: 'split-left', label: 'Callout Left' },
+  { key: 'top-bottom', label: 'Callout Below' },
 ]
+
+// Chart size, relative to its layout slot. 1 is the default (the slot
+// boxesForLayout computes with the reference constants below). Nudged
+// with the Size control in the selection toolbar — a semantic step
+// instead of freehand pixel dragging, so "make the chart bigger" is a
+// real, repeatable action instead of a drag gesture that's easy to
+// overshoot into "takes up the whole slide."
+const DEFAULT_CHART_SCALE = 1
+const MIN_CHART_SCALE = 0.7
+const MAX_CHART_SCALE = 1.3
+const CHART_SCALE_STEP = 0.1
 
 // Font simplified to Lexend only, per direct decision — the reference
 // deck's Funnel Display / Manrope pairing was deliberately dropped rather
@@ -194,22 +211,6 @@ function LayoutIcon({
         />
       </svg>
     )
-  if (layout === 'full-bleed')
-    return (
-      <svg width={28} height={20} viewBox="0 0 32 22">
-        <rect
-          x="1"
-          y="1"
-          width="30"
-          height="20"
-          rx="2"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-        <rect x="19" y="13" width="10" height="6" rx="1.5" fill={stroke} opacity="0.5" />
-      </svg>
-    )
   if (layout === 'top-bottom')
     return (
       <svg width={28} height={20} viewBox="0 0 32 22">
@@ -241,13 +242,21 @@ function LayoutIcon({
 function boxesForLayout(
   layout: LayoutPreset,
   width: number,
-  height: number
+  height: number,
+  chartScale: number = DEFAULT_CHART_SCALE
 ): { chart: Box; hero: Box } {
   const padX = 48,
     padY = 96,
     gap = 20,
     heroW = 256,
     takeawayStripH = 130
+  // chartScale grows the chart's share of its slot and shrinks the
+  // callout's by the same move — a size lever, not just a resize handle.
+  // Clamped so the callout can never be squeezed away entirely and the
+  // chart can never swallow the whole slide.
+  const scale = Math.min(MAX_CHART_SCALE, Math.max(MIN_CHART_SCALE, chartScale))
+  const scaledHeroW = Math.round(Math.max(160, Math.min(340, heroW / scale)))
+  const scaledStripH = Math.round(Math.max(90, Math.min(220, takeawayStripH / scale)))
   // Every returned box is clamped to MIN_BOX_DIM on both axes before it
   // ever leaves this function — the layout math below can produce a
   // degenerate (even negative) width/height on an unusually small or
@@ -261,46 +270,27 @@ function boxesForLayout(
   switch (layout) {
     case 'split-left':
       return {
-        hero: clamp({ x: padX, y: padY, w: heroW, h: height - padY - 24 }),
+        hero: clamp({ x: padX, y: padY, w: scaledHeroW, h: height - padY - 24 }),
         chart: clamp({
-          x: padX + heroW + gap,
+          x: padX + scaledHeroW + gap,
           y: padY,
-          w: width - padX * 2 - heroW - gap,
+          w: width - padX * 2 - scaledHeroW - gap,
           h: height - padY - 24,
         }),
       }
-    case 'full-bleed': {
-      const fbHeroW = 280,
-        fbHeroH = 160,
-        fbGap = 20
-      return {
-        chart: clamp({
-          x: padX,
-          y: padY,
-          w: width - padX * 2,
-          h: height - padY - 24 - fbHeroH - fbGap,
-        }),
-        hero: clamp({
-          x: width - padX - fbHeroW,
-          y: height - 24 - fbHeroH,
-          w: fbHeroW,
-          h: fbHeroH,
-        }),
-      }
-    }
     case 'top-bottom':
       return {
         chart: clamp({
           x: padX,
           y: padY,
           w: width - padX * 2,
-          h: height - padY - takeawayStripH - gap - 16,
+          h: height - padY - scaledStripH - gap - 16,
         }),
         hero: clamp({
           x: padX,
-          y: height - takeawayStripH - 16,
+          y: height - scaledStripH - 16,
           w: width - padX * 2,
-          h: takeawayStripH,
+          h: scaledStripH,
         }),
       }
     default:
@@ -308,10 +298,15 @@ function boxesForLayout(
         chart: clamp({
           x: padX,
           y: padY,
-          w: width - padX * 2 - heroW - gap,
+          w: width - padX * 2 - scaledHeroW - gap,
           h: height - padY - 24,
         }),
-        hero: clamp({ x: width - padX - heroW, y: padY, w: heroW, h: height - padY - 24 }),
+        hero: clamp({
+          x: width - padX - scaledHeroW,
+          y: padY,
+          w: scaledHeroW,
+          h: height - padY - 24,
+        }),
       }
   }
 }
@@ -652,6 +647,8 @@ function DraggableBox({
   snapY,
   onGuides,
   accentColor,
+  maxW,
+  maxH,
   children,
 }: {
   box: Box
@@ -663,6 +660,12 @@ function DraggableBox({
   snapY?: number[]
   onGuides?: (g: { x: number[]; y: number[] } | null) => void
   accentColor: string
+  // Upper bound on free-drag resize, in px. Without this the corner handle
+  // has no ceiling — nothing stopped a chart from being dragged out to
+  // fill nearly the whole slide. Optional so other DraggableBox use sites
+  // aren't forced to supply one.
+  maxW?: number
+  maxH?: number
   children: React.ReactNode
 }) {
   const dragRef = useRef<{
@@ -700,7 +703,13 @@ function DraggableBox({
       }
       onChange(next)
     } else {
-      onChange({ ...d.orig, w: Math.max(80, d.orig.w + dx), h: Math.max(60, d.orig.h + dy) })
+      const nextW = Math.max(80, d.orig.w + dx)
+      const nextH = Math.max(60, d.orig.h + dy)
+      onChange({
+        ...d.orig,
+        w: maxW ? Math.min(maxW, nextW) : nextW,
+        h: maxH ? Math.min(maxH, nextH) : nextH,
+      })
     }
   }
   const onPointerUp = () => {
@@ -1316,15 +1325,35 @@ export default function PitchDeckPage() {
   const updateProjectField = (field: string, value: any) => {
     commitProjectChange((prev: any) => ({ ...prev, [field]: value }))
   }
-  const applyLayout = (chartIndex: number, layout: LayoutPreset) => {
-    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height)
+  const applyLayout = (chartIndex: number, layout: LayoutPreset, scale?: number) => {
+    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height, scale)
     updateChart(chartIndex, { layout, chart_box: boxes.chart, hero_box: boxes.hero })
     setShowLayoutPicker(false)
   }
   const resetBoxes = (chart: any, chartIndex: number) => {
     const layout: LayoutPreset = chart.layout || 'split-right'
-    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height)
-    updateChart(chartIndex, { chart_box: boxes.chart, hero_box: boxes.hero })
+    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height, DEFAULT_CHART_SCALE)
+    updateChart(chartIndex, {
+      chart_box: boxes.chart,
+      hero_box: boxes.hero,
+      chart_scale: DEFAULT_CHART_SCALE,
+    })
+  }
+  // Nudges the chart's share of its layout slot up or down by one step and
+  // re-derives both boxes from scratch at the new scale — this is the
+  // "Size" control in the selection toolbar. Deliberately re-derives from
+  // boxesForLayout every time rather than scaling the live (possibly
+  // hand-dragged) box, so Size always produces the same clean result
+  // regardless of what free-drag resizing did before it.
+  const nudgeChartScale = (chart: any, chartIndex: number, direction: 1 | -1) => {
+    const layout: LayoutPreset = chart.layout || 'split-right'
+    const current = typeof chart.chart_scale === 'number' ? chart.chart_scale : DEFAULT_CHART_SCALE
+    const next = Math.min(
+      MAX_CHART_SCALE,
+      Math.max(MIN_CHART_SCALE, Math.round((current + direction * CHART_SCALE_STEP) * 100) / 100)
+    )
+    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height, next)
+    updateChart(chartIndex, { chart_box: boxes.chart, hero_box: boxes.hero, chart_scale: next })
   }
 
   // Table edits — table data lives inside analysis_handoff.selectedFindings,
@@ -1510,7 +1539,9 @@ export default function PitchDeckPage() {
 
   const renderChartSlide = (chart: any, index: number) => {
     const layout: LayoutPreset = chart.layout || 'split-right'
-    const defaults = boxesForLayout(layout, slideSize.width, slideSize.height)
+    const chartScale =
+      typeof chart.chart_scale === 'number' ? chart.chart_scale : DEFAULT_CHART_SCALE
+    const defaults = boxesForLayout(layout, slideSize.width, slideSize.height, chartScale)
     // A saved box is only trusted if it's shaped like a real box (numeric,
     // non-degenerate w/h) AND still roughly fits the CURRENT canvas — a box
     // saved while the slide area measured one size, then rendered later at
@@ -1615,6 +1646,27 @@ export default function PitchDeckPage() {
             >
               <LayoutGrid size={12} /> Layout
             </button>
+            <div className={`w-px h-5 mx-0.5 ${dark ? 'bg-white/10' : 'bg-black/10'}`} />
+            <button
+              onClick={() => nudgeChartScale(chart, index, -1)}
+              title="Smaller chart"
+              disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) <= MIN_CHART_SCALE}
+              className={`p-1.5 rounded-lg border transition-opacity ${T.btnBorder} ${T.dimOpacity} hover:opacity-90 disabled:opacity-30`}
+            >
+              <Minus size={12} />
+            </button>
+            <span className="text-[10px] font-mono opacity-60 w-8 text-center select-none">
+              {Math.round((chart.chart_scale ?? DEFAULT_CHART_SCALE) * 100)}%
+            </span>
+            <button
+              onClick={() => nudgeChartScale(chart, index, 1)}
+              title="Bigger chart"
+              disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) >= MAX_CHART_SCALE}
+              className={`p-1.5 rounded-lg border transition-opacity ${T.btnBorder} ${T.dimOpacity} hover:opacity-90 disabled:opacity-30`}
+            >
+              <Plus size={12} />
+            </button>
+            <div className={`w-px h-5 mx-0.5 ${dark ? 'bg-white/10' : 'bg-black/10'}`} />
             <button
               onClick={() => resetBoxes(chart, index)}
               title="Reset position"
@@ -1679,6 +1731,8 @@ export default function PitchDeckPage() {
           snapY={chartSnapY}
           onGuides={setGuides}
           accentColor={accent}
+          maxW={slideSize.width - 96}
+          maxH={slideSize.height - 96 - 24}
         >
           {hasChartData ? (
             <ChartErrorBoundary dark={dark}>
@@ -1718,6 +1772,8 @@ export default function PitchDeckPage() {
           snapY={heroSnapY}
           onGuides={setGuides}
           accentColor={accent}
+          maxW={slideSize.width - 96}
+          maxH={slideSize.height - 96 - 24}
         >
           <HeroPanelContent chart={chart} chartIndex={index} />
         </DraggableBox>

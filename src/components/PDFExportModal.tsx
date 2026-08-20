@@ -16,57 +16,59 @@ const SLIDE_W = 1200
 const SLIDE_H = 675
 
 type Box = { x: number; y: number; w: number; h: number }
-type LayoutPreset = 'split-right' | 'split-left' | 'full-bleed' | 'top-bottom'
+// 'full-bleed' was removed as a selectable layout (see pitch/page.tsx) — it
+// placed the callout in the bottom right corner, overlapping the chart. Any
+// project saved with layout: 'full-bleed' from before this change falls
+// through to the split-right-style default below, same as the editor.
+type LayoutPreset = 'split-right' | 'split-left' | 'top-bottom'
+
+const MIN_CHART_SCALE = 0.7
+const MAX_CHART_SCALE = 1.3
+const DEFAULT_CHART_SCALE = 1
 
 function boxesForLayout(
   layout: LayoutPreset,
   width: number,
-  height: number
+  height: number,
+  chartScale: number = DEFAULT_CHART_SCALE
 ): { chart: Box; hero: Box } {
   const padX = 48,
     padY = 96,
     gap = 20,
     heroW = 256,
     takeawayStripH = 130
+  // Mirrors pitch/page.tsx's chart_scale so an exported PDF matches what
+  // the user actually sized in the editor, instead of always exporting at
+  // the layout's untouched default proportions.
+  const scale = Math.min(MAX_CHART_SCALE, Math.max(MIN_CHART_SCALE, chartScale))
+  const scaledHeroW = Math.round(Math.max(160, Math.min(340, heroW / scale)))
+  const scaledStripH = Math.round(Math.max(90, Math.min(220, takeawayStripH / scale)))
   switch (layout) {
     case 'split-left':
       return {
-        hero: { x: padX, y: padY, w: heroW, h: height - padY - 24 },
+        hero: { x: padX, y: padY, w: scaledHeroW, h: height - padY - 24 },
         chart: {
-          x: padX + heroW + gap,
+          x: padX + scaledHeroW + gap,
           y: padY,
-          w: width - padX * 2 - heroW - gap,
+          w: width - padX * 2 - scaledHeroW - gap,
           h: height - padY - 24,
         },
       }
-    case 'full-bleed': {
-      // Mirrors the same fix in pitch/page.tsx — the chart used to render at
-      // full height right up to the hero card's bottom edge, guaranteeing the
-      // last x-axis label(s) collided with it. Shrinking chart height so it
-      // ends above the hero's vertical range fixes that.
-      const fbHeroW = 280,
-        fbHeroH = 160,
-        fbGap = 20
-      return {
-        chart: { x: padX, y: padY, w: width - padX * 2, h: height - padY - 24 - fbHeroH - fbGap },
-        hero: { x: width - padX - fbHeroW, y: height - 24 - fbHeroH, w: fbHeroW, h: fbHeroH },
-      }
-    }
     case 'top-bottom':
       return {
         chart: {
           x: padX,
           y: padY,
           w: width - padX * 2,
-          h: height - padY - takeawayStripH - gap - 16,
+          h: height - padY - scaledStripH - gap - 16,
         },
-        hero: { x: padX, y: height - takeawayStripH - 16, w: width - padX * 2, h: takeawayStripH },
+        hero: { x: padX, y: height - scaledStripH - 16, w: width - padX * 2, h: scaledStripH },
       }
     case 'split-right':
     default:
       return {
-        chart: { x: padX, y: padY, w: width - padX * 2 - heroW - gap, h: height - padY - 24 },
-        hero: { x: width - padX - heroW, y: padY, w: heroW, h: height - padY - 24 },
+        chart: { x: padX, y: padY, w: width - padX * 2 - scaledHeroW - gap, h: height - padY - 24 },
+        hero: { x: width - padX - scaledHeroW, y: padY, w: scaledHeroW, h: height - padY - 24 },
       }
   }
 }
@@ -275,7 +277,9 @@ export default function PDFExportModal({ project, onClose }: Props) {
     // Falls back to layout-preset computation only when no valid boxes are stored.
     const isValidBox = (b: any): b is Box =>
       b && typeof b.w === 'number' && typeof b.h === 'number' && b.w > 20 && b.h > 20
-    const defaults = boxesForLayout(layout, SLIDE_W, SLIDE_H)
+    const chartScale =
+      typeof chart.chart_scale === 'number' ? chart.chart_scale : DEFAULT_CHART_SCALE
+    const defaults = boxesForLayout(layout, SLIDE_W, SLIDE_H, chartScale)
     const cb = isValidBox(chart.chart_box) ? chart.chart_box : defaults.chart
     const hb = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
     const hasHero = chart.hero_stat || chart.takeaway

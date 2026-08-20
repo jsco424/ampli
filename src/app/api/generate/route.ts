@@ -219,7 +219,7 @@ Rules:
 - charts: up to 6 items. type must be one of: bar, line, area, pie. Never fewer than 2 if the data supports them.
 - chart data: max 6 data points per chart, every point must come from the data summary.
 - single series: use "value" key. Two series: use two numeric keys e.g. { "name": "Jan", "new": 700, "returning": 1600 }
-- layout: "split-right" | "split-left" | "full-bleed" | "top-bottom"
+- layout: "split-right" | "split-left" | "top-bottom"
 - takeaway: data-grounded, not narrative. This field is held to a stricter standard than "narrative" and "insights" — see CHART TAKEAWAY RULE in CONFIRMED ANALYSIS below when present. When no confirmed analysis is provided, still keep takeaway to one factual sentence about what the chart shows, not a sales pitch.
 - annotations: OPTIONAL, max 1-2 per chart. "x" must exactly match a "name" value in that chart's data array. Omit entirely if nothing noteworthy.
 - reference_line: OPTIONAL, max 1 per chart. Value must be in the same unit/scale as chart data. Omit if not relevant.
