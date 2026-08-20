@@ -366,7 +366,7 @@ interface AnalysisViewProps {
   // anomalies -> visuals -> recommendations -> follow-ups -> build slides,
   // all in one scroll instead of a tab switch partway through reviewing
   // the analysis.
-  charts?: AnalysisChart[]
+  charts?: (AnalysisChart | null | undefined)[]
   chartsGenerating?: boolean
   chartColors?: string[]
   // Visuals and Recommendations both used to fire automatically — Visuals
@@ -394,7 +394,7 @@ export default function AnalysisView({
   onBuildSlides,
   isLoading = false,
   conversationEntries = [],
-  charts = [],
+  charts: rawCharts = [],
   chartsGenerating = false,
   chartColors = DEFAULT_CHART_COLORS,
   onBuildVisuals,
@@ -404,6 +404,16 @@ export default function AnalysisView({
   onBuildRecommendations,
   recommendationsError = null,
 }: AnalysisViewProps) {
+  // A stray null/undefined entry in project.charts — however it got
+  // there, a data integrity issue this filter doesn't diagnose, just
+  // protects against — crashes the whole page the instant .map() below
+  // reads a property off it. Filtering here means malformed data for ONE
+  // project can never take this view down again, regardless of how a null
+  // ended up in the array in the first place.
+  const charts: AnalysisChart[] = (rawCharts || []).filter(
+    (c): c is AnalysisChart => !!c && typeof c === 'object'
+  )
+
   const [followUpInput, setFollowUpInput] = useState('')
   // Which Visuals cards (by index) are currently showing indexed-to-100
   // values instead of absolute ones. Per-card, not global — some charts
@@ -614,7 +624,8 @@ export default function AnalysisView({
         ) : charts.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {charts.map((chart, i) => {
-              const canIndex = INDEXABLE_CHART_TYPES.has(chart.type) && chart.data.length >= 2
+              const canIndex =
+                INDEXABLE_CHART_TYPES.has(chart.type) && (chart.data?.length || 0) >= 2
               const isIndexed = canIndex && indexedCharts.has(i)
               const displayData = isIndexed ? indexToFirstValue(chart.data) : chart.data
               return (
@@ -662,7 +673,7 @@ export default function AnalysisView({
                     </p>
                   )}
                   <ChartRenderer
-                    chart={{ ...chart, data: displayData }}
+                    chart={{ ...chart, data: displayData || [] }}
                     colors={chartColors}
                     height={180}
                     dark={dark}
