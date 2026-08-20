@@ -107,6 +107,9 @@ function boxesForLayout(
 ): { chart: Box; hero: Box } {
   const padX = 48,
     padY = 96,
+    // Mirrors pitch/page.tsx — more bottom margin so the chart doesn't
+    // stretch to within 24px of the slide edge.
+    padBottom = 64,
     gap = 20,
     heroW = 256,
     takeawayStripH = 130
@@ -119,12 +122,12 @@ function boxesForLayout(
   switch (layout) {
     case 'split-left':
       return {
-        hero: { x: padX, y: padY, w: scaledHeroW, h: height - padY - 24 },
+        hero: { x: padX, y: padY, w: scaledHeroW, h: height - padY - padBottom },
         chart: {
           x: padX + scaledHeroW + gap,
           y: padY,
           w: width - padX * 2 - scaledHeroW - gap,
-          h: height - padY - 24,
+          h: height - padY - padBottom,
         },
       }
     case 'top-bottom':
@@ -133,15 +136,30 @@ function boxesForLayout(
           x: padX,
           y: padY,
           w: width - padX * 2,
-          h: height - padY - scaledStripH - gap - 16,
+          h: height - padY - scaledStripH - gap - padBottom,
         },
-        hero: { x: padX, y: height - scaledStripH - 16, w: width - padX * 2, h: scaledStripH },
+        hero: {
+          x: padX,
+          y: height - scaledStripH - padBottom,
+          w: width - padX * 2,
+          h: scaledStripH,
+        },
       }
     case 'split-right':
     default:
       return {
-        chart: { x: padX, y: padY, w: width - padX * 2 - scaledHeroW - gap, h: height - padY - 24 },
-        hero: { x: width - padX - scaledHeroW, y: padY, w: scaledHeroW, h: height - padY - 24 },
+        chart: {
+          x: padX,
+          y: padY,
+          w: width - padX * 2 - scaledHeroW - gap,
+          h: height - padY - padBottom,
+        },
+        hero: {
+          x: width - padX - scaledHeroW,
+          y: padY,
+          w: scaledHeroW,
+          h: height - padY - padBottom,
+        },
       }
   }
 }
@@ -513,12 +531,23 @@ export default function PDFExportModal({ project, onClose }: Props) {
             </div>
           )}
           {hasData ? (
-            <ChartRenderer
-              chart={{ ...chart, data: displayData }}
-              colors={COLORS}
-              height={cb.h}
-              dark={dark}
-            />
+            <div
+              style={{
+                height: '100%',
+                width: '100%',
+                borderRadius: '16px',
+                padding: '20px 20px 8px',
+                background: S.cardBg,
+                border: `1px solid ${S.cardBorder}`,
+              }}
+            >
+              <ChartRenderer
+                chart={{ ...chart, data: displayData }}
+                colors={COLORS}
+                height={Math.max(60, cb.h - 28)}
+                dark={dark}
+              />
+            </div>
           ) : (
             <div
               style={{

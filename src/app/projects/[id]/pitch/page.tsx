@@ -350,6 +350,12 @@ function boxesForLayout(
 ): { chart: Box; hero: Box } {
   const padX = 48,
     padY = 96,
+    // The chart was stretching to within 24px of the slide's bottom edge —
+    // filling nearly the entire vertical space, "giant" compared to a
+    // reference deck's chart, which visibly stops well short of the
+    // bottom with room to breathe. Matches: the reference clearly favors
+    // leaving whitespace over maximizing plot area.
+    padBottom = 64,
     gap = 20,
     heroW = 256,
     takeawayStripH = 130
@@ -373,12 +379,12 @@ function boxesForLayout(
   switch (layout) {
     case 'split-left':
       return {
-        hero: clamp({ x: padX, y: padY, w: scaledHeroW, h: height - padY - 24 }),
+        hero: clamp({ x: padX, y: padY, w: scaledHeroW, h: height - padY - padBottom }),
         chart: clamp({
           x: padX + scaledHeroW + gap,
           y: padY,
           w: width - padX * 2 - scaledHeroW - gap,
-          h: height - padY - 24,
+          h: height - padY - padBottom,
         }),
       }
     case 'top-bottom':
@@ -387,11 +393,11 @@ function boxesForLayout(
           x: padX,
           y: padY,
           w: width - padX * 2,
-          h: height - padY - scaledStripH - gap - 16,
+          h: height - padY - scaledStripH - gap - padBottom,
         }),
         hero: clamp({
           x: padX,
-          y: height - scaledStripH - 16,
+          y: height - scaledStripH - padBottom,
           w: width - padX * 2,
           h: scaledStripH,
         }),
@@ -402,13 +408,13 @@ function boxesForLayout(
           x: padX,
           y: padY,
           w: width - padX * 2 - scaledHeroW - gap,
-          h: height - padY - 24,
+          h: height - padY - padBottom,
         }),
         hero: clamp({
           x: width - padX - scaledHeroW,
           y: padY,
           w: scaledHeroW,
-          h: height - padY - 24,
+          h: height - padY - padBottom,
         }),
       }
   }
@@ -1942,15 +1948,24 @@ export default function PitchDeckPage() {
           maxH={slideSize.height - 96 - 24}
         >
           {hasChartData ? (
-            <ChartErrorBoundary dark={dark}>
-              <ChartRenderer
-                key={chartKey}
-                chart={{ ...chart, data: displayData }}
-                colors={BRAND_COLORS}
-                height={Math.max(MIN_BOX_DIM, liveChartBox.h)}
-                dark={dark}
-              />
-            </ChartErrorBoundary>
+            <div
+              className="rounded-2xl h-full w-full"
+              style={{
+                padding: '20px 20px 8px',
+                background: T.cardBg,
+                border: `1px solid ${T.cardBorder}`,
+              }}
+            >
+              <ChartErrorBoundary dark={dark}>
+                <ChartRenderer
+                  key={chartKey}
+                  chart={{ ...chart, data: displayData }}
+                  colors={BRAND_COLORS}
+                  height={Math.max(MIN_BOX_DIM - 28, liveChartBox.h - 28)}
+                  dark={dark}
+                />
+              </ChartErrorBoundary>
+            </div>
           ) : (
             <div
               className="w-full h-full flex items-center justify-center rounded-2xl text-sm"
