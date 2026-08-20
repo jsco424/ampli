@@ -1104,7 +1104,19 @@ export default function PitchDeckPage() {
         // takeaway with the user-confirmed values from the selection. The AI
         // may have reworded or changed these; the user's explicit choices win.
         const generatedChart = safeCharts[i]
+        // Spread generatedChart FIRST, then override only the fields that
+        // genuinely need AI-vs-confirmed reconciliation. Previously this
+        // object was built field-by-field from an explicit whitelist that
+        // never included chart_box, hero_box, chart_scale, value_mode,
+        // icons, pre_stat_type, or any *_text_style field — since
+        // buildSlides() re-runs on every single edit (it's called inside
+        // commitProjectChange), every one of those was silently discarded
+        // the instant it was set, even though it saved to Supabase
+        // correctly. Spreading first means every editor-added field
+        // survives by default; only fields with real reconciliation logic
+        // need to be listed explicitly below.
         const chart = {
+          ...generatedChart,
           // Chart type and data come from generation (AI filled in data points)
           type:
             generatedChart?.type ||

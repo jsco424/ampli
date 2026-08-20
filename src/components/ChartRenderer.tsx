@@ -22,6 +22,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
 } from 'recharts'
 
@@ -38,6 +39,74 @@ function getDataKeys(data: any[]): string[] {
   const sample = data[0]
   const keys = Object.keys(sample).filter((k) => k !== 'name' && typeof sample[k] === 'number')
   return keys.length > 0 ? keys : ['value']
+}
+
+// Paul Heckbert's "Nice Numbers for Graph Labels" (Graphics Gems, 1990) —
+// the standard algorithm most charting tools use under the hood (D3's
+// scaleLinear().nice(), matplotlib, Excel) to round an axis's bounds and
+// tick spacing to numbers a human would actually choose, instead of
+// scaling exactly to the data's min/max. That's what was missing here: a
+// bar chart of [4.5, 1.9, 3.6, 2.9] was getting a Recharts "auto" axis
+// that scaled almost exactly to 4.5, so the tallest bar looked like it
+// was hitting the ceiling of the chart. This rounds that same data to a
+// major gridline of 5 (or 10, or 25, depending on magnitude) with 0 as
+// the floor, leaving real headroom above the tallest bar.
+function niceNumber(value: number, round: boolean): number {
+  if (value === 0) return 0
+  const exponent = Math.floor(Math.log10(value))
+  const fraction = value / Math.pow(10, exponent)
+  let niceFraction: number
+  if (round) {
+    if (fraction < 1.5) niceFraction = 1
+    else if (fraction < 3) niceFraction = 2
+    else if (fraction < 7) niceFraction = 5
+    else niceFraction = 10
+  } else {
+    if (fraction <= 1) niceFraction = 1
+    else if (fraction <= 2) niceFraction = 2
+    else if (fraction <= 5) niceFraction = 5
+    else niceFraction = 10
+  }
+  return niceFraction * Math.pow(10, exponent)
+}
+
+// Standard bar-chart convention (see e.g. storytellingwithdata.com's "bar
+// charts must have a zero baseline"): the value axis always starts at 0,
+// since a bar's length is the thing being compared, and a non-zero
+// baseline distorts that comparison. Max is rounded up to the nearest
+// nice step for a fixed tick count, per Heckbert above.
+function niceZeroDomain(maxValue: number, tickCount = 5): [number, number] {
+  if (!Number.isFinite(maxValue) || maxValue <= 0) return [0, 1]
+  const rawStep = maxValue / (tickCount - 1)
+  const step = niceNumber(rawStep, true)
+  const niceMax = Math.ceil(maxValue / step) * step
+  return [0, niceMax]
+}
+
+// Indexed mode (value_mode: 'indexed') rebases every series to 100 at its
+// first point, so the story is "above/below the starting point," not an
+// absolute magnitude — the reason to look at it is the deviation from
+// 100, not the raw height of the line. Centering 100 in the middle of the
+// axis (a symmetric domain around it) makes that deviation legible at a
+// glance in both directions, the same way indexed/rebased performance
+// charts are conventionally drawn.
+function niceIndexedDomain(values: number[], tickCount = 5): [number, number] {
+  const maxDeviation = Math.max(...values.map((v) => Math.abs(v - 100)), 1)
+  const rawStep = maxDeviation / Math.max(1, Math.floor((tickCount - 1) / 2))
+  const step = niceNumber(rawStep, true)
+  const span = Math.ceil(maxDeviation / step) * step
+  return [100 - span, 100 + span]
+}
+
+function numericValues(data: any[], keys: string[]): number[] {
+  if (!data) return []
+  const out: number[] = []
+  for (const point of data) {
+    for (const k of keys) {
+      if (typeof point?.[k] === 'number') out.push(point[k])
+    }
+  }
+  return out
 }
 
 const tickStyle = (dark: boolean) => ({ fontSize: 11, fill: dark ? '#71717a' : '#a1a1aa' })
@@ -91,6 +160,21 @@ export default function ChartRenderer({
   const dataKeys = getDataKeys(chart.data || [])
   const isMulti = dataKeys.length > 1
   const props = { data: chart.data, margin: { top: 5, right: 20, left: 10, bottom: 5 } }
+  const isIndexed = chart.value_mode === 'indexed'
+  // Shared by bar/line/area: a "nice" domain instead of Recharts' default
+  // auto-scale, which fits the axis almost exactly to the data and leaves
+  // no headroom above the tallest bar or point. See niceZeroDomain /
+  // niceIndexedDomain above for the reasoning.
+  const values = numericValues(chart.data, dataKeys)
+  const yDomain: [number, number] | undefined =
+    values.length === 0
+      ? undefined
+      : isIndexed
+        ? niceIndexedDomain(values)
+        : niceZeroDomain(Math.max(...values, 0))
+  const indexedReferenceLine = isIndexed && (
+    <ReferenceLine y={100} stroke={dark ? '#71717a' : '#a1a1aa'} strokeDasharray="4 3" />
+  )
 
   if (chart.type === 'bar') {
     // "stacked" is set by the AI only when there are exactly 2 numeric
@@ -122,8 +206,9 @@ export default function ChartRenderer({
         <BarChart {...props}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor(dark)} />
           <XAxis dataKey="name" tick={tickStyle(dark)} />
-          <YAxis tick={tickStyle(dark)} />
+          <YAxis tick={tickStyle(dark)} domain={yDomain} allowDecimals={!isIndexed} />
           <Tooltip contentStyle={tooltipStyle(dark)} />
+          {indexedReferenceLine}
           {barChildren}
         </BarChart>
       </ResponsiveContainer>
@@ -149,8 +234,9 @@ export default function ChartRenderer({
         <LineChart {...props}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor(dark)} />
           <XAxis dataKey="name" tick={tickStyle(dark)} />
-          <YAxis tick={tickStyle(dark)} />
+          <YAxis tick={tickStyle(dark)} domain={yDomain} allowDecimals={!isIndexed} />
           <Tooltip contentStyle={tooltipStyle(dark)} />
+          {indexedReferenceLine}
           {lineChildren}
         </LineChart>
       </ResponsiveContainer>
@@ -176,8 +262,9 @@ export default function ChartRenderer({
         <AreaChart {...props}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor(dark)} />
           <XAxis dataKey="name" tick={tickStyle(dark)} />
-          <YAxis tick={tickStyle(dark)} />
+          <YAxis tick={tickStyle(dark)} domain={yDomain} allowDecimals={!isIndexed} />
           <Tooltip contentStyle={tooltipStyle(dark)} />
+          {indexedReferenceLine}
           {areaChildren}
         </AreaChart>
       </ResponsiveContainer>
