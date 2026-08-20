@@ -4,7 +4,80 @@ import { useState } from 'react'
 import { useTheme } from '@/hooks/useTheme'
 import { useBrand } from '@/hooks/useBrand'
 import ChartRenderer from '@/components/ChartRenderer'
-import { X, Download, Loader2, Check } from 'lucide-react'
+import {
+  X,
+  Download,
+  Loader2,
+  Check,
+  TrendingUp,
+  TrendingDown,
+  UsersRound,
+  Target,
+  Crosshair,
+  Repeat2,
+  Megaphone,
+  DollarSign,
+  Award,
+  ShoppingCart,
+  Smartphone,
+  Globe2,
+  Zap,
+  MapPin,
+  CalendarDays,
+  ArrowUpRight,
+  Star,
+  ShieldCheck,
+  CheckCircle2,
+} from 'lucide-react'
+
+// Mirrors pitch/page.tsx's ICON_LIBRARY exactly — icons placed in the
+// editor need to render identically in the exported PDF, or "what I built
+// in the editor" and "what I exported" would silently drift apart.
+const ICON_BY_NAME: Record<string, any> = {
+  'trending-up': TrendingUp,
+  'trending-down': TrendingDown,
+  'users-round': UsersRound,
+  target: Target,
+  crosshair: Crosshair,
+  repeat: Repeat2,
+  megaphone: Megaphone,
+  'dollar-sign': DollarSign,
+  award: Award,
+  'shopping-cart': ShoppingCart,
+  smartphone: Smartphone,
+  globe: Globe2,
+  zap: Zap,
+  'map-pin': MapPin,
+  calendar: CalendarDays,
+  'arrow-up-right': ArrowUpRight,
+  star: Star,
+  'shield-check': ShieldCheck,
+  'check-circle': CheckCircle2,
+}
+
+// Mirrors pitch/page.tsx's getDataKeysLocal / toIndexedData — same
+// duplication pattern as boxesForLayout below, so an export never depends
+// on the editor's internals to reproduce what the editor shows.
+function getDataKeysLocal(data: any[]): string[] {
+  if (!data || data.length === 0) return ['value']
+  const sample = data[0]
+  const keys = Object.keys(sample).filter((k) => k !== 'name' && typeof sample[k] === 'number')
+  return keys.length > 0 ? keys : ['value']
+}
+function toIndexedData(data: any[], keys: string[]): any[] {
+  if (!data || data.length === 0) return data
+  const base = data[0]
+  return data.map((point) => {
+    const next: any = { ...point }
+    for (const k of keys) {
+      const baseVal = base?.[k]
+      if (typeof point[k] === 'number' && typeof baseVal === 'number' && baseVal !== 0) {
+        next[k] = Math.round((point[k] / baseVal) * 1000) / 10
+      }
+    }
+    return next
+  })
+}
 
 interface Props {
   project: any
@@ -283,7 +356,109 @@ export default function PDFExportModal({ project, onClose }: Props) {
     const cb = isValidBox(chart.chart_box) ? chart.chart_box : defaults.chart
     const hb = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
     const hasHero = chart.hero_stat || chart.takeaway
-    const hasData = Array.isArray(chart?.data) && chart.data.length > 0
+    const dataPointCount = Array.isArray(chart?.data) ? chart.data.length : 0
+    const hasData = dataPointCount > 0
+    // Mirrors pitch/page.tsx: a chart with one data point (or none) isn't a
+    // comparison a bar/line chart can show, so it exports as a clean
+    // centered stat card instead of a degenerate single-bar chart.
+    const isStatOnly = chart.type === 'stat' || dataPointCount <= 1
+    const dataKeys = getDataKeysLocal(chart.data || [])
+    const isIndexed = chart.value_mode === 'indexed'
+    const displayData = isIndexed ? toIndexedData(chart.data, dataKeys) : chart.data
+    const icons: any[] = Array.isArray(chart.icons) ? chart.icons : []
+    const iconLayer = icons.map((ic) => {
+      const IconGlyph = ICON_BY_NAME[ic.name] || Star
+      return (
+        <div
+          key={ic.id}
+          style={{ position: 'absolute', left: ic.x, top: ic.y, width: ic.size, height: ic.size }}
+        >
+          <IconGlyph size="100%" color={ic.color || brand.primaryColor} strokeWidth={1.75} />
+        </div>
+      )
+    })
+
+    if (isStatOnly) {
+      return (
+        <div style={{ ...SLIDE_BASE }}>
+          <div style={ACCENT_BAR} />
+          {brand.logoUrl && (
+            <img src={brand.logoUrl} alt="Logo" style={logoStyle(brand.logoPosition)} />
+          )}
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              padding: '28px 48px 0',
+              width: SLIDE_W - 96,
+            }}
+          >
+            <div
+              style={applyTextStyle(
+                { fontSize: '22px', fontWeight: 700, marginBottom: '6px', color: S.textColor },
+                chart.title_text_style
+              )}
+            >
+              {chart.title}
+            </div>
+            <div
+              style={applyTextStyle(
+                { fontSize: '13px', color: S.dimColor },
+                chart.description_text_style
+              )}
+            >
+              {chart.description}
+            </div>
+          </div>
+          <div
+            style={{
+              position: 'absolute',
+              left: SLIDE_W * 0.22,
+              top: 110,
+              width: SLIDE_W * 0.56,
+              height: SLIDE_H - 150,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '16px',
+              padding: '28px',
+              background: S.heroBg(brand.primaryColor),
+            }}
+          >
+            {chart.hero_stat && (
+              <div
+                style={applyTextStyle(
+                  {
+                    fontSize: '72px',
+                    fontWeight: 900,
+                    color: brand.primaryColor,
+                    lineHeight: 1,
+                    textAlign: 'center',
+                    marginBottom: '16px',
+                  },
+                  chart.hero_text_style
+                )}
+              >
+                {chart.hero_stat}
+              </div>
+            )}
+            {chart.takeaway && (
+              <p
+                style={applyTextStyle(
+                  { fontSize: '17px', textAlign: 'center', lineHeight: 1.5, color: S.heroText },
+                  chart.takeaway_text_style
+                )}
+              >
+                {chart.takeaway}
+              </p>
+            )}
+          </div>
+          {iconLayer}
+        </div>
+      )
+    }
 
     return (
       <div style={{ ...SLIDE_BASE }}>
@@ -320,8 +495,30 @@ export default function PDFExportModal({ project, onClose }: Props) {
         </div>
 
         <div style={{ position: 'absolute', left: cb.x, top: cb.y, width: cb.w, height: cb.h }}>
+          {isIndexed && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: -22,
+                fontSize: '11px',
+                fontWeight: 600,
+                padding: '3px 8px',
+                borderRadius: '6px',
+                background: `${brand.primaryColor}2e`,
+                color: brand.primaryColor,
+              }}
+            >
+              Indexed to 100
+            </div>
+          )}
           {hasData ? (
-            <ChartRenderer chart={chart} colors={COLORS} height={cb.h} dark={dark} />
+            <ChartRenderer
+              chart={{ ...chart, data: displayData }}
+              colors={COLORS}
+              height={cb.h}
+              dark={dark}
+            />
           ) : (
             <div
               style={{
@@ -387,6 +584,7 @@ export default function PDFExportModal({ project, onClose }: Props) {
             )}
           </div>
         )}
+        {iconLayer}
       </div>
     )
   }

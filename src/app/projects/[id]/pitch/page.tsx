@@ -30,6 +30,29 @@ import {
   Redo2,
   Check,
   Loader2,
+  BarChart3,
+  LineChart as LineChartIcon,
+  AreaChart as AreaChartIcon,
+  PieChart as PieChartIcon,
+  TrendingUp,
+  TrendingDown,
+  UsersRound,
+  Target,
+  Crosshair,
+  Repeat2,
+  Megaphone,
+  DollarSign,
+  Award,
+  ShoppingCart,
+  Smartphone,
+  Globe2,
+  Zap,
+  MapPin,
+  CalendarDays,
+  ArrowUpRight,
+  Star,
+  ShieldCheck,
+  CheckCircle2,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -102,6 +125,53 @@ const MIN_CHART_SCALE = 0.7
 const MAX_CHART_SCALE = 1.3
 const CHART_SCALE_STEP = 0.1
 
+// Chart types the visual switcher offers. Pie is left out of "always
+// available" — it only reads a single "value" key per point, so offering
+// it for a chart the model built with two numeric series (e.g. new vs
+// returning) would silently drop a series. Gated in the panel itself.
+const CHART_TYPE_OPTIONS: { key: string; label: string; icon: any }[] = [
+  { key: 'bar', label: 'Bar', icon: BarChart3 },
+  { key: 'line', label: 'Line', icon: LineChartIcon },
+  { key: 'area', label: 'Area', icon: AreaChartIcon },
+  { key: 'pie', label: 'Pie', icon: PieChartIcon },
+]
+
+// Curated icon set to complement slides — themed for the kind of
+// marketing/analytics decks this tool builds (funnel stages, buyer
+// segments, growth, channels). Sourced from lucide-react, the icon
+// library already used throughout the editor's own chrome, rather than
+// pulling in a second icon set. The am-pli_template.pptx reference deck's
+// own icon slide didn't make it through as an attachment, so this is a
+// reasonable default set, not a match to specific template glyphs — swap
+// individual entries here freely once the reference icons are available.
+const ICON_LIBRARY: { name: string; label: string; Icon: any }[] = [
+  { name: 'trending-up', label: 'Growth', Icon: TrendingUp },
+  { name: 'trending-down', label: 'Decline', Icon: TrendingDown },
+  { name: 'users-round', label: 'Audience', Icon: UsersRound },
+  { name: 'target', label: 'Target', Icon: Target },
+  { name: 'crosshair', label: 'Focus', Icon: Crosshair },
+  { name: 'repeat', label: 'Repeat purchase', Icon: Repeat2 },
+  { name: 'megaphone', label: 'Campaign', Icon: Megaphone },
+  { name: 'dollar-sign', label: 'Revenue', Icon: DollarSign },
+  { name: 'award', label: 'Win', Icon: Award },
+  { name: 'shopping-cart', label: 'Purchase', Icon: ShoppingCart },
+  { name: 'smartphone', label: 'Mobile', Icon: Smartphone },
+  { name: 'globe', label: 'Market', Icon: Globe2 },
+  { name: 'zap', label: 'Lift', Icon: Zap },
+  { name: 'map-pin', label: 'Location', Icon: MapPin },
+  { name: 'calendar', label: 'Timing', Icon: CalendarDays },
+  { name: 'arrow-up-right', label: 'Increase', Icon: ArrowUpRight },
+  { name: 'star', label: 'Highlight', Icon: Star },
+  { name: 'shield-check', label: 'Trust', Icon: ShieldCheck },
+  { name: 'check-circle', label: 'Success', Icon: CheckCircle2 },
+]
+const ICON_BY_NAME: Record<string, any> = Object.fromEntries(
+  ICON_LIBRARY.map((i) => [i.name, i.Icon])
+)
+const DEFAULT_ICON_SIZE = 40
+const MIN_ICON_SIZE = 20
+const MAX_ICON_SIZE = 96
+
 // Font simplified to Lexend only, per direct decision — the reference
 // deck's Funnel Display / Manrope pairing was deliberately dropped rather
 // than loaded as two extra web fonts. Kept as a real applied CSS value
@@ -148,6 +218,39 @@ function hexToRgba(hex: string, alpha: number): string {
   const g = (parsed >> 8) & 255
   const b = parsed & 255
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+// Local copy of ChartRenderer's series-key detection — kept in sync
+// deliberately rather than imported, matching this file's existing
+// pattern of duplicating small chart helpers (see boxesForLayout being
+// duplicated in PDFExportModal.tsx) so the editor never has a hidden
+// runtime dependency on the renderer's internals just to compute what
+// data keys exist.
+function getDataKeysLocal(data: any[]): string[] {
+  if (!data || data.length === 0) return ['value']
+  const sample = data[0]
+  const keys = Object.keys(sample).filter((k) => k !== 'name' && typeof sample[k] === 'number')
+  return keys.length > 0 ? keys : ['value']
+}
+
+// Indexes every numeric series to its own first data point = 100 — the
+// standard "indexed to 100" convention for comparing trends on different
+// scales. Applied at render time only; the underlying chart.data always
+// stays in its original absolute units, so switching back to Absolute is
+// lossless and re-indexing never compounds.
+function toIndexedData(data: any[], keys: string[]): any[] {
+  if (!data || data.length === 0) return data
+  const base = data[0]
+  return data.map((point) => {
+    const next: any = { ...point }
+    for (const k of keys) {
+      const baseVal = base?.[k]
+      if (typeof point[k] === 'number' && typeof baseVal === 'number' && baseVal !== 0) {
+        next[k] = Math.round((point[k] / baseVal) * 1000) / 10
+      }
+    }
+    return next
+  })
 }
 
 function LayoutIcon({
@@ -901,6 +1004,8 @@ export default function PitchDeckPage() {
   const [gammaError, setGammaError] = useState<string | null>(null)
   const [selectedBox, setSelectedBox] = useState<'chart' | 'hero' | null>(null)
   const [showLayoutPicker, setShowLayoutPicker] = useState(false)
+  const [selectedIconId, setSelectedIconId] = useState<string | null>(null)
+  const [showIconPicker, setShowIconPicker] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [historyTick, setHistoryTick] = useState(0) // bumps to force undo/redo button enable-state re-renders
   const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null)
@@ -1356,6 +1461,69 @@ export default function PitchDeckPage() {
     updateChart(chartIndex, { chart_box: boxes.chart, hero_box: boxes.hero, chart_scale: next })
   }
 
+  // ── Icons ──────────────────────────────────────────────────────────────
+  // Icons live on the chart object itself (chart.icons), so they persist
+  // and undo/redo through the exact same path as everything else on the
+  // slide — no separate save mechanism to keep in sync.
+  const addIcon = (chart: any, chartIndex: number, iconName: string) => {
+    const id = `icon-${Date.now()}-${Math.round(Math.random() * 1000)}`
+    const size = DEFAULT_ICON_SIZE
+    const newIcon = {
+      id,
+      name: iconName,
+      x: slideSize.width / 2 - size / 2,
+      y: slideSize.height / 2 - size / 2,
+      size,
+      color: accent,
+    }
+    updateChart(chartIndex, { icons: [...(chart.icons || []), newIcon] })
+    setSelectedIconId(id)
+    setShowIconPicker(false)
+  }
+  const updateIconLive = (chartIndex: number, iconId: string, patch: any) => {
+    setSlides((s) =>
+      s.map((sl) =>
+        sl.type === 'chart' && sl.index === chartIndex
+          ? {
+              ...sl,
+              chart: {
+                ...sl.chart,
+                icons: (sl.chart.icons || []).map((ic: any) =>
+                  ic.id === iconId ? { ...ic, ...patch } : ic
+                ),
+              },
+            }
+          : sl
+      )
+    )
+  }
+  const commitIcon = (chart: any, chartIndex: number, iconId: string, patch: any) => {
+    updateChart(chartIndex, {
+      icons: (chart.icons || []).map((ic: any) => (ic.id === iconId ? { ...ic, ...patch } : ic)),
+    })
+  }
+  const deleteIcon = (chart: any, chartIndex: number, iconId: string) => {
+    updateChart(chartIndex, { icons: (chart.icons || []).filter((ic: any) => ic.id !== iconId) })
+    setSelectedIconId(null)
+  }
+
+  // ── Stat / chart type / value mode — the panel's contextual controls ────
+  const toggleStatMode = (chart: any, chartIndex: number) => {
+    const isStatOnly =
+      chart.type === 'stat' || (Array.isArray(chart.data) && chart.data.length <= 1)
+    if (isStatOnly) {
+      updateChart(chartIndex, { type: chart.pre_stat_type || 'bar', pre_stat_type: undefined })
+    } else {
+      updateChart(chartIndex, { type: 'stat', pre_stat_type: chart.type || 'bar' })
+    }
+  }
+  const setChartType = (chartIndex: number, type: string) => {
+    updateChart(chartIndex, { type })
+  }
+  const setValueMode = (chartIndex: number, mode: 'absolute' | 'indexed') => {
+    updateChart(chartIndex, { value_mode: mode })
+  }
+
   // Table edits — table data lives inside analysis_handoff.selectedFindings,
   // not in the charts array, so this has its own commit path.
   const updateTableSlide = (selIndex: number, patch: { table?: any; takeaway?: string }) => {
@@ -1477,6 +1645,8 @@ export default function PitchDeckPage() {
           hero_stat: '',
           takeaway: '',
           layout: 'split-right',
+          value_mode: 'absolute',
+          icons: [],
         },
       ]
       let analysis_handoff = prev.analysis_handoff
@@ -1539,6 +1709,107 @@ export default function PitchDeckPage() {
 
   const renderChartSlide = (chart: any, index: number) => {
     const layout: LayoutPreset = chart.layout || 'split-right'
+    const dataPointCount = Array.isArray(chart?.data) ? chart.data.length : 0
+    // A slide with one data point (or none) isn't a comparison a bar/line
+    // chart can meaningfully show — a single bar filling the full height of
+    // its box, or an empty chart, both read as broken rather than clean.
+    // Anything down to one point (a correlation coefficient, a single
+    // ratio) is really just the hero stat on its own, so it renders as a
+    // clean stat card instead of being forced through Recharts.
+    // chart.type === 'stat' is the explicit, AI-authored version of the
+    // same thing; either path lands here.
+    const isStatOnly = chart.type === 'stat' || dataPointCount <= 1
+    // Only offer the manual override when there's actually enough data to
+    // make a real chart out of — no point offering "show as chart" for a
+    // single data point with nothing to compare it against.
+    const canToggleStat = dataPointCount >= 2
+
+    const icons: any[] = Array.isArray(chart.icons) ? chart.icons : []
+
+    const headerBlock = (
+      <div className="absolute top-0 left-0 px-8 pt-6" style={{ width: slideSize.width - 64 }}>
+        <EditableText
+          value={chart.title || ''}
+          onCommit={(v) => updateChart(index, { title: v })}
+          placeholder="Chart title"
+          theme={T.slideTheme}
+          className="text-xl font-bold leading-tight"
+          textStyle={chart.title_text_style || {}}
+          onStyleChange={(s) => updateChart(index, { title_text_style: s })}
+          brandColors={BRAND_COLORS}
+          accentColor={accent}
+        />
+        <EditableText
+          value={chart.description || ''}
+          onCommit={(v) => updateChart(index, { description: v })}
+          placeholder="Add a description..."
+          theme={T.slideTheme}
+          className="text-sm mt-1"
+          style={{ color: T.dimColor }}
+          textStyle={chart.description_text_style || {}}
+          onStyleChange={(s) => updateChart(index, { description_text_style: s })}
+          brandColors={BRAND_COLORS}
+          accentColor={accent}
+        />
+      </div>
+    )
+
+    // Icons are a slide-level overlay, independent of the chart/stat split
+    // below, so both branches render the exact same layer. Reuses
+    // DraggableBox rather than a bespoke drag implementation — an icon is
+    // just a box with an SVG glyph centered in it.
+    const iconLayer = icons.map((ic) => {
+      const IconGlyph = ICON_BY_NAME[ic.name] || Star
+      const box: Box = { x: ic.x, y: ic.y, w: ic.size, h: ic.size }
+      return (
+        <DraggableBox
+          key={ic.id}
+          box={box}
+          onChange={(b) =>
+            updateIconLive(index, ic.id, { x: b.x, y: b.y, size: Math.min(b.w, b.h) })
+          }
+          onCommit={(b) =>
+            commitIcon(chart, index, ic.id, { x: b.x, y: b.y, size: Math.min(b.w, b.h) })
+          }
+          selected={selectedIconId === ic.id}
+          onSelect={() => {
+            setSelectedIconId(ic.id)
+            setSelectedBox(null)
+          }}
+          accentColor={accent}
+          maxW={slideSize.width - 96}
+          maxH={slideSize.height - 96 - 24}
+        >
+          <IconGlyph size="100%" color={ic.color || accent} strokeWidth={1.75} />
+        </DraggableBox>
+      )
+    })
+
+    const clearSelection = (e: React.PointerEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-no-drag]')) {
+        setSelectedBox(null)
+        setSelectedIconId(null)
+        setShowLayoutPicker(false)
+      }
+    }
+
+    if (isStatOnly) {
+      return (
+        <div className="absolute inset-0" onPointerDown={clearSelection}>
+          {headerBlock}
+          <div
+            className="absolute inset-0 flex items-center justify-center px-24"
+            style={{ paddingTop: 96, paddingBottom: 24 }}
+          >
+            <div className="w-full max-w-md" data-no-drag="true">
+              <HeroPanelContent chart={chart} chartIndex={index} />
+            </div>
+          </div>
+          {iconLayer}
+        </div>
+      )
+    }
+
     const chartScale =
       typeof chart.chart_scale === 'number' ? chart.chart_scale : DEFAULT_CHART_SCALE
     const defaults = boxesForLayout(layout, slideSize.width, slideSize.height, chartScale)
@@ -1564,8 +1835,15 @@ export default function PitchDeckPage() {
       b.y + b.h <= slideSize.height * 1.5
     const liveChartBox = isValidBox(chart.chart_box) ? chart.chart_box : defaults.chart
     const liveHeroBox = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
-    const chartKey = `${index}-${layout}-${Math.round(slideSize.width)}x${Math.round(slideSize.height)}`
-    const hasChartData = Array.isArray(chart?.data) && chart.data.length > 0
+    const chartKey = `${index}-${layout}-${chart.type}-${chart.value_mode}-${Math.round(slideSize.width)}x${Math.round(slideSize.height)}`
+    const hasChartData = dataPointCount > 0
+    // The AI schema is grounded to the data summary's absolute units —
+    // "Indexed" is purely a display transform layered on top at render
+    // time, never a rewrite of the stored chart.data, so switching back to
+    // Absolute always returns the exact original numbers.
+    const dataKeys = getDataKeysLocal(chart.data || [])
+    const isIndexed = chart.value_mode === 'indexed'
+    const displayData = isIndexed ? toIndexedData(chart.data, dataKeys) : chart.data
 
     const canvasCenterX = slideSize.width / 2
     const canvasCenterY = slideSize.height / 2
@@ -1595,106 +1873,20 @@ export default function PitchDeckPage() {
     ]
 
     return (
-      <div
-        className="absolute inset-0"
-        onPointerDown={(e) => {
-          if (!(e.target as HTMLElement).closest('[data-no-drag]')) {
-            setSelectedBox(null)
-            setShowLayoutPicker(false)
-          }
-        }}
-      >
-        <div className="absolute top-0 left-0 px-8 pt-6" style={{ width: slideSize.width - 64 }}>
-          <EditableText
-            value={chart.title || ''}
-            onCommit={(v) => updateChart(index, { title: v })}
-            placeholder="Chart title"
-            theme={T.slideTheme}
-            className="text-xl font-bold leading-tight"
-            textStyle={chart.title_text_style || {}}
-            onStyleChange={(s) => updateChart(index, { title_text_style: s })}
-            brandColors={BRAND_COLORS}
-            accentColor={accent}
-          />
-          <EditableText
-            value={chart.description || ''}
-            onCommit={(v) => updateChart(index, { description: v })}
-            placeholder="Add a description..."
-            theme={T.slideTheme}
-            className="text-sm mt-1"
-            style={{ color: T.dimColor }}
-            textStyle={chart.description_text_style || {}}
-            onStyleChange={(s) => updateChart(index, { description_text_style: s })}
-            brandColors={BRAND_COLORS}
-            accentColor={accent}
-          />
-        </div>
+      <div className="absolute inset-0" onPointerDown={clearSelection}>
+        {headerBlock}
 
-        {(selectedBox === 'chart' || selectedBox === 'hero') && (
+        {isIndexed && (
           <div
-            className={`absolute top-3 right-3 z-50 flex items-center gap-1.5 p-1.5 rounded-xl border shadow-2xl ${dark ? 'bg-zinc-900/95 border-white/10' : 'bg-white/95 border-black/10'}`}
-            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute z-30 px-2 py-1 rounded-md text-[10px] font-medium"
+            style={{
+              left: liveChartBox.x,
+              top: liveChartBox.y - 22,
+              background: hexToRgba(accent, 0.18),
+              color: accent,
+            }}
           >
-            <button
-              onClick={() => setShowLayoutPicker(!showLayoutPicker)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${showLayoutPicker ? '' : `${T.btnBorder} ${T.dimOpacity} hover:opacity-100`}`}
-              style={
-                showLayoutPicker
-                  ? { borderColor: accent, background: hexToRgba(accent, 0.2), color: accent }
-                  : undefined
-              }
-            >
-              <LayoutGrid size={12} /> Layout
-            </button>
-            <div className={`w-px h-5 mx-0.5 ${dark ? 'bg-white/10' : 'bg-black/10'}`} />
-            <button
-              onClick={() => nudgeChartScale(chart, index, -1)}
-              title="Smaller chart"
-              disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) <= MIN_CHART_SCALE}
-              className={`p-1.5 rounded-lg border transition-opacity ${T.btnBorder} ${T.dimOpacity} hover:opacity-90 disabled:opacity-30`}
-            >
-              <Minus size={12} />
-            </button>
-            <span className="text-[10px] font-mono opacity-60 w-8 text-center select-none">
-              {Math.round((chart.chart_scale ?? DEFAULT_CHART_SCALE) * 100)}%
-            </span>
-            <button
-              onClick={() => nudgeChartScale(chart, index, 1)}
-              title="Bigger chart"
-              disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) >= MAX_CHART_SCALE}
-              className={`p-1.5 rounded-lg border transition-opacity ${T.btnBorder} ${T.dimOpacity} hover:opacity-90 disabled:opacity-30`}
-            >
-              <Plus size={12} />
-            </button>
-            <div className={`w-px h-5 mx-0.5 ${dark ? 'bg-white/10' : 'bg-black/10'}`} />
-            <button
-              onClick={() => resetBoxes(chart, index)}
-              title="Reset position"
-              className={`p-1.5 rounded-lg border transition-opacity ${T.btnBorder} ${T.dimOpacity} hover:opacity-90`}
-            >
-              <RotateCcw size={12} />
-            </button>
-            {showLayoutPicker && (
-              <div
-                className={`absolute top-full right-0 mt-1.5 p-2 rounded-xl border shadow-2xl grid grid-cols-2 gap-1.5 w-32 ${dark ? 'bg-zinc-900 border-white/10' : 'bg-white border-black/10'}`}
-              >
-                {LAYOUT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.key}
-                    onClick={() => applyLayout(index, opt.key)}
-                    title={opt.label}
-                    className={`flex flex-col items-center gap-1 p-1.5 rounded-lg border transition-colors ${layout === opt.key ? '' : `${T.btnBorder} hover:border-white/40`}`}
-                    style={
-                      layout === opt.key
-                        ? { borderColor: accent, background: hexToRgba(accent, 0.15) }
-                        : undefined
-                    }
-                  >
-                    <LayoutIcon layout={opt.key} active={layout === opt.key} accentColor={accent} />
-                  </button>
-                ))}
-              </div>
-            )}
+            Indexed to 100
           </div>
         )}
 
@@ -1726,7 +1918,10 @@ export default function PitchDeckPage() {
           }
           onCommit={(b) => updateChart(index, { chart_box: b })}
           selected={selectedBox === 'chart'}
-          onSelect={() => setSelectedBox('chart')}
+          onSelect={() => {
+            setSelectedBox('chart')
+            setSelectedIconId(null)
+          }}
           snapX={chartSnapX}
           snapY={chartSnapY}
           onGuides={setGuides}
@@ -1738,7 +1933,7 @@ export default function PitchDeckPage() {
             <ChartErrorBoundary dark={dark}>
               <ChartRenderer
                 key={chartKey}
-                chart={chart}
+                chart={{ ...chart, data: displayData }}
                 colors={BRAND_COLORS}
                 height={Math.max(MIN_BOX_DIM, liveChartBox.h)}
                 dark={dark}
@@ -1767,7 +1962,10 @@ export default function PitchDeckPage() {
           }
           onCommit={(b) => updateChart(index, { hero_box: b })}
           selected={selectedBox === 'hero'}
-          onSelect={() => setSelectedBox('hero')}
+          onSelect={() => {
+            setSelectedBox('hero')
+            setSelectedIconId(null)
+          }}
           snapX={heroSnapX}
           snapY={heroSnapY}
           onGuides={setGuides}
@@ -1777,6 +1975,8 @@ export default function PitchDeckPage() {
         >
           <HeroPanelContent chart={chart} chartIndex={index} />
         </DraggableBox>
+
+        {iconLayer}
       </div>
     )
   }
@@ -2464,6 +2664,319 @@ export default function PitchDeckPage() {
             </div>
           </div>
         </div>
+
+        {/* Editing panel — persistent, contextual to what's selected on the
+            current chart slide. Replaces the floating toolbar that used to
+            hover above whatever box was selected; this panel is deliberately
+            always in the same place, and shows only the sections relevant to
+            the current selection rather than everything at once. */}
+        {slide.type === 'chart' &&
+          (() => {
+            const chart = slide.chart
+            const chartIndex = slide.index
+            const icons: any[] = Array.isArray(chart.icons) ? chart.icons : []
+            const selectedIcon = icons.find((ic) => ic.id === selectedIconId) || null
+            const dataPointCount = Array.isArray(chart?.data) ? chart.data.length : 0
+            const isStatOnly = chart.type === 'stat' || dataPointCount <= 1
+            const canToggleStat = dataPointCount >= 2
+            const layout: LayoutPreset = chart.layout || 'split-right'
+            const dataKeys = getDataKeysLocal(chart.data || [])
+            const canUsePie = dataKeys.length <= 1
+            const chartTypeForSwitcher = isStatOnly
+              ? chart.pre_stat_type || 'bar'
+              : chart.type || 'bar'
+            const panelLabel = (text: string) => (
+              <div
+                className="text-[10px] uppercase tracking-wide font-semibold mb-2"
+                style={{ color: T.dimColor }}
+              >
+                {text}
+              </div>
+            )
+            const panelBtnCls = `flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs transition-colors ${T.btnBorder} hover:border-white/30`
+
+            return (
+              <div
+                className={`w-72 shrink-0 border-l overflow-y-auto px-4 py-4 space-y-5 ${T.chromeBorder} ${T.railBg} ${dark ? '' : 'backdrop-blur-sm'}`}
+              >
+                {!isStatOnly && selectedBox === null && selectedIconId === null && (
+                  <div
+                    className="text-xs text-center pt-3 leading-relaxed"
+                    style={{ color: T.dimColor }}
+                  >
+                    Select the chart or callout on the slide to edit its layout, size, and type.
+                  </div>
+                )}
+
+                {!isStatOnly && selectedBox === 'chart' && (
+                  <>
+                    <div>
+                      {panelLabel('Layout')}
+                      <div className="grid grid-cols-3 gap-2">
+                        {LAYOUT_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.key}
+                            onClick={() => applyLayout(chartIndex, opt.key, chart.chart_scale)}
+                            title={opt.label}
+                            className={`aspect-[4/3] rounded-lg border flex items-center justify-center transition-colors ${
+                              layout === opt.key ? '' : `${T.btnBorder} hover:border-white/30`
+                            }`}
+                            style={
+                              layout === opt.key
+                                ? { borderColor: accent, background: hexToRgba(accent, 0.15) }
+                                : undefined
+                            }
+                          >
+                            <LayoutIcon
+                              layout={opt.key}
+                              active={layout === opt.key}
+                              accentColor={accent}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      {panelLabel('Chart size')}
+                      <div className="flex items-center gap-2 mb-2">
+                        <button
+                          onClick={() => nudgeChartScale(chart, chartIndex, -1)}
+                          disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) <= MIN_CHART_SCALE}
+                          className={`p-1.5 rounded-lg border ${T.btnBorder} disabled:opacity-30`}
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <span
+                          className="text-xs font-mono flex-1 text-center select-none"
+                          style={{ color: T.dimColor }}
+                        >
+                          {Math.round((chart.chart_scale ?? DEFAULT_CHART_SCALE) * 100)}%
+                        </span>
+                        <button
+                          onClick={() => nudgeChartScale(chart, chartIndex, 1)}
+                          disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) >= MAX_CHART_SCALE}
+                          className={`p-1.5 rounded-lg border ${T.btnBorder} disabled:opacity-30`}
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => resetBoxes(chart, chartIndex)}
+                        className={`w-full ${panelBtnCls}`}
+                      >
+                        <RotateCcw size={11} /> Reset position
+                      </button>
+                    </div>
+
+                    <div>
+                      {panelLabel('Chart type')}
+                      <div className="grid grid-cols-4 gap-2">
+                        {CHART_TYPE_OPTIONS.filter((o) => o.key !== 'pie' || canUsePie).map(
+                          (opt) => {
+                            const ChartIcon = opt.icon
+                            const active = chartTypeForSwitcher === opt.key
+                            return (
+                              <button
+                                key={opt.key}
+                                title={opt.label}
+                                onClick={() => setChartType(chartIndex, opt.key)}
+                                className={`aspect-square rounded-lg border flex items-center justify-center transition-colors ${
+                                  active ? '' : `${T.btnBorder} hover:border-white/30`
+                                }`}
+                                style={
+                                  active
+                                    ? {
+                                        borderColor: accent,
+                                        background: hexToRgba(accent, 0.15),
+                                        color: accent,
+                                      }
+                                    : { color: T.dimColor }
+                                }
+                              >
+                                <ChartIcon size={15} />
+                              </button>
+                            )
+                          }
+                        )}
+                      </div>
+                      {!canUsePie && (
+                        <div
+                          className="text-[10.5px] leading-snug mt-1.5"
+                          style={{ color: T.dimColor }}
+                        >
+                          Pie isn&apos;t available — this chart has more than one value per point.
+                        </div>
+                      )}
+                    </div>
+
+                    {chartTypeForSwitcher !== 'pie' && dataPointCount >= 2 && (
+                      <div>
+                        {panelLabel('Values')}
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <button
+                            onClick={() => setValueMode(chartIndex, 'absolute')}
+                            className="py-1.5 rounded-lg border text-xs transition-colors"
+                            style={
+                              !chart.value_mode || chart.value_mode === 'absolute'
+                                ? {
+                                    borderColor: accent,
+                                    background: hexToRgba(accent, 0.15),
+                                    color: accent,
+                                  }
+                                : { color: T.dimColor, borderColor: 'transparent' }
+                            }
+                          >
+                            Absolute
+                          </button>
+                          <button
+                            onClick={() => setValueMode(chartIndex, 'indexed')}
+                            className="py-1.5 rounded-lg border text-xs transition-colors"
+                            style={
+                              chart.value_mode === 'indexed'
+                                ? {
+                                    borderColor: accent,
+                                    background: hexToRgba(accent, 0.15),
+                                    color: accent,
+                                  }
+                                : { color: T.dimColor, borderColor: 'transparent' }
+                            }
+                          >
+                            Indexed
+                          </button>
+                        </div>
+                        <div className="text-[10.5px] leading-snug" style={{ color: T.dimColor }}>
+                          Indexed rescales each series to 100 at its first point, useful for
+                          comparing trends on different scales. The underlying numbers never change.
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {(isStatOnly || selectedBox === 'hero') && canToggleStat && (
+                  <div>
+                    {panelLabel('Slide type')}
+                    <button
+                      onClick={() => toggleStatMode(chart, chartIndex)}
+                      className={`w-full ${panelBtnCls}`}
+                    >
+                      <LayoutGrid size={12} /> {isStatOnly ? 'Show as chart' : 'Show as stat card'}
+                    </button>
+                    {isStatOnly && (
+                      <div
+                        className="text-[10.5px] leading-snug mt-1.5"
+                        style={{ color: T.dimColor }}
+                      >
+                        This has enough data points for a full chart if you'd rather show it that
+                        way.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="pt-1 border-t" style={{ borderColor: T.divider }}>
+                  <div className="pt-4">{panelLabel('Icons')}</div>
+
+                  {selectedIcon && (
+                    <div
+                      className="space-y-3 p-2.5 rounded-lg border mb-2.5"
+                      style={{ borderColor: T.divider, background: T.cardBg }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px]" style={{ color: T.dimColor }}>
+                          Size
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() =>
+                              commitIcon(chart, chartIndex, selectedIcon.id, {
+                                size: Math.max(MIN_ICON_SIZE, selectedIcon.size - 8),
+                              })
+                            }
+                            className={`p-1 rounded border ${T.btnBorder}`}
+                          >
+                            <Minus size={10} />
+                          </button>
+                          <span className="text-[10px] font-mono w-6 text-center">
+                            {selectedIcon.size}
+                          </span>
+                          <button
+                            onClick={() =>
+                              commitIcon(chart, chartIndex, selectedIcon.id, {
+                                size: Math.min(MAX_ICON_SIZE, selectedIcon.size + 8),
+                              })
+                            }
+                            className={`p-1 rounded border ${T.btnBorder}`}
+                          >
+                            <Plus size={10} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {BRAND_COLORS.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() =>
+                              commitIcon(chart, chartIndex, selectedIcon.id, { color: c })
+                            }
+                            className="w-5 h-5 rounded-full border-2"
+                            style={{
+                              background: c,
+                              borderColor: selectedIcon.color === c ? '#fff' : 'transparent',
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => deleteIcon(chart, chartIndex, selectedIcon.id)}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs text-red-400 border-red-400/30 hover:bg-red-400/10"
+                      >
+                        <Trash2 size={11} /> Delete icon
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => setShowIconPicker((v) => !v)}
+                    className={`w-full ${panelBtnCls}`}
+                    style={
+                      showIconPicker
+                        ? {
+                            borderColor: accent,
+                            background: hexToRgba(accent, 0.15),
+                            color: accent,
+                          }
+                        : undefined
+                    }
+                  >
+                    <Plus size={12} /> Insert icon
+                  </button>
+                  {showIconPicker && (
+                    <div
+                      className="grid grid-cols-5 gap-1.5 p-2 rounded-lg border mt-2"
+                      style={{ borderColor: T.divider }}
+                    >
+                      {ICON_LIBRARY.map((entry) => {
+                        const Ico = entry.Icon
+                        return (
+                          <button
+                            key={entry.name}
+                            title={entry.label}
+                            onClick={() => addIcon(chart, chartIndex, entry.name)}
+                            className="aspect-square rounded-md flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
+                            style={{ color: T.dimColor }}
+                          >
+                            <Ico size={15} />
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
       </div>
     </div>
   )
