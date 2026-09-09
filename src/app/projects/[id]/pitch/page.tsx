@@ -53,6 +53,7 @@ import {
   Star,
   ShieldCheck,
   CheckCircle2,
+  ListChecks,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ type Slide =
   | { type: 'title'; project: any }
   | { type: 'insights'; insights: any[] }
   | { type: 'chart'; chart: any; index: number }
+  | { type: 'statgroup'; stats: { hero_stat: string; takeaway: string; index: number }[] }
   | { type: 'table'; table: any; takeaway: string; index: number }
   | { type: 'recommendations'; recommendations: any[]; narrative: string }
 
@@ -193,6 +195,7 @@ const EDITABLE_FIELDS = [
   'title_text_style',
   'narrative_text_style',
   'analysis_handoff',
+  'pitch_included_findings',
 ]
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -464,6 +467,7 @@ function slideCaption(slide: Slide): string {
   if (slide.type === 'title') return slide.project.pitch_title || slide.project.name || 'Title'
   if (slide.type === 'insights') return 'Key Insights'
   if (slide.type === 'chart') return slide.chart?.title || `Chart ${slide.index + 1}`
+  if (slide.type === 'statgroup') return 'Key Stats'
   if (slide.type === 'table') return slide.table?.title || `Table ${slide.index + 1}`
   if (slide.type === 'recommendations') return 'Recommendations'
   return ''
@@ -593,6 +597,23 @@ function SlideThumbnailPreview({
               No data
             </div>
           )}
+        </div>
+      )
+    }
+    if (slide.type === 'statgroup') {
+      return (
+        <div className="h-full p-2 flex items-center justify-center gap-1">
+          {slide.stats.map((s, i) => (
+            <div
+              key={i}
+              className="flex-1 h-8 rounded-md flex items-center justify-center"
+              style={{ background: brand.secondaryColor }}
+            >
+              <div className="text-[6px] font-black" style={{ color: brand.primaryColor }}>
+                {s.hero_stat || '—'}
+              </div>
+            </div>
+          ))}
         </div>
       )
     }
@@ -1012,6 +1033,13 @@ export default function PitchDeckPage() {
   const [showLayoutPicker, setShowLayoutPicker] = useState(false)
   const [selectedIconId, setSelectedIconId] = useState<string | null>(null)
   const [showIconPicker, setShowIconPicker] = useState(false)
+  // Pre-Pitch-Mode finding picker — which findings to actually build
+  // slides for. Forced open the first time a project has findings but no
+  // saved selection yet (project.pitch_included_findings == null);
+  // reopenable anytime after via the header's "Edit slides" button to
+  // adjust without regenerating anything.
+  const [findingPickerOpen, setFindingPickerOpen] = useState(false)
+  const [findingPickerChecked, setFindingPickerChecked] = useState<Set<number>>(new Set())
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [historyTick, setHistoryTick] = useState(0) // bumps to force undo/redo button enable-state re-renders
   const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null)
@@ -1084,9 +1112,61 @@ export default function PitchDeckPage() {
   }
 
   // Build slides — selection-aware when analysis_handoff.selectedFindings exists
+  // Groups consecutive/selected stat-only chart slides (a hero stat with no
+  // real comparison to chart — see isStatOnly in renderChartSlide) into
+  // batches of up to 3, each becoming one 'statgroup' slide instead of one
+  // full slide per stat. Every stat-only slide is grouped this way,
+  // including a lone leftover of 1 — the point is one consistent bubble
+  // treatment for hero stats, not "group when there happen to be several."
+  // Non-stat chart/table slides pass through untouched, in their original
+  // position. This only regroups at build time (initial generation or
+  // reopening the finding picker); a chart manually switched to a stat
+  // card later via the panel's "Show as stat card" toggle stays its own
+  // individual slide — retroactively re-grouping on every edit would mean
+  // slide identity/order shifting under the user's feet mid-edit.
+  const groupStatSlides = (contentSlides: Slide[]): Slide[] => {
+    const out: Slide[] = []
+    let buffer: { hero_stat: string; takeaway: string; index: number }[] = []
+    const flush = () => {
+      if (buffer.length === 0) return
+      out.push({ type: 'statgroup', stats: buffer })
+      buffer = []
+    }
+    for (const slide of contentSlides) {
+      const isStatOnly =
+        slide.type === 'chart' &&
+        (slide.chart?.type === 'stat' ||
+          !Array.isArray(slide.chart?.data) ||
+          slide.chart.data.length <= 1)
+      if (isStatOnly && slide.type === 'chart') {
+        buffer.push({
+          hero_stat: slide.chart.hero_stat || '',
+          takeaway: slide.chart.takeaway || '',
+          index: slide.index,
+        })
+        if (buffer.length === 3) flush()
+      } else {
+        flush()
+        out.push(slide)
+      }
+    }
+    flush()
+    return out
+  }
+
   const buildSlides = (data: any): Slide[] => {
     const handoff = data.analysis_handoff
-    const selections: any[] = handoff?.selectedFindings || []
+    const allSelections: any[] = handoff?.selectedFindings || []
+    // Pre-Pitch-Mode finding picker (see the gating screen further down):
+    // an array of indices into allSelections the user actually chose to
+    // include. Undefined means the picker hasn't been shown/confirmed
+    // yet for this project — every finding is included by default so
+    // nothing regresses for a project that predates this feature.
+    const included: number[] | undefined = data.pitch_included_findings
+    const selections =
+      included && Array.isArray(included)
+        ? allSelections.filter((_, i) => included.includes(i))
+        : allSelections
     // Same defensive filter as AnalysisView.tsx, against the same root
     // cause: a stray null in project.charts crashes the instant something
     // reads a property off it. This is the array Pitch Mode's own
@@ -1100,8 +1180,14 @@ export default function PitchDeckPage() {
       narrative: data.narrative || '',
     }
 
-    if (selections.length > 0) {
-      const contentSlides: Slide[] = selections.map((sel: any, i: number) => {
+    if (allSelections.length > 0) {
+      const contentSlides: Slide[] = selections.map((sel: any) => {
+        // i must be the index into the ORIGINAL allSelections/safeCharts
+        // arrays (not the filtered `selections` array) — every downstream
+        // consumer (updateChart, chart_box lookups, undo/redo) addresses
+        // charts by that original index, so filtering must never change
+        // what index a kept finding is known by.
+        const i = allSelections.indexOf(sel)
         if (sel.type === 'table') {
           return { type: 'table' as const, table: sel.table, takeaway: sel.takeaway, index: i }
         }
@@ -1142,18 +1228,22 @@ export default function PitchDeckPage() {
         }
         return { type: 'chart' as const, chart, index: i }
       })
-      return [titleSlide, ...contentSlides, recsSlide]
+      return [titleSlide, ...groupStatSlides(contentSlides), recsSlide]
     }
 
     // Legacy flow — no selections, use generic structure
+    const legacyCharts = included ? safeCharts.filter((_, i) => included.includes(i)) : safeCharts
+    const legacyIndexOf = (c: any) => safeCharts.indexOf(c)
     return [
       titleSlide,
       { type: 'insights', insights: data.insights || [] },
-      ...safeCharts.map((chart: any, i: number) => ({
-        type: 'chart' as const,
-        chart,
-        index: i,
-      })),
+      ...groupStatSlides(
+        legacyCharts.map((chart: any) => ({
+          type: 'chart' as const,
+          chart,
+          index: legacyIndexOf(chart),
+        }))
+      ),
       recsSlide,
     ]
   }
@@ -1323,6 +1413,23 @@ export default function PitchDeckPage() {
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [id])
+
+  // Forces the finding picker open the first time a project has findings
+  // but no saved inclusion list yet — see state declaration above for why.
+  // Keyed on pitch_included_findings specifically (not just project.id) so
+  // it also re-triggers correctly if that field is ever cleared.
+  useEffect(() => {
+    if (!project) return
+    const allFindings: any[] = project.analysis_handoff?.selectedFindings || []
+    const legacyCharts: any[] = (project.charts || []).filter(
+      (c: any) => c && typeof c === 'object'
+    )
+    const findingCount = allFindings.length > 0 ? allFindings.length : legacyCharts.length
+    if (findingCount > 0 && project.pitch_included_findings == null) {
+      setFindingPickerChecked(new Set(Array.from({ length: findingCount }, (_, i) => i)))
+      setFindingPickerOpen(true)
+    }
+  }, [project?.id, project?.pitch_included_findings])
 
   useLayoutEffect(() => {
     if (genState !== 'ready') return
@@ -1649,6 +1756,48 @@ export default function PitchDeckPage() {
       return { ...prev, charts, analysis_handoff }
     })
   }
+  // ── Finding picker ────────────────────────────────────────────────────
+  const findingPickerItems = (() => {
+    if (!project) return []
+    const allFindings: any[] = project.analysis_handoff?.selectedFindings || []
+    if (allFindings.length > 0) {
+      return allFindings.map((sel: any, i: number) => ({
+        index: i,
+        label: sel.finding?.label || (sel.type === 'table' ? `Table ${i + 1}` : `Chart ${i + 1}`),
+        sub:
+          sel.type === 'table'
+            ? 'Table'
+            : sel.chartType === 'grouped_bar'
+              ? 'Bar'
+              : sel.chartType || 'Chart',
+      }))
+    }
+    const legacyCharts: any[] = (project.charts || []).filter(
+      (c: any) => c && typeof c === 'object'
+    )
+    return legacyCharts.map((c: any, i: number) => ({
+      index: i,
+      label: c.title || `Chart ${i + 1}`,
+      sub: c.type || 'chart',
+    }))
+  })()
+
+  const openFindingPicker = () => {
+    const saved: number[] | undefined = project?.pitch_included_findings
+    setFindingPickerChecked(
+      new Set(saved && Array.isArray(saved) ? saved : findingPickerItems.map((f) => f.index))
+    )
+    setFindingPickerOpen(true)
+  }
+
+  const confirmFindingPicker = () => {
+    commitProjectChange((prev: any) => ({
+      ...prev,
+      pitch_included_findings: Array.from(findingPickerChecked).sort((a, b) => a - b),
+    }))
+    setFindingPickerOpen(false)
+  }
+
   const addBlankSlide = () => {
     if (!project) return
     const newIndex = (project.charts || []).length
@@ -2008,6 +2157,65 @@ export default function PitchDeckPage() {
     )
   }
 
+  // Speech-bubble stat cards — up to 3 hero stats side by side on one
+  // slide. Grouping happens in buildSlides(), not here; this just renders
+  // whatever chunk it's handed. hero_stat/takeaway still edit through the
+  // same updateChart(index, ...) path as a normal chart slide's callout,
+  // keyed off each stat's original chart index — so a grouped stat is
+  // still "the same chart" as far as saving/undo/redo is concerned, it
+  // just displays differently.
+  const renderStatGroupSlide = (slide: Extract<Slide, { type: 'statgroup' }>) => {
+    const bubbleColor = brand.secondaryColor
+    return (
+      <div className="absolute inset-0 flex items-center justify-center gap-8 px-16">
+        {slide.stats.map((s) => (
+          <div key={s.index} className="relative flex-1 max-w-xs">
+            <div
+              className="rounded-2xl px-7 pt-8 pb-9 flex flex-col items-center text-center"
+              style={{ background: bubbleColor }}
+            >
+              <EditableText
+                value={s.hero_stat || ''}
+                onCommit={(v) => updateChart(s.index, { hero_stat: v })}
+                placeholder="+0%"
+                theme="dark"
+                className="font-black leading-none text-center text-4xl mb-3"
+                style={{ color: '#ffffff' }}
+                brandColors={BRAND_COLORS}
+                accentColor={accent}
+              />
+              <EditableText
+                value={s.takeaway || ''}
+                onCommit={(v) => updateChart(s.index, { takeaway: v })}
+                placeholder="What this stat means"
+                theme="dark"
+                className="text-sm text-center leading-snug"
+                style={{ color: 'rgba(255,255,255,0.85)' }}
+                brandColors={BRAND_COLORS}
+                accentColor={accent}
+              />
+            </div>
+            {/* Speech-bubble tail — small downward-pointing triangle
+                anchored to the bottom-left of the card, matching the
+                reference deck's stat callouts. */}
+            <div
+              className="absolute"
+              style={{
+                left: 28,
+                bottom: -13,
+                width: 0,
+                height: 0,
+                borderLeft: '13px solid transparent',
+                borderRight: '13px solid transparent',
+                borderTop: `15px solid ${bubbleColor}`,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   const renderTableSlide = (slide: Extract<Slide, { type: 'table' }>) => {
     const selIndex = slide.index
     return (
@@ -2219,6 +2427,7 @@ export default function PitchDeckPage() {
     }
 
     if (slide.type === 'chart') return renderChartSlide(slide.chart, slide.index)
+    if (slide.type === 'statgroup') return renderStatGroupSlide(slide)
 
     if (slide.type === 'table') return renderTableSlide(slide)
 
@@ -2458,6 +2667,15 @@ export default function PitchDeckPage() {
           </span>
         </div>
         <div className="flex items-center gap-4">
+          {findingPickerItems.length > 0 && (
+            <button
+              onClick={openFindingPicker}
+              title="Choose which findings become slides"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${T.btnHover} border ${T.btnBorder}`}
+            >
+              <ListChecks size={13} /> Edit slides
+            </button>
+          )}
           {/* Undo / redo */}
           <div className="flex items-center gap-1">
             <button
@@ -3005,6 +3223,94 @@ export default function PitchDeckPage() {
             )
           })()}
       </div>
+
+      {/* Finding picker — forced open on first visit (see the useEffect
+          above), reopenable anytime via the "Edit slides" header button.
+          Confirming persists pitch_included_findings, which buildSlides()
+          filters by and groups stat-only findings within. */}
+      {findingPickerOpen && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+        >
+          <div
+            className={`w-full max-w-lg max-h-[80vh] flex flex-col rounded-2xl border shadow-2xl ${dark ? 'bg-zinc-900 border-white/10' : 'bg-white border-black/10'}`}
+          >
+            <div className="px-6 pt-6 pb-4 border-b" style={{ borderColor: T.divider }}>
+              <h2 className="text-lg font-bold">Choose what goes in this deck</h2>
+              <p className="text-xs mt-1" style={{ color: T.dimColor }}>
+                Pick which findings become slides. Everything's checked to start — uncheck what you
+                don't need. Hero stats are grouped up to 3 per slide automatically.
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-3 space-y-1">
+              {findingPickerItems.map((item) => {
+                const checked = findingPickerChecked.has(item.index)
+                return (
+                  <button
+                    key={item.index}
+                    onClick={() =>
+                      setFindingPickerChecked((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(item.index)) next.delete(item.index)
+                        else next.add(item.index)
+                        return next
+                      })
+                    }
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${dark ? 'hover:bg-white/5' : 'hover:bg-black/[0.03]'}`}
+                  >
+                    <div
+                      className="w-4 h-4 rounded flex items-center justify-center shrink-0 border"
+                      style={
+                        checked
+                          ? { background: accent, borderColor: accent }
+                          : { borderColor: T.divider }
+                      }
+                    >
+                      {checked && <Check size={11} color="#fff" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{item.label}</div>
+                    </div>
+                    <div
+                      className="text-[10px] uppercase tracking-wide font-semibold shrink-0"
+                      style={{ color: T.dimColor }}
+                    >
+                      {item.sub}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+            <div
+              className="px-6 py-4 border-t flex items-center justify-between"
+              style={{ borderColor: T.divider }}
+            >
+              <div className="flex items-center gap-3 text-xs" style={{ color: T.dimColor }}>
+                <button
+                  onClick={() =>
+                    setFindingPickerChecked(new Set(findingPickerItems.map((f) => f.index)))
+                  }
+                  className="underline"
+                >
+                  Select all
+                </button>
+                <button onClick={() => setFindingPickerChecked(new Set())} className="underline">
+                  Select none
+                </button>
+              </div>
+              <button
+                onClick={confirmFindingPicker}
+                disabled={findingPickerChecked.size === 0}
+                className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
+                style={{ background: accent }}
+              >
+                Build deck ({findingPickerChecked.size} selected)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

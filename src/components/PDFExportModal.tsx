@@ -769,7 +769,22 @@ export default function PDFExportModal({ project, onClose }: Props) {
     { id: 'recommendations', label: 'Recommendations' },
   ]
 
-  const [selected, setSelected] = useState<Set<string>>(new Set(allSlides.map((s) => s.id)))
+  // Default the checklist to whatever was chosen in Pitch Mode's own
+  // finding picker (project.pitch_included_findings), so this export tool
+  // starts from the same deck the user already curated instead of
+  // re-including everything and making them deselect it all over again.
+  // Falls back to "everything" when that field is unset (legacy projects,
+  // or the picker hasn't been used yet).
+  const defaultSelected = (() => {
+    const included: number[] | undefined = project.pitch_included_findings
+    if (!included || !Array.isArray(included)) return allSlides.map((s) => s.id)
+    return allSlides
+      .filter(
+        (s) => !s.id.startsWith('chart-') || included.includes(parseInt(s.id.replace('chart-', '')))
+      )
+      .map((s) => s.id)
+  })()
+  const [selected, setSelected] = useState<Set<string>>(new Set(defaultSelected))
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState('')
 
