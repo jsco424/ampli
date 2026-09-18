@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Download,
   Info,
+  ChevronDown,
   ShoppingBag,
   HeartPulse,
   Cpu,
@@ -70,21 +71,30 @@ const INDUSTRY_ICONS: Record<
   Other: BarChart3,
 }
 
+// A desaturated, evenly-spaced categorical palette — the same principle
+// Tableau's own default "Tableau 10" set uses — instead of pulling
+// straight from Tailwind's saturated defaults (blue-500, purple-500,
+// amber-400, etc.), which is what made this read as a generic AI-scaffolded
+// dashboard rather than a deliberate one. This palette exists ONLY to
+// distinguish industries from each other (small swatches, legend dots) —
+// it is never used for the account's own interactive chrome (selection
+// state, buttons, links), which uses the account's actual brand accent
+// instead, applied below.
 const INDUSTRY_COLORS: Record<string, string> = {
-  Retail: '#3b82f6',
-  Healthcare: '#10b981',
-  Technology: '#8b5cf6',
-  Finance: '#f59e0b',
-  Marketing: '#ef4444',
-  Education: '#06b6d4',
-  Manufacturing: '#84cc16',
-  Hospitality: '#f97316',
-  'Real Estate': '#ec4899',
-  Media: '#a855f7',
-  Energy: '#eab308',
-  Nonprofit: '#14b8a6',
-  Logistics: '#6366f1',
-  Other: '#94a3b8',
+  Retail: '#5B7FA6',
+  Healthcare: '#5BA695',
+  Technology: '#7A6BA8',
+  Finance: '#A6975B',
+  Marketing: '#A65B7F',
+  Education: '#6B8FA8',
+  Manufacturing: '#8FA86B',
+  Hospitality: '#A6795B',
+  'Real Estate': '#8B5BA6',
+  Media: '#6B6BA6',
+  Energy: '#A69A5B',
+  Nonprofit: '#5BA66B',
+  Logistics: '#5B6BA6',
+  Other: '#8A8F98',
 }
 
 const RATE_LIKE_ABBREVIATIONS = new Set([
@@ -265,6 +275,11 @@ export default function CrowdInsightsPage() {
   const { has } = useAuth()
   const { dark } = useTheme()
   const router = useRouter()
+  // ampli's own site-chrome accent (Navbar, About, Pricing all use this
+  // same hex) — this page is internal product UI, not a customer-facing
+  // generated deck, so it uses the site's own identity, not the
+  // per-account useBrand() color meant for exported presentations.
+  const accent = '#5DCAA5'
 
   const [industries, setIndustries] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -312,6 +327,17 @@ export default function CrowdInsightsPage() {
   const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
+  // Shared styling for every dropdown filter on this page — one consistent
+  // control, not a native <select> styled differently in each card. Native
+  // select arrows are hidden (appearance-none) in favor of one drawn
+  // ChevronDown icon, so the control reads as a deliberate filter, not a
+  // default browser form element.
+  const filterSelectCls = `appearance-none text-xs pl-2.5 pr-7 py-1.5 rounded-md border outline-none cursor-pointer ${
+    dark
+      ? 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-zinc-600'
+      : 'bg-white border-zinc-300 text-zinc-700 hover:border-zinc-400'
+  }`
+  const filterChevronCls = `pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${subtler}`
 
   const metricOptions: [string, string][] = (() => {
     const map = new Map<string, string>()
@@ -418,9 +444,12 @@ export default function CrowdInsightsPage() {
         <Navbar />
         <IntelligenceSubNav />
         <main className="pt-4 px-6 max-w-lg mx-auto text-center">
-          <div className={`p-10 rounded-2xl border ${card}`}>
-            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
-              <Lock size={24} className="text-blue-500" />
+          <div className={`p-10 rounded-lg border ${card}`}>
+            <div
+              className="w-14 h-14 rounded-lg flex items-center justify-center mx-auto mb-4"
+              style={{ background: `${accent}1a` }}
+            >
+              <Lock size={24} style={{ color: accent }} />
             </div>
             <h1 className="text-xl font-bold mb-2">Crowd Insights is a Business feature</h1>
             <p className={`text-sm leading-relaxed mb-6 ${subtle}`}>
@@ -430,7 +459,8 @@ export default function CrowdInsightsPage() {
             </p>
             <Link
               href="/pricing"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-400 transition-colors"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-lg text-white text-sm font-medium transition-colors"
+              style={{ background: accent }}
             >
               View Plans
             </Link>
@@ -450,9 +480,12 @@ export default function CrowdInsightsPage() {
         <Navbar />
         <IntelligenceSubNav />
         <main className="pt-4 px-6 max-w-lg mx-auto text-center">
-          <div className={`p-10 rounded-2xl border ${card}`}>
-            <div className="w-14 h-14 rounded-2xl bg-purple-500/10 flex items-center justify-center mx-auto mb-4">
-              <Lock size={24} className="text-purple-500" />
+          <div className={`p-10 rounded-lg border ${card}`}>
+            <div
+              className="w-14 h-14 rounded-lg flex items-center justify-center mx-auto mb-4"
+              style={{ background: `${accent}1a` }}
+            >
+              <Lock size={24} style={{ color: accent }} />
             </div>
             <h1 className="text-xl font-bold mb-2">Crowd Insights Locked</h1>
             <p className={`text-sm leading-relaxed mb-4 ${subtle}`}>
@@ -464,9 +497,10 @@ export default function CrowdInsightsPage() {
               className={`h-2 rounded-full overflow-hidden mb-2 ${dark ? 'bg-white/5' : 'bg-zinc-100'}`}
             >
               <div
-                className="h-full bg-purple-500 rounded-full transition-all"
+                className="h-full rounded-full transition-all"
                 style={{
                   width: `${Math.min(100, (optedInCount / CROWD_UNLOCK_THRESHOLD) * 100)}%`,
+                  background: accent,
                 }}
               />
             </div>
@@ -475,7 +509,8 @@ export default function CrowdInsightsPage() {
             </p>
             <Link
               href="/projects/new"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-purple-500 text-white text-sm font-medium hover:bg-purple-600 transition-colors"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-lg text-white text-sm font-medium transition-colors"
+              style={{ background: accent }}
             >
               <Users size={15} />
               Upload & Opt In to Contribute
@@ -490,108 +525,117 @@ export default function CrowdInsightsPage() {
     <div className={`min-h-screen ${base}`}>
       <Navbar />
       <IntelligenceSubNav />
-      <main className="pt-2 px-6 max-w-5xl mx-auto pb-20">
-        <div className="mt-6 mb-8 flex items-start justify-between">
+      <main className="pt-2 px-6 max-w-6xl mx-auto pb-20">
+        <div
+          className={`mt-6 mb-6 pb-4 flex items-start justify-between border-b ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}
+        >
           <div>
-            <h1 className="text-2xl font-bold mb-1">Crowd Insights</h1>
+            <h1 className="text-xl font-bold mb-1 tracking-tight">Crowd Insights</h1>
             <p className={`text-sm ${subtle}`}>
               Anonymized industry aggregates built from{' '}
-              {industries.reduce((sum, i) => sum + i.contribution_count, 0)} contributions across{' '}
-              {industries.length} industries
+              <span className="tabular-nums">
+                {industries.reduce((sum, i) => sum + i.contribution_count, 0)}
+              </span>{' '}
+              contributions across <span className="tabular-nums">{industries.length}</span>{' '}
+              industries
             </p>
             <Link
               href="/crowd/methodology"
-              className="inline-flex items-center gap-1.5 text-xs font-medium mt-2 text-[#5DCAA5] hover:underline"
+              className="inline-flex items-center gap-1.5 text-xs font-medium mt-2 hover:underline"
+              style={{ color: accent }}
             >
               <Info size={12} />
               How this is calculated
             </Link>
           </div>
-          <div
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}
-          >
+          <div className={`flex items-center gap-1.5 text-xs ${subtler}`}>
             <RefreshCw size={11} />
-            Updated in real-time
+            Updated in real time
           </div>
         </div>
 
         {loading ? (
           <div className="flex items-center justify-center py-20">
-            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <div
+              className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: accent, borderTopColor: 'transparent' }}
+            />
           </div>
         ) : industries.length === 0 ? (
-          <div className={`p-10 rounded-2xl border text-center ${card}`}>
+          <div className={`p-10 rounded-lg border text-center ${card}`}>
             <p className={`text-sm ${subtle}`}>
               No crowd data yet. Be the first to contribute by opting in on your next upload.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-1 space-y-2">
-              {industries.map((ind) => (
-                <button
-                  key={ind.id}
-                  onClick={() => {
-                    setSelected(ind)
-                    setMapMetric('__share__')
-                  }}
-                  className={`w-full text-left p-4 rounded-2xl border transition-all
-                    ${
-                      selected?.id === ind.id
-                        ? 'border-blue-500 bg-blue-500/10'
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
+            <div className={`lg:col-span-1 rounded-lg border overflow-hidden ${card}`}>
+              <div
+                className={`px-3 py-2.5 text-[10px] font-semibold uppercase tracking-wide border-b ${dark ? 'border-zinc-800 text-zinc-500' : 'border-zinc-200 text-zinc-400'}`}
+              >
+                Industries
+              </div>
+              {industries.map((ind) => {
+                const isSelected = selected?.id === ind.id
+                const swatch = INDUSTRY_COLORS[ind.industry] || INDUSTRY_COLORS.Other
+                return (
+                  <button
+                    key={ind.id}
+                    onClick={() => {
+                      setSelected(ind)
+                      setMapMetric('__share__')
+                    }}
+                    className={`w-full text-left px-3 py-2.5 border-l-2 border-b transition-colors last:border-b-0 ${
+                      dark ? 'border-b-zinc-800' : 'border-b-zinc-100'
+                    } ${
+                      isSelected
+                        ? ''
                         : dark
-                          ? `border-zinc-800 hover:border-zinc-700 ${card}`
-                          : `border-zinc-200 hover:border-zinc-300 ${card}`
+                          ? 'border-l-transparent hover:bg-white/[0.03]'
+                          : 'border-l-transparent hover:bg-zinc-50'
                     }`}
-                >
-                  <div className="flex items-center gap-3">
-                    {(() => {
-                      const Icon = INDUSTRY_ICONS[ind.industry] || BarChart3
-                      return (
-                        <span
-                          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                          style={{ background: `${INDUSTRY_COLORS[ind.industry] || '#94a3b8'}1a` }}
-                        >
-                          <Icon
-                            size={17}
-                            style={{ color: INDUSTRY_COLORS[ind.industry] || '#94a3b8' }}
-                          />
-                        </span>
-                      )
-                    })()}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate">{ind.industry}</p>
-                      <p className={`text-xs ${subtle}`}>
-                        {ind.contribution_count} contribution
-                        {ind.contribution_count !== 1 ? 's' : ''}
-                      </p>
+                    style={
+                      isSelected
+                        ? { borderLeftColor: accent, background: `${accent}0d` }
+                        : undefined
+                    }
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: swatch }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{ind.industry}</p>
+                      </div>
+                      <span className={`text-xs tabular-nums shrink-0 ${subtler}`}>
+                        {ind.contribution_count}
+                      </span>
                     </div>
-                    <div
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ background: INDUSTRY_COLORS[ind.industry] || '#94a3b8' }}
-                    />
-                  </div>
-                </button>
-              ))}
+                  </button>
+                )
+              })}
             </div>
 
             {selected && (
-              <div className="lg:col-span-2 space-y-4">
-                <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="lg:col-span-3 space-y-4">
+                <div className={`p-5 rounded-lg border ${card}`}>
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       {(() => {
                         const Icon = INDUSTRY_ICONS[selected.industry] || BarChart3
                         return (
                           <span
-                            className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0"
+                            className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
                             style={{
-                              background: `${INDUSTRY_COLORS[selected.industry] || '#94a3b8'}1a`,
+                              background: `${INDUSTRY_COLORS[selected.industry] || INDUSTRY_COLORS.Other}1a`,
                             }}
                           >
                             <Icon
-                              size={22}
-                              style={{ color: INDUSTRY_COLORS[selected.industry] || '#94a3b8' }}
+                              size={18}
+                              style={{
+                                color: INDUSTRY_COLORS[selected.industry] || INDUSTRY_COLORS.Other,
+                              }}
                             />
                           </span>
                         )
@@ -625,7 +669,7 @@ export default function CrowdInsightsPage() {
                       return (
                         <div
                           key={key}
-                          className={`p-3 rounded-xl ${dark ? 'bg-zinc-800' : 'bg-zinc-50'}`}
+                          className={`p-3 rounded-md ${dark ? 'bg-zinc-800' : 'bg-zinc-50'}`}
                         >
                           <p className={`text-xs mb-1 ${subtle}`}>{label}</p>
                           <p className="text-lg font-bold">{value !== null ? `${value}%` : '—'}</p>
@@ -639,7 +683,7 @@ export default function CrowdInsightsPage() {
                 {Object.entries(selected.metrics?.extendedMetrics || {}).filter(
                   ([k]) => !FIXED_BUCKET_KEYS.includes(k)
                 ).length > 0 && (
-                  <div className={`p-5 rounded-2xl border ${card}`}>
+                  <div className={`p-5 rounded-lg border ${card}`}>
                     <h3 className="font-semibold text-sm mb-1">Additional Benchmarks</h3>
                     <p className={`text-xs mb-4 ${subtle}`}>
                       Other metrics detected across contributions to this industry
@@ -650,7 +694,7 @@ export default function CrowdInsightsPage() {
                         .map(([key, m]: [string, any]) => (
                           <div
                             key={key}
-                            className={`p-3 rounded-xl ${dark ? 'bg-zinc-800' : 'bg-zinc-50'}`}
+                            className={`p-3 rounded-md ${dark ? 'bg-zinc-800' : 'bg-zinc-50'}`}
                           >
                             <p className={`text-xs mb-1 capitalize ${subtle}`}>
                               {m.label}
@@ -665,7 +709,7 @@ export default function CrowdInsightsPage() {
                 )}
 
                 {Object.keys(selected.metrics?.dimensionBreakdowns || {}).length > 0 && (
-                  <div className={`p-5 rounded-2xl border ${card}`}>
+                  <div className={`p-5 rounded-lg border ${card}`}>
                     <h3 className="font-semibold text-sm mb-1">Category Breakdowns</h3>
                     <p className={`text-xs mb-4 ${subtle}`}>
                       Share of activity by category, pooled across contributions
@@ -683,18 +727,21 @@ export default function CrowdInsightsPage() {
                                   >
                                     State
                                   </p>
-                                  <select
-                                    value={mapMetric}
-                                    onChange={(e) => setMapMetric(e.target.value)}
-                                    className={`text-xs px-2 py-1 rounded-lg border outline-none shrink-0 ${dark ? 'bg-zinc-800 border-zinc-700 text-zinc-300' : 'bg-white border-zinc-200 text-zinc-600'}`}
-                                  >
-                                    {stateMetricOptions.map(([key, label, mode]) => (
-                                      <option key={key} value={key}>
-                                        {label}
-                                        {mode === 'index' ? ' (index)' : ''}
-                                      </option>
-                                    ))}
-                                  </select>
+                                  <div className="relative shrink-0">
+                                    <select
+                                      value={mapMetric}
+                                      onChange={(e) => setMapMetric(e.target.value)}
+                                      className={filterSelectCls}
+                                    >
+                                      {stateMetricOptions.map(([key, label, mode]) => (
+                                        <option key={key} value={key}>
+                                          {label}
+                                          {mode === 'index' ? ' (index)' : ''}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <ChevronDown size={12} className={filterChevronCls} />
+                                  </div>
                                 </div>
 
                                 {Object.keys(mapData).length === 0 ? (
@@ -713,7 +760,7 @@ export default function CrowdInsightsPage() {
                                     )}
                                     <USStateHeatmap
                                       data={mapData}
-                                      color={INDUSTRY_COLORS[selected.industry] || '#3b82f6'}
+                                      color={accent}
                                       dark={dark}
                                       suffix={mapSuffix}
                                       centeredAt100={mapIsIndex}
@@ -742,9 +789,7 @@ export default function CrowdInsightsPage() {
                                                   className="h-full rounded-full"
                                                   style={{
                                                     width: `${Math.min(100, (stat.value / (top5States[0][1].value || 1)) * 100)}%`,
-                                                    background:
-                                                      INDUSTRY_COLORS[selected.industry] ||
-                                                      '#3b82f6',
+                                                    background: accent,
                                                   }}
                                                 />
                                               </div>
@@ -802,8 +847,7 @@ export default function CrowdInsightsPage() {
                                         className="h-full rounded-full"
                                         style={{
                                           width: `${Math.min(100, s.sharePct)}%`,
-                                          background:
-                                            INDUSTRY_COLORS[selected.industry] || '#3b82f6',
+                                          background: accent,
                                         }}
                                       />
                                     </div>
@@ -824,22 +868,25 @@ export default function CrowdInsightsPage() {
                   </div>
                 )}
 
-                <div className={`p-5 rounded-2xl border ${card}`}>
+                <div className={`p-5 rounded-lg border ${card}`}>
                   <div className="flex items-center justify-between mb-1 gap-3">
                     <h3 className="font-semibold text-sm truncate">
                       {comparisonLabel} by Industry
                     </h3>
-                    <select
-                      value={comparisonMetric}
-                      onChange={(e) => setComparisonMetric(e.target.value)}
-                      className={`text-xs px-2 py-1.5 rounded-lg border outline-none shrink-0 ${dark ? 'bg-zinc-800 border-zinc-700 text-zinc-300' : 'bg-white border-zinc-200 text-zinc-600'}`}
-                    >
-                      {metricOptions.map(([key, label]) => (
-                        <option key={key} value={key}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative shrink-0">
+                      <select
+                        value={comparisonMetric}
+                        onChange={(e) => setComparisonMetric(e.target.value)}
+                        className={filterSelectCls}
+                      >
+                        {metricOptions.map(([key, label]) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={12} className={filterChevronCls} />
+                    </div>
                   </div>
                   <p className={`text-xs mb-4 ${subtle}`}>
                     Closest-performing industries to {selected.industry}
@@ -874,13 +921,7 @@ export default function CrowdInsightsPage() {
                           {peerIndustries.map((ind, idx) => (
                             <Cell
                               key={idx}
-                              fill={
-                                selected?.id === ind.id
-                                  ? INDUSTRY_COLORS[ind.industry] || '#3b82f6'
-                                  : dark
-                                    ? '#3f3f46'
-                                    : '#d4d4d8'
-                              }
+                              fill={selected?.id === ind.id ? accent : dark ? '#3f3f46' : '#d4d4d8'}
                             />
                           ))}
                         </Bar>
@@ -897,9 +938,9 @@ export default function CrowdInsightsPage() {
                 </div>
 
                 {selected.metrics?.top_trends?.length > 0 && (
-                  <div className={`p-5 rounded-2xl border ${card}`}>
+                  <div className={`p-5 rounded-lg border ${card}`}>
                     <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-                      <TrendingUp size={14} className="text-blue-500" /> Observed Trends
+                      <TrendingUp size={14} style={{ color: accent }} /> Observed Trends
                     </h3>
                     <ul className="space-y-2">
                       {selected.metrics.top_trends.map((t: string, i: number) => (
@@ -907,7 +948,10 @@ export default function CrowdInsightsPage() {
                           key={i}
                           className={`flex items-start gap-2 text-sm ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
                         >
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 shrink-0" />
+                          <span
+                            className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                            style={{ background: accent }}
+                          />
                           {t}
                         </li>
                       ))}
@@ -916,9 +960,10 @@ export default function CrowdInsightsPage() {
                 )}
 
                 {selected.metrics?.key_insights?.length > 0 && (
-                  <div className={`p-5 rounded-2xl border ${card}`}>
+                  <div className={`p-5 rounded-lg border ${card}`}>
                     <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-                      <Lightbulb size={14} className="text-amber-400" /> Key Insights
+                      <Lightbulb size={14} style={{ color: INDUSTRY_COLORS.Finance }} /> Key
+                      Insights
                     </h3>
                     <ul className="space-y-2">
                       {selected.metrics.key_insights.map((insight: string, i: number) => (
@@ -926,7 +971,10 @@ export default function CrowdInsightsPage() {
                           key={i}
                           className={`flex items-start gap-2 text-sm ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
                         >
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0" />
+                          <span
+                            className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                            style={{ background: INDUSTRY_COLORS.Finance }}
+                          />
                           {insight}
                         </li>
                       ))}
