@@ -57,6 +57,81 @@ function round2(n: number | null | undefined): number | null {
   return n === null || n === undefined ? null : Math.round(n * 100) / 100
 }
 
+// ── Calendar-year pool cutoff ────────────────────────────────────────────
+// A closed calendar year never gains new contributions to the shared pool
+// after the fact — the current year stays fully live (a September 2026
+// upload containing January–August 2026 data updates this year's numbers
+// normally), but once a year ends, it's done: a later upload covering that
+// year contributes nothing to it, permanently. See the chat writeup for the
+// reasoning (this is the same "closed accounting period" pattern most
+// finance systems use, and it composes far better with time-based UI than
+// a continuously-sliding trailing-12-month cutoff would).
+//
+// IMPORTANT SCOPE LIMIT: this can only be enforced where a real year is
+// actually known. dataSummary.ts's monthly `period` string is only
+// "YYYY-MM" when the source date column had an explicit year in it
+// (formatPeriod's anyExplicitYear flag) — a column with dates like "Jan" or
+// "3/15" with no year produces a bare period like "Jan", which carries no
+// way to know which calendar year it belongs to. Those entries are left
+// untouched (included as-is) rather than guessed at, since silently
+// assuming "no year = current year" would be a real, wrong assumption
+// baked into the pool. This also means the cutoff can ONLY apply to the
+// three fixed metrics and extendedMetrics (the only things with a monthly
+// series at all) — dimension/category breakdowns (state, channel, segment,
+// etc.) carry no date field anywhere in dataSummary.ts's current output,
+// so a category share has no calendar year to filter by yet. Extending
+// that would mean adding date attribution to dataSummary's dimension
+// summarization step first, a separate, real piece of work.
+const YEAR_STAMPED_PERIOD = /^(\d{4})-\d{2}$/
+
+function applyCalendarYearCutoff(
+  rawMetrics: Record<string, any> | undefined,
+  currentYear: number
+): Record<string, any> | undefined {
+  if (!rawMetrics) return rawMetrics
+  const out: Record<string, any> = {}
+  for (const [name, summary] of Object.entries(rawMetrics)) {
+    const monthly: { period: string; value: number }[] = summary?.monthly || []
+    const hadAnyPastYear = monthly.some((m) => {
+      const match = YEAR_STAMPED_PERIOD.exec(m.period)
+      return match && Number(match[1]) < currentYear
+    })
+    if (!hadAnyPastYear) {
+      out[name] = summary // nothing to cut — pass through unchanged
+      continue
+    }
+    const filtered = monthly.filter((m) => {
+      const match = YEAR_STAMPED_PERIOD.exec(m.period)
+      return !match || Number(match[1]) >= currentYear
+    })
+    // changeFirstToLastPct is directly recomputable from the filtered
+    // monthly series, same definition dataSummary.ts itself uses.
+    let changeFirstToLastPct: number | null = null
+    if (filtered.length >= 2) {
+      const first = filtered[0].value
+      const last = filtered[filtered.length - 1].value
+      changeFirstToLastPct = first !== 0 ? round2(((last - first) / Math.abs(first)) * 100) : null
+    }
+    // NOTE: `average` becomes an average of remaining MONTHLY SUMS, not a
+    // true row-level average like the original — this layer never receives
+    // individual rows, only dataSummary's already-aggregated monthly
+    // totals, so a row-weighted post-filter average isn't derivable here.
+    // Recomputing a fully correct one would mean dataSummary.ts preserving
+    // a row count per month, not just a value per month.
+    const average = filtered.length
+      ? round2(filtered.reduce((s, m) => s + m.value, 0) / filtered.length)
+      : null
+    out[name] = {
+      ...summary,
+      monthly: filtered,
+      changeFirstToLastPct,
+      average: average ?? summary?.average,
+      total: filtered.reduce((s, m) => s + m.value, 0),
+    }
+  }
+  return out
+}
+
 // Deterministic — maps detected metric column names to the three ORIGINAL
 // fixed buckets the existing benchmarks page reads. Kept exactly as-is for
 // backward compatibility — every field this produces continues to work
@@ -675,20 +750,30 @@ export async function POST(req: Request) {
       }[]
     | null = summary?.industrySegments?.length > 0 ? summary.industrySegments : null
 
+  // Apply the calendar-year cutoff once, here, so every downstream use of
+  // a segment's metrics — the bucketed 3-metric summary built below AND
+  // the raw extendedMetrics extraction inside upsertIndustry — sees the
+  // same already-filtered data, rather than needing the same filter
+  // applied twice at two different call sites.
+  const currentYear = new Date().getFullYear()
+  const cutoffSegments = segments
+    ? segments.map((s) => ({ ...s, metrics: applyCalendarYearCutoff(s.metrics, currentYear) }))
+    : null
+
   // ── MULTI-INDUSTRY PATH ───────────────────────────────────────────────────
-  if (segments) {
+  if (cutoffSegments) {
     // Fetch each distinct industry's EXISTING observations before generating
     // new prose — otherwise the model has no way to know it's already said
     // something close to this, and just writes a freshly-worded restatement
     // of the same underlying numbers every time they recur across contributions.
-    const distinctIndustries = [...new Set(segments.map((s) => s.industry))]
+    const distinctIndustries = [...new Set(cutoffSegments.map((s) => s.industry))]
     const { data: existingRows } = await supabase
       .from('crowd_insights')
       .select('industry, metrics')
       .in('industry', distinctIndustries)
     const existingByIndustry = new Map((existingRows || []).map((r) => [r.industry, r.metrics]))
 
-    const promptSegments = segments.map((s, i) => ({
+    const promptSegments = cutoffSegments.map((s, i) => ({
       index: i,
       industry: s.industry,
       metrics: mapMetricsToCrowdBuckets(s.metrics),
@@ -720,7 +805,7 @@ export async function POST(req: Request) {
 
     for (const seg of promptSegments) {
       const p = prose.find((x) => x.index === seg.index)
-      const originalSeg = segments[seg.index]
+      const originalSeg = cutoffSegments[seg.index]
       await upsertIndustry(
         seg.industry,
         seg.metrics,
@@ -732,9 +817,9 @@ export async function POST(req: Request) {
       )
     }
 
-    const industries = [...new Set(segments.map((s) => s.industry))]
+    const industries = [...new Set(cutoffSegments.map((s) => s.industry))]
     const dominant =
-      [...segments].sort((a, b) => b.rowCount - a.rowCount)[0]?.industry || industries[0]
+      [...cutoffSegments].sort((a, b) => b.rowCount - a.rowCount)[0]?.industry || industries[0]
 
     await supabase.from('projects').update({ industry: dominant, industries }).eq('id', projectId)
     return NextResponse.json({ success: true, industries })
@@ -775,12 +860,13 @@ Return ONLY valid JSON.`,
   }
 
   const industry = VALID_INDUSTRIES.includes(extracted.industry) ? extracted.industry : 'Other'
-  const bucketed = mapMetricsToCrowdBuckets(summary?.metrics)
+  const cutoffMetrics = applyCalendarYearCutoff(summary?.metrics, currentYear)
+  const bucketed = mapMetricsToCrowdBuckets(cutoffMetrics)
 
   await upsertIndustry(
     industry,
     bucketed,
-    summary?.metrics,
+    cutoffMetrics,
     summary?.dimensions,
     extracted.top_trend || null,
     extracted.key_insight || null,

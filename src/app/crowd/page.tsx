@@ -10,6 +10,9 @@ import { supabase } from '@/lib/supabase'
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  Legend,
   Cell,
   XAxis,
   YAxis,
@@ -288,6 +291,36 @@ export default function CrowdInsightsPage() {
   const [comparisonMetric, setComparisonMetric] = useState('avg_conversion_rate')
   const [mapMetric, setMapMetric] = useState('__share__')
 
+  // ── Metrics Over Time ────────────────────────────────────────────────
+  // Sourced from crowd_insights_history (see the migration + snapshot
+  // route) — a table that starts genuinely empty and only accumulates one
+  // row per industry per month once something actually calls
+  // /api/crowd/snapshot on a schedule. Until then this section has real
+  // wiring but nothing to show, which is the honest state of the feature
+  // right now rather than something to fake with placeholder numbers.
+  const [history, setHistory] = useState<any[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [timeMetrics, setTimeMetrics] = useState<string[]>(['avg_conversion_rate'])
+  const [timeMode, setTimeMode] = useState<'absolute' | 'indexed'>('absolute')
+  const [periodMode, setPeriodMode] = useState<'trailing12' | 'ytd' | 'custom'>('trailing12')
+  const [customStart, setCustomStart] = useState<string>('')
+  const [customEnd, setCustomEnd] = useState<string>('')
+  const TIME_LINE_COLORS = ['#5DCAA5', '#A6975B', '#7A6BA8', '#5B7FA6']
+
+  useEffect(() => {
+    if (!selected) return
+    setHistoryLoading(true)
+    supabase
+      .from('crowd_insights_history')
+      .select('*')
+      .eq('industry', selected.industry)
+      .order('snapshot_date', { ascending: true })
+      .then(({ data }) => {
+        setHistory(data || [])
+        setHistoryLoading(false)
+      })
+  }, [selected?.industry])
+
   useEffect(() => {
     if (isLoaded && !user) router.push('/sign-in')
   }, [isLoaded, user, router])
@@ -354,6 +387,63 @@ export default function CrowdInsightsPage() {
 
   const comparisonLabel =
     metricOptions.find(([k]) => k === comparisonMetric)?.[1] || comparisonMetric
+
+  // ── Metrics Over Time derived data ──────────────────────────────────────
+  function historyMetricValue(row: any, key: string): number | null {
+    if (
+      key === 'avg_revenue_growth' ||
+      key === 'avg_conversion_rate' ||
+      key === 'avg_customer_growth'
+    ) {
+      return row[key] ?? null
+    }
+    return row.extended_metrics?.[key]?.avg ?? null
+  }
+
+  const activeHistory = (() => {
+    if (history.length === 0) return []
+    if (periodMode === 'custom') {
+      return history.filter((r) => {
+        if (customStart && r.snapshot_date < customStart) return false
+        if (customEnd && r.snapshot_date > customEnd) return false
+        return true
+      })
+    }
+    if (periodMode === 'ytd') {
+      const currentYear = new Date(history[history.length - 1].snapshot_date).getFullYear()
+      return history.filter((r) => new Date(r.snapshot_date).getFullYear() === currentYear)
+    }
+    return history.slice(-12) // trailing 12 snapshots
+  })()
+
+  const timeSeries = timeMetrics.map((key, i) => {
+    const raw = activeHistory.map((r) => ({
+      date: r.snapshot_date,
+      value: historyMetricValue(r, key),
+    }))
+    const baseVal = raw.find((p) => p.value !== null)?.value ?? 1
+    const points =
+      timeMode === 'indexed'
+        ? raw.map((p) => ({
+            date: p.date,
+            [key]: p.value === null ? null : round2((p.value / baseVal) * 100),
+          }))
+        : raw.map((p) => ({ date: p.date, [key]: p.value }))
+    return { key, color: TIME_LINE_COLORS[i % TIME_LINE_COLORS.length], points }
+  })
+
+  // Recharts wants one array of objects with every series' key present on
+  // each point, not one array per series — merge by date.
+  const chartData = activeHistory.map((r) => {
+    const point: Record<string, any> = { date: r.snapshot_date }
+    for (const s of timeSeries) {
+      const match = s.points.find((p) => p.date === r.snapshot_date)
+      point[s.key] = match ? match[s.key] : null
+    }
+    return point
+  })
+
+  const timeMetricChoices = metricOptions.filter(([k]) => !timeMetrics.includes(k))
 
   const chartIndustries = industries.filter((i) => getMetricValue(i, comparisonMetric) !== null)
 
@@ -426,6 +516,18 @@ export default function CrowdInsightsPage() {
     }
     return result
   })()
+
+  // How many states HAD this metric reported at all, but got excluded by
+  // the ≥2-contributor floor — distinct from a state simply never
+  // reporting this metric. Surfaced as an explicit note rather than the
+  // states just silently not appearing, so "why isn't Vermont on the map"
+  // has a real answer instead of looking like a bug or missing data.
+  const omittedStateCount =
+    mapMetric === '__share__'
+      ? 0
+      : Object.values(stateBreakdown || {}).filter(
+          (stats) => stats.metrics?.[mapMetric] && !resolvePooledStat(stats.metrics[mapMetric])
+        ).length
 
   const top5States = Object.entries(mapData)
     .sort((a, b) => b[1].value - a[1].value)
@@ -708,6 +810,290 @@ export default function CrowdInsightsPage() {
                   </div>
                 )}
 
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* ── Metrics Over Time ── */}
+                  <div className={`p-5 rounded-lg border ${card}`}>
+                    <div className="flex items-center justify-between mb-1 gap-3">
+                      <h3 className="font-semibold text-sm">Metrics Over Time</h3>
+                      <div
+                        className="flex rounded-md border overflow-hidden shrink-0"
+                        style={{ borderColor: dark ? '#3f3f46' : '#d4d4d8' }}
+                      >
+                        {(['absolute', 'indexed'] as const).map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => setTimeMode(m)}
+                            className="px-2.5 py-1 text-[11px] font-medium capitalize transition-colors"
+                            style={
+                              timeMode === m
+                                ? { background: accent, color: '#0a0a0a' }
+                                : { color: dark ? '#a1a1aa' : '#71717a' }
+                            }
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <p className={`text-xs mb-3 ${subtle}`}>
+                      Monthly pool snapshots for {selected.industry}
+                    </p>
+
+                    {/* Global time-period control — Trailing 12 / YTD / Custom.
+                        Scoped to this chart only: the heatmap and category
+                        breakdowns below have no per-period data to slice by
+                        yet (dimension breakdowns carry no date field
+                        anywhere in the ingestion pipeline — see
+                        applyCalendarYearCutoff in api/crowd/route.ts), so
+                        this control would be misleading applied there. */}
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      <div
+                        className="flex rounded-md border overflow-hidden"
+                        style={{ borderColor: dark ? '#3f3f46' : '#d4d4d8' }}
+                      >
+                        {(
+                          [
+                            ['trailing12', 'Trailing 12mo'],
+                            ['ytd', 'YTD'],
+                            ['custom', 'Custom'],
+                          ] as const
+                        ).map(([key, label]) => (
+                          <button
+                            key={key}
+                            onClick={() => setPeriodMode(key)}
+                            className="px-2.5 py-1 text-[11px] font-medium transition-colors"
+                            style={
+                              periodMode === key
+                                ? { background: accent, color: '#0a0a0a' }
+                                : { color: dark ? '#a1a1aa' : '#71717a' }
+                            }
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {periodMode === 'custom' && (
+                        <>
+                          <input
+                            type="month"
+                            value={customStart}
+                            onChange={(e) => setCustomStart(e.target.value + '-01')}
+                            className={`text-[11px] px-2 py-1 rounded-md border outline-none ${dark ? 'bg-zinc-900 border-zinc-700 text-zinc-300' : 'bg-white border-zinc-300 text-zinc-700'}`}
+                          />
+                          <span className={`text-[11px] ${subtler}`}>to</span>
+                          <input
+                            type="month"
+                            value={customEnd}
+                            onChange={(e) => setCustomEnd(e.target.value + '-01')}
+                            className={`text-[11px] px-2 py-1 rounded-md border outline-none ${dark ? 'bg-zinc-900 border-zinc-700 text-zinc-300' : 'bg-white border-zinc-300 text-zinc-700'}`}
+                          />
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {timeMetrics.map((k, i) => (
+                        <span
+                          key={k}
+                          className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11px] font-medium"
+                          style={{
+                            background: TIME_LINE_COLORS[i % TIME_LINE_COLORS.length],
+                            color: '#0a0a0a',
+                          }}
+                        >
+                          {metricOptions.find(([mk]) => mk === k)?.[1] || k}
+                          {timeMetrics.length > 1 && (
+                            <button
+                              onClick={() => setTimeMetrics((prev) => prev.filter((x) => x !== k))}
+                              className="w-3.5 h-3.5 rounded-full flex items-center justify-center"
+                              style={{ background: 'rgba(0,0,0,0.15)' }}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                      {timeMetricChoices.length > 0 && (
+                        <div className="relative">
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              if (e.target.value)
+                                setTimeMetrics((prev) => [...prev, e.target.value].slice(-4))
+                            }}
+                            className={filterSelectCls}
+                          >
+                            <option value="">+ Add metric</option>
+                            {timeMetricChoices.map(([k, l]) => (
+                              <option key={k} value={k}>
+                                {l}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown size={12} className={filterChevronCls} />
+                        </div>
+                      )}
+                    </div>
+
+                    {historyLoading ? (
+                      <div className="flex items-center justify-center h-40">
+                        <div
+                          className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
+                          style={{ borderColor: accent, borderTopColor: 'transparent' }}
+                        />
+                      </div>
+                    ) : chartData.length === 0 ? (
+                      <div
+                        className={`flex items-center justify-center h-40 rounded-md text-xs text-center px-6 ${dark ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}
+                      >
+                        Historical trend data starts accumulating once monthly pool snapshots begin
+                        — check back after a few months.
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={200}>
+                        <LineChart data={chartData}>
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            stroke={dark ? '#27272a' : '#f4f4f5'}
+                          />
+                          <XAxis
+                            dataKey="date"
+                            tick={{ fontSize: 10, fill: dark ? '#71717a' : '#a1a1aa' }}
+                          />
+                          <YAxis tick={{ fontSize: 10, fill: dark ? '#71717a' : '#a1a1aa' }} />
+                          <Tooltip
+                            contentStyle={{
+                              background: dark ? '#18181b' : '#fff',
+                              border: 'none',
+                              borderRadius: 8,
+                              fontSize: 12,
+                            }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          {timeSeries.map((s) => (
+                            <Line
+                              key={s.key}
+                              dataKey={s.key}
+                              name={metricOptions.find(([mk]) => mk === s.key)?.[1] || s.key}
+                              stroke={s.color}
+                              strokeWidth={2}
+                              dot={false}
+                              connectNulls={false}
+                            />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                    <p className={`text-[10.5px] mt-2 ${subtler}`}>
+                      {timeMode === 'indexed'
+                        ? 'Each line indexed to its own first available month = 100, so differently-scaled metrics can share one axis.'
+                        : 'Absolute mode plots raw values on one shared axis — most useful when comparing metrics in the same unit.'}
+                    </p>
+                  </div>
+
+                  {/* ── Geographic Performance ── */}
+                  <div className={`p-5 rounded-lg border ${card}`}>
+                    <div className="flex items-center justify-between mb-1 gap-3">
+                      <h3 className="font-semibold text-sm">Geographic Performance</h3>
+                      <div className="relative shrink-0">
+                        <select
+                          value={mapMetric}
+                          onChange={(e) => setMapMetric(e.target.value)}
+                          className={filterSelectCls}
+                        >
+                          {stateMetricOptions.map(([key, label, mode]) => (
+                            <option key={key} value={key}>
+                              {label}
+                              {mode === 'index' ? ' (index)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className={filterChevronCls} />
+                      </div>
+                    </div>
+                    <p className={`text-xs mb-3 ${subtle}`}>
+                      {mapLabel} by state, pooled across contributions
+                    </p>
+
+                    {Object.keys(mapData).length === 0 ? (
+                      <div
+                        className={`flex items-center justify-center h-40 rounded-md text-xs ${dark ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}
+                      >
+                        No state data yet for {mapLabel.toLowerCase()}
+                      </div>
+                    ) : (
+                      <>
+                        {mapIsIndex && (
+                          <p className={`text-[11px] mb-2 ${subtler}`}>
+                            Index: 100 = proportional to share of activity. Above 100 =
+                            over-indexed, below 100 = under-indexed.
+                          </p>
+                        )}
+                        {omittedStateCount > 0 && (
+                          <div
+                            className="flex items-start gap-2 mb-3 px-3 py-2 rounded-md text-[11px] leading-relaxed"
+                            style={{
+                              background: dark ? 'rgba(217,119,6,0.08)' : 'rgba(217,119,6,0.06)',
+                              border: `1px solid ${dark ? 'rgba(217,119,6,0.25)' : 'rgba(217,119,6,0.2)'}`,
+                              color: dark ? '#d9a441' : '#92640a',
+                            }}
+                          >
+                            <span>⚠</span>
+                            <span>
+                              Not enough pool data to safely show {omittedStateCount} state
+                              {omittedStateCount !== 1 ? 's' : ''} for {mapLabel.toLowerCase()} —
+                              each needs at least {MIN_CATEGORY_CONTRIBUTIONS} contributors before
+                              it displays.
+                            </span>
+                          </div>
+                        )}
+                        <USStateHeatmap
+                          data={mapData}
+                          color={accent}
+                          dark={dark}
+                          suffix={mapSuffix}
+                          centeredAt100={mapIsIndex}
+                        />
+                        {top5States.length > 0 && (
+                          <div className="mt-4">
+                            <p
+                              className={`text-xs font-semibold uppercase tracking-wide mb-2 ${subtle}`}
+                            >
+                              Top 5 States · {mapLabel}
+                              {mapIsIndex ? ' Index' : ''}
+                            </p>
+                            <div className="space-y-1.5">
+                              {top5States.map(([stateName, stat]) => (
+                                <div key={stateName} className="flex items-center gap-2">
+                                  <span className="text-xs w-28 truncate shrink-0">
+                                    {stateName}
+                                  </span>
+                                  <div
+                                    className={`flex-1 h-2 rounded-full overflow-hidden ${dark ? 'bg-zinc-800' : 'bg-zinc-100'}`}
+                                  >
+                                    <div
+                                      className="h-full rounded-full"
+                                      style={{
+                                        width: `${Math.min(100, (stat.value / (top5States[0][1].value || 1)) * 100)}%`,
+                                        background: accent,
+                                      }}
+                                    />
+                                  </div>
+                                  <span className={`text-xs w-24 text-right shrink-0 ${subtle}`}>
+                                    {stat.value.toLocaleString()}
+                                    {mapSuffix}{' '}
+                                    <span className={subtler}>(n={roundForDisplay(stat.n)})</span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
                 {Object.keys(selected.metrics?.dimensionBreakdowns || {}).length > 0 && (
                   <div className={`p-5 rounded-lg border ${card}`}>
                     <h3 className="font-semibold text-sm mb-1">Category Breakdowns</h3>
@@ -718,100 +1104,7 @@ export default function CrowdInsightsPage() {
                       {Object.entries(selected.metrics.dimensionBreakdowns).map(
                         ([dimName, dimData]: [string, any]) => {
                           if (dimName === 'region') return null
-                          if (dimName === 'state') {
-                            return (
-                              <div key={dimName}>
-                                <div className="flex items-center justify-between mb-2 gap-3">
-                                  <p
-                                    className={`text-xs font-semibold uppercase tracking-wide ${subtle}`}
-                                  >
-                                    State
-                                  </p>
-                                  <div className="relative shrink-0">
-                                    <select
-                                      value={mapMetric}
-                                      onChange={(e) => setMapMetric(e.target.value)}
-                                      className={filterSelectCls}
-                                    >
-                                      {stateMetricOptions.map(([key, label, mode]) => (
-                                        <option key={key} value={key}>
-                                          {label}
-                                          {mode === 'index' ? ' (index)' : ''}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <ChevronDown size={12} className={filterChevronCls} />
-                                  </div>
-                                </div>
-
-                                {Object.keys(mapData).length === 0 ? (
-                                  <div
-                                    className={`flex items-center justify-center h-32 rounded-xl text-xs ${dark ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}
-                                  >
-                                    No state data yet for {mapLabel.toLowerCase()}
-                                  </div>
-                                ) : (
-                                  <>
-                                    {mapIsIndex && (
-                                      <p className={`text-[11px] mb-2 ${subtler}`}>
-                                        Index: 100 = proportional to share of activity. Above 100 =
-                                        over-indexed, below 100 = under-indexed.
-                                      </p>
-                                    )}
-                                    <USStateHeatmap
-                                      data={mapData}
-                                      color={accent}
-                                      dark={dark}
-                                      suffix={mapSuffix}
-                                      centeredAt100={mapIsIndex}
-                                    />
-                                    {top5States.length > 0 && (
-                                      <div className="mt-4">
-                                        <p
-                                          className={`text-xs font-semibold uppercase tracking-wide mb-2 ${subtle}`}
-                                        >
-                                          Top 5 States · {mapLabel}
-                                          {mapIsIndex ? ' Index' : ''}
-                                        </p>
-                                        <div className="space-y-1.5">
-                                          {top5States.map(([stateName, stat]) => (
-                                            <div
-                                              key={stateName}
-                                              className="flex items-center gap-2"
-                                            >
-                                              <span className="text-xs w-28 truncate shrink-0">
-                                                {stateName}
-                                              </span>
-                                              <div
-                                                className={`flex-1 h-2 rounded-full overflow-hidden ${dark ? 'bg-zinc-800' : 'bg-zinc-100'}`}
-                                              >
-                                                <div
-                                                  className="h-full rounded-full"
-                                                  style={{
-                                                    width: `${Math.min(100, (stat.value / (top5States[0][1].value || 1)) * 100)}%`,
-                                                    background: accent,
-                                                  }}
-                                                />
-                                              </div>
-                                              <span
-                                                className={`text-xs w-24 text-right shrink-0 ${subtle}`}
-                                              >
-                                                {stat.value.toLocaleString()}
-                                                {mapSuffix}{' '}
-                                                <span className={subtler}>
-                                                  (n={roundForDisplay(stat.n)})
-                                                </span>
-                                              </span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            )
-                          }
+                          if (dimName === 'state') return null // promoted to its own Geographic Performance card above
                           const totalRows = Object.values(dimData).reduce(
                             (sum: number, c: any) => sum + (c.totalRowCount || 0),
                             0
