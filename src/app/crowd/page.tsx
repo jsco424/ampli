@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useUser, useAuth } from '@clerk/nextjs'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Navbar from '@/components/Navbar'
 import IntelligenceSubNav from '@/components/IntelligenceSubNav'
 import { useTheme } from '@/hooks/useTheme'
@@ -198,6 +198,275 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+// ── Demo data (?demo=1) ──────────────────────────────────────────────────
+// Generates a full, realistic-looking crowd_insights + crowd_insights_history
+// dataset entirely client-side, in the exact shape resolvePooledStat and
+// every other real function on this page already expects — so demo mode
+// exercises the actual production code path (real USStateHeatmap, real
+// Recharts LineChart, real resolvePooledStat math), not a separate mock
+// implementation that could drift from what ships. Never touches Supabase.
+// Purely for testing the UI without needing real contributor accounts and
+// real uploads to populate the pool.
+const DEMO_INDUSTRY_DEFS = [
+  { name: 'Retail', n: 41 },
+  { name: 'Technology', n: 38 },
+  { name: 'Healthcare', n: 30 },
+  { name: 'Finance', n: 27 },
+  { name: 'Marketing', n: 25 },
+  { name: 'Media', n: 19 },
+  { name: 'Education', n: 16 },
+  { name: 'Manufacturing', n: 14 },
+  { name: 'Hospitality', n: 12 },
+  { name: 'Real Estate', n: 10 },
+  { name: 'Energy', n: 8 },
+  { name: 'Nonprofit', n: 6 },
+  { name: 'Logistics', n: 5 },
+  { name: 'Other', n: 3 },
+]
+const DEMO_STATES = [
+  'California',
+  'New York',
+  'Texas',
+  'Florida',
+  'Illinois',
+  'Washington',
+  'Massachusetts',
+  'Georgia',
+  'Colorado',
+  'North Carolina',
+  'Ohio',
+  'Arizona',
+]
+const DEMO_CHANNELS = [
+  'Paid Search',
+  'Paid Social',
+  'Organic Search',
+  'Email',
+  'Referral',
+  'Direct',
+]
+const DEMO_SEGMENTS = ['New Customers', 'Returning', 'VIP / Loyalty']
+const DEMO_DEVICES = ['Mobile', 'Desktop', 'Tablet']
+const DEMO_TRENDS = [
+  'Mobile share of conversions has grown steadily over the trailing two quarters.',
+  'Paid social CAC has trended down as creative testing volume increased.',
+  'Email remains the highest-margin channel despite a shrinking share of spend.',
+  'Referral-driven customers show meaningfully lower churn than paid channels.',
+]
+const DEMO_INSIGHTS = [
+  'Accounts that diversify beyond two channels see higher blended ROAS on average.',
+  'Contributors with VIP segmentation programs report lower churn across every channel.',
+  'Mobile-first contributors report higher CTR but lower AOV than desktop-heavy peers.',
+]
+
+function seededRand(seed: string) {
+  let s = 0
+  for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) >>> 0
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 4294967296
+  }
+}
+function rangeVal(rand: () => number, min: number, max: number) {
+  return min + rand() * (max - min)
+}
+function pickN<T>(rand: () => number, arr: T[], count: number): T[] {
+  const copy = [...arr]
+  const out: T[] = []
+  while (out.length < count && copy.length) {
+    out.push(copy.splice(Math.floor(rand() * copy.length), 1)[0])
+  }
+  return out
+}
+
+// A rate-mode category metric — resolvePooledStat divides
+// sumOfMetricInCategory / sumOfRowCountInCategory directly, so building it
+// from a target average is just avg * rowCount.
+function demoRateMetric(
+  label: string,
+  avg: number,
+  rowCount: number,
+  contributionCount: number
+): PooledCategoryMetric {
+  return {
+    mode: 'rate',
+    label,
+    sumOfMetricInCategory: round2(avg * rowCount),
+    sumOfRowCountInCategory: rowCount,
+    sumOfMetricGrandTotal: 0,
+    sumOfTotalRowCount: 0,
+    contributionCount,
+  }
+}
+// An index-mode category metric — resolvePooledStat computes
+// (shareOfMetric / shareOfRows) * 100, so this picks numbers that land on
+// a target index directly rather than deriving it indirectly.
+function demoIndexMetric(
+  label: string,
+  targetIndex: number,
+  rowCount: number,
+  totalRows: number,
+  grandTotal: number,
+  contributionCount: number
+): PooledCategoryMetric {
+  const shareOfRows = rowCount / totalRows
+  const shareOfMetric = (targetIndex / 100) * shareOfRows
+  return {
+    mode: 'index',
+    label,
+    sumOfMetricInCategory: round2(shareOfMetric * grandTotal),
+    sumOfRowCountInCategory: rowCount,
+    sumOfMetricGrandTotal: grandTotal,
+    sumOfTotalRowCount: totalRows,
+    contributionCount,
+  }
+}
+
+function generateDemoIndustries(): any[] {
+  return DEMO_INDUSTRY_DEFS.map((def) => {
+    const rand = seededRand(def.name)
+    const revGrowth = round2(rangeVal(rand, 4, 42))
+    const convRate = round2(rangeVal(rand, 1.2, 8.5))
+    const custGrowth = round2(rangeVal(rand, 3, 35))
+
+    const extendedDefs: [string, number, boolean][] = [
+      ['cac', rangeVal(rand, 18, 165), false],
+      ['roas', rangeVal(rand, 2, 9), false],
+      ['average_order_value', rangeVal(rand, 28, 240), false],
+      ['ctr', rangeVal(rand, 0.6, 4.4), false],
+      ['churn_rate', rangeVal(rand, 1.5, 11), false],
+    ]
+    const extendedMetrics: Record<string, any> = {}
+    for (const [key, val, _g] of extendedDefs) {
+      extendedMetrics[key] = {
+        avg: round2(val),
+        n: Math.round(rangeVal(rand, 8, def.n)),
+        label: key.replace(/_/g, ' '),
+      }
+    }
+
+    // State breakdown — mostly rate-mode (conversion_rate), one index-mode
+    // (cac) so both code paths in resolvePooledStat get exercised. A couple
+    // of states are deliberately given contributionCount: 1 so the
+    // "insufficient pool data" alert has something real to show.
+    const chosenStates = pickN(
+      rand,
+      DEMO_STATES,
+      Math.min(DEMO_STATES.length, Math.round(rangeVal(rand, 6, DEMO_STATES.length)))
+    )
+    const stateRowCounts = chosenStates.map(() => Math.round(rangeVal(rand, 80, 2400)))
+    const totalStateRows = stateRowCounts.reduce((a, b) => a + b, 0)
+    const stateGrandTotalCAC = totalStateRows * rangeVal(rand, 40, 90)
+    const stateBreakdown: Record<string, any> = {}
+    chosenStates.forEach((state, i) => {
+      const rowCount = stateRowCounts[i]
+      const contributionCount =
+        i < 2 && def.n > 8 ? 1 : Math.max(2, Math.round(rangeVal(rand, 2, 5)))
+      stateBreakdown[state] = {
+        totalRowCount: rowCount,
+        contributionCount,
+        metrics: {
+          conversion_rate: demoRateMetric(
+            'conversion rate',
+            rangeVal(rand, 1, 9),
+            rowCount,
+            contributionCount
+          ),
+          cac: demoIndexMetric(
+            'cac',
+            Math.round(rangeVal(rand, 60, 145)),
+            rowCount,
+            totalStateRows,
+            stateGrandTotalCAC,
+            contributionCount
+          ),
+        },
+      }
+    })
+
+    const dimShare = (labels: string[], names: string[]) => {
+      const out: Record<string, any> = {}
+      const rows = names.map(() => Math.round(rangeVal(rand, 300, 5000)))
+      names.forEach((name, i) => {
+        const contributionCount = Math.max(2, Math.round(rangeVal(rand, 2, 4)))
+        out[name] = {
+          totalRowCount: rows[i],
+          contributionCount,
+          metrics: {
+            conversion_rate: demoRateMetric(
+              'conversion rate',
+              rangeVal(rand, 1, 9),
+              rows[i],
+              contributionCount
+            ),
+          },
+        }
+      })
+      return out
+    }
+
+    return {
+      industry: def.name,
+      contribution_count: def.n,
+      avg_revenue_growth: revGrowth,
+      avg_revenue_growth_n: Math.round(rangeVal(rand, 10, def.n)),
+      avg_conversion_rate: convRate,
+      avg_conversion_rate_n: Math.round(rangeVal(rand, 10, def.n)),
+      avg_customer_growth: custGrowth,
+      avg_customer_growth_n: Math.round(rangeVal(rand, 10, def.n)),
+      metrics: {
+        extendedMetrics,
+        dimensionBreakdowns: {
+          state: stateBreakdown,
+          channel: dimShare([], DEMO_CHANNELS),
+          customer_segment: dimShare([], DEMO_SEGMENTS),
+          device_platform: dimShare([], DEMO_DEVICES),
+        },
+        top_trends: pickN(rand, DEMO_TRENDS, 2),
+        key_insights: pickN(rand, DEMO_INSIGHTS, 2),
+      },
+    }
+  })
+}
+
+function generateDemoHistory(industryRow: any): any[] {
+  const rand = seededRand(industryRow.industry + '-history')
+  const months = 18
+  const rows: any[] = []
+  const now = new Date()
+  const keys: [string, number][] = [
+    ['avg_revenue_growth', industryRow.avg_revenue_growth],
+    ['avg_conversion_rate', industryRow.avg_conversion_rate],
+    ['avg_customer_growth', industryRow.avg_customer_growth],
+  ]
+  const extendedKeys = Object.entries(industryRow.metrics?.extendedMetrics || {}).map(
+    ([k, v]: [string, any]) => [k, v.avg] as [string, number]
+  )
+  const drift = rangeVal(rand, -0.15, 0.25)
+  for (let m = months - 1; m >= 0; m--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - m, 1)
+    const snapshot_date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+    const t = 1 - m / (months - 1)
+    const row: any = {
+      industry: industryRow.industry,
+      snapshot_date,
+      extended_metrics: {},
+      contribution_count: industryRow.contribution_count,
+    }
+    for (const [key, base] of keys) {
+      const trended = base * (1 - drift * (1 - t))
+      row[key] = round2(trended + base * rangeVal(rand, -0.05, 0.05))
+      row[`${key}_n`] = Math.max(2, Math.round(rangeVal(rand, 6, industryRow.contribution_count)))
+    }
+    for (const [key, base] of extendedKeys) {
+      const trended = base * (1 - drift * (1 - t))
+      row.extended_metrics[key] = { avg: round2(trended + base * rangeVal(rand, -0.05, 0.05)) }
+    }
+    rows.push(row)
+  }
+  return rows
+}
+
 // Display-only rounding for raw row counts shown alongside pooled stats
 // (state map, category breakdowns) — an exact count is one more small
 // signal that could help fingerprint a specific contributor's dataset size
@@ -273,11 +542,19 @@ function downloadIndustryCSV(industry: any) {
   URL.revokeObjectURL(url)
 }
 
-export default function CrowdInsightsPage() {
+function CrowdInsightsPageInner() {
   const { user, isLoaded } = useUser()
   const { has } = useAuth()
   const { dark } = useTheme()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // ?demo=1 — populates the whole page from generateDemoIndustries() /
+  // generateDemoHistory() instead of querying Supabase, and skips both the
+  // plan gate and the opt-in gate. Built specifically so functionality can
+  // be tested end to end without needing real contributor accounts to
+  // populate the pool first. Never writes anything, never touches real
+  // data — a banner makes this unmistakable whenever it's active.
+  const isDemo = searchParams.get('demo') === '1'
   // ampli's own site-chrome accent (Navbar, About, Pricing all use this
   // same hex) — this page is internal product UI, not a customer-facing
   // generated deck, so it uses the site's own identity, not the
@@ -309,6 +586,12 @@ export default function CrowdInsightsPage() {
 
   useEffect(() => {
     if (!selected) return
+    if (isDemo) {
+      setHistoryLoading(true)
+      setHistory(generateDemoHistory(selected))
+      setHistoryLoading(false)
+      return
+    }
     setHistoryLoading(true)
     supabase
       .from('crowd_insights_history')
@@ -319,7 +602,7 @@ export default function CrowdInsightsPage() {
         setHistory(data || [])
         setHistoryLoading(false)
       })
-  }, [selected?.industry])
+  }, [selected?.industry, isDemo])
 
   useEffect(() => {
     if (isLoaded && !user) router.push('/sign-in')
@@ -334,6 +617,16 @@ export default function CrowdInsightsPage() {
 
   useEffect(() => {
     if (!user) return
+
+    if (isDemo) {
+      setHasOptedIn(true)
+      setOptedInCount(CROWD_UNLOCK_THRESHOLD)
+      const demoData = generateDemoIndustries()
+      setIndustries(demoData)
+      setSelected(demoData[0])
+      setLoading(false)
+      return
+    }
 
     supabase
       .from('projects')
@@ -354,7 +647,7 @@ export default function CrowdInsightsPage() {
         if (data && data.length > 0) setSelected(data[0])
         setLoading(false)
       })
-  }, [user])
+  }, [user, isDemo])
 
   const base = dark ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'
   const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
@@ -540,7 +833,7 @@ export default function CrowdInsightsPage() {
   // still shouldn't see this data, since the two gates answer different
   // questions ("have you contributed" vs. "are you on a paid plan").
   const hasBusinessPlan = has?.({ plan: BUSINESS_PLAN_SLUG }) ?? false
-  if (!hasBusinessPlan) {
+  if (!isDemo && !hasBusinessPlan) {
     return (
       <div className={`min-h-screen ${base}`}>
         <Navbar />
@@ -576,7 +869,7 @@ export default function CrowdInsightsPage() {
   // plan gate above; being on Business doesn't waive the "contribute to
   // unlock" requirement, since the pool's value depends on real
   // contributions)
-  if (!hasOptedIn && !loading) {
+  if (!isDemo && !hasOptedIn && !loading) {
     return (
       <div className={`min-h-screen ${base}`}>
         <Navbar />
@@ -628,6 +921,22 @@ export default function CrowdInsightsPage() {
       <Navbar />
       <IntelligenceSubNav />
       <main className="pt-2 px-6 max-w-6xl mx-auto pb-20">
+        {isDemo && (
+          <div
+            className="mt-4 px-4 py-2.5 rounded-lg text-xs font-medium flex items-center gap-2"
+            style={{
+              background: 'rgba(217,119,6,0.1)',
+              border: '1px solid rgba(217,119,6,0.3)',
+              color: '#d9a441',
+            }}
+          >
+            <span>⚠</span>
+            <span>
+              Demo data — every number on this page is synthetically generated client-side, not read
+              from Supabase. Remove <code>?demo=1</code> from the URL to see the real pool.
+            </span>
+          </div>
+        )}
         <div
           className={`mt-6 mb-6 pb-4 flex items-start justify-between border-b ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}
         >
@@ -1280,5 +1589,17 @@ export default function CrowdInsightsPage() {
         )}
       </main>
     </div>
+  )
+}
+
+// useSearchParams() (used above for ?demo=1) requires a Suspense boundary
+// in the App Router, or Next.js deopts the whole route to client-only
+// rendering with a build warning — wrapping just the piece that needs it
+// here instead.
+export default function CrowdInsightsPage() {
+  return (
+    <Suspense fallback={null}>
+      <CrowdInsightsPageInner />
+    </Suspense>
   )
 }
