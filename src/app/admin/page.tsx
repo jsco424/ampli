@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { Search, ShieldAlert, Save, CheckCircle, UserCog } from 'lucide-react'
@@ -49,6 +49,8 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [impersonating, setImpersonating] = useState(false)
+
+  const [activeTab, setActiveTab] = useState<'accounts' | 'metrics'>('accounts')
 
   useEffect(() => {
     fetch('/api/admin/check')
@@ -160,140 +162,342 @@ export default function AdminPage() {
   return (
     <div className={`min-h-screen ${base}`}>
       <Navbar />
-      <main className="pt-24 px-6 max-w-2xl mx-auto pb-20">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight mb-1">Account Admin</h1>
-          <p className={`text-sm ${subtle}`}>
-            Internal only. Look up any account by email to fix billing, set a manual credit
-            override, or set their Gamma theme/template IDs directly.
-          </p>
+      <main
+        className={`pt-24 px-6 mx-auto pb-20 ${activeTab === 'metrics' ? 'max-w-4xl' : 'max-w-2xl'}`}
+      >
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold tracking-tight mb-1">Admin</h1>
+          <p className={`text-sm ${subtle}`}>Internal only.</p>
         </div>
 
-        <div className={`p-5 rounded-2xl border mb-4 ${card}`}>
-          <div className="flex gap-2">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder="client@company.com"
-              className={`flex-1 px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${input}`}
-            />
+        <div className={`flex gap-1 mb-8 p-1 rounded-xl border w-fit ${card}`}>
+          {(
+            [
+              ['accounts', 'Account Lookup'],
+              ['metrics', 'Metric Discovery'],
+            ] as const
+          ).map(([key, label]) => (
             <button
-              onClick={handleSearch}
-              disabled={searching}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-50 shrink-0"
+              key={key}
+              onClick={() => setActiveTab(key)}
+              className="px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors"
+              style={
+                activeTab === key
+                  ? { background: '#5DCAA5', color: '#080C14' }
+                  : { color: dark ? '#a1a1aa' : '#71717a' }
+              }
             >
-              <Search size={14} /> {searching ? 'Searching…' : 'Look Up'}
+              {label}
             </button>
-          </div>
-          {searchError && <p className="text-xs text-red-400 mt-2">{searchError}</p>}
+          ))}
         </div>
 
-        {foundUser && (
-          <div className={`p-5 rounded-2xl border mb-4 ${card}`}>
-            <p className="text-sm font-semibold mb-1">
-              {foundUser.firstName || ''} {foundUser.lastName || ''}
-              {!foundUser.firstName && !foundUser.lastName && '(no name on file)'}
-            </p>
-            <p className={`text-xs mb-1 ${subtle}`}>{foundUser.email}</p>
-            <p className={`text-[11px] font-mono ${subtler}`}>{foundUser.userId}</p>
-            {creditsUsed !== null && (
-              <p className={`text-xs mt-3 ${subtle}`}>
-                <span className="font-semibold">{creditsUsed.toLocaleString()}</span> credits used
-                this month
+        {activeTab === 'accounts' && (
+          <>
+            <div className="mb-8">
+              <p className={`text-sm ${subtle}`}>
+                Look up any account by email to fix billing, set a manual credit override, or set
+                their Gamma theme/template IDs directly.
               </p>
+            </div>
+
+            <div className={`p-5 rounded-2xl border mb-4 ${card}`}>
+              <div className="flex gap-2">
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder="client@company.com"
+                  className={`flex-1 px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${input}`}
+                />
+                <button
+                  onClick={handleSearch}
+                  disabled={searching}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-50 shrink-0"
+                >
+                  <Search size={14} /> {searching ? 'Searching…' : 'Look Up'}
+                </button>
+              </div>
+              {searchError && <p className="text-xs text-red-400 mt-2">{searchError}</p>}
+            </div>
+
+            {foundUser && (
+              <div className={`p-5 rounded-2xl border mb-4 ${card}`}>
+                <p className="text-sm font-semibold mb-1">
+                  {foundUser.firstName || ''} {foundUser.lastName || ''}
+                  {!foundUser.firstName && !foundUser.lastName && '(no name on file)'}
+                </p>
+                <p className={`text-xs mb-1 ${subtle}`}>{foundUser.email}</p>
+                <p className={`text-[11px] font-mono ${subtler}`}>{foundUser.userId}</p>
+                {creditsUsed !== null && (
+                  <p className={`text-xs mt-3 ${subtle}`}>
+                    <span className="font-semibold">{creditsUsed.toLocaleString()}</span> credits
+                    used this month
+                  </p>
+                )}
+                <button
+                  onClick={handleImpersonate}
+                  disabled={impersonating}
+                  className="mt-4 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-black text-xs font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
+                >
+                  <UserCog size={13} /> {impersonating ? 'Starting…' : 'Act as This User'}
+                </button>
+                <p className={`text-[11px] mt-2 ${subtler}`}>
+                  This signs you OUT of your own account and signs you in as them — it's a real
+                  browser session swap, not a preview. To get back to your own account afterward,
+                  sign in again as yourself. Free Clerk plans allow up to 5 of these per month.
+                </p>
+              </div>
             )}
-            <button
-              onClick={handleImpersonate}
-              disabled={impersonating}
-              className="mt-4 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 text-black text-xs font-semibold hover:bg-amber-400 transition-colors disabled:opacity-50"
-            >
-              <UserCog size={13} /> {impersonating ? 'Starting…' : 'Act as This User'}
-            </button>
-            <p className={`text-[11px] mt-2 ${subtler}`}>
-              This signs you OUT of your own account and signs you in as them — it's a real browser
-              session swap, not a preview. To get back to your own account afterward, sign in again
-              as yourself. Free Clerk plans allow up to 5 of these per month.
-            </p>
-          </div>
+
+            {foundUser && !loadingAccount && (
+              <div className={`p-5 rounded-2xl border space-y-4 ${card}`}>
+                <div>
+                  <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
+                    Credit Limit Override
+                    <span className={`ml-1 font-normal ${subtler}`}>
+                      (blank = use their normal plan limit)
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    value={account.credit_limit_override ?? ''}
+                    onChange={(e) =>
+                      setAccount({
+                        ...account,
+                        credit_limit_override:
+                          e.target.value === '' ? null : Number(e.target.value),
+                      })
+                    }
+                    placeholder="e.g. 60000"
+                    className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
+                  />
+                  <p className={`text-xs mt-1.5 ${subtler}`}>
+                    Use this for a comped Enterprise seat allotment (their negotiated headcount ×
+                    the per-seat credit figure) or to resolve a billing dispute — overrides their
+                    Clerk plan's default limit entirely.
+                  </p>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
+                    Gamma Theme ID
+                  </label>
+                  <input
+                    value={account.gamma_theme_id}
+                    onChange={(e) => setAccount({ ...account, gamma_theme_id: e.target.value })}
+                    placeholder="theme_xxxxxxxx"
+                    className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>Brand Name</label>
+                  <input
+                    value={account.brand_name}
+                    onChange={(e) => setAccount({ ...account, brand_name: e.target.value })}
+                    className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${input}`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
+                    Brand Logo URL
+                  </label>
+                  <input
+                    value={account.brand_logo_url}
+                    onChange={(e) => setAccount({ ...account, brand_logo_url: e.target.value })}
+                    className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${input}`}
+                  />
+                </div>
+
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors disabled:opacity-50"
+                >
+                  {saved ? (
+                    <>
+                      <CheckCircle size={15} /> Saved
+                    </>
+                  ) : saving ? (
+                    'Saving…'
+                  ) : (
+                    <>
+                      <Save size={15} /> Save Changes
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
 
-        {foundUser && !loadingAccount && (
-          <div className={`p-5 rounded-2xl border space-y-4 ${card}`}>
-            <div>
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>
-                Credit Limit Override
-                <span className={`ml-1 font-normal ${subtler}`}>
-                  (blank = use their normal plan limit)
-                </span>
-              </label>
-              <input
-                type="number"
-                value={account.credit_limit_override ?? ''}
-                onChange={(e) =>
-                  setAccount({
-                    ...account,
-                    credit_limit_override: e.target.value === '' ? null : Number(e.target.value),
-                  })
-                }
-                placeholder="e.g. 60000"
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
-              />
-              <p className={`text-xs mt-1.5 ${subtler}`}>
-                Use this for a comped Enterprise seat allotment (their negotiated headcount × the
-                per-seat credit figure) or to resolve a billing dispute — overrides their Clerk
-                plan's default limit entirely.
-              </p>
-            </div>
-
-            <div>
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>Gamma Theme ID</label>
-              <input
-                value={account.gamma_theme_id}
-                onChange={(e) => setAccount({ ...account, gamma_theme_id: e.target.value })}
-                placeholder="theme_xxxxxxxx"
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
-              />
-            </div>
-
-            <div>
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>Brand Name</label>
-              <input
-                value={account.brand_name}
-                onChange={(e) => setAccount({ ...account, brand_name: e.target.value })}
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${input}`}
-              />
-            </div>
-
-            <div>
-              <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>Brand Logo URL</label>
-              <input
-                value={account.brand_logo_url}
-                onChange={(e) => setAccount({ ...account, brand_logo_url: e.target.value })}
-                className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors ${input}`}
-              />
-            </div>
-
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors disabled:opacity-50"
-            >
-              {saved ? (
-                <>
-                  <CheckCircle size={15} /> Saved
-                </>
-              ) : saving ? (
-                'Saving…'
-              ) : (
-                <>
-                  <Save size={15} /> Save Changes
-                </>
-              )}
-            </button>
-          </div>
+        {activeTab === 'metrics' && (
+          <MetricDiscoveryTab dark={dark} card={card} subtle={subtle} subtler={subtler} />
         )}
       </main>
+    </div>
+  )
+}
+
+interface DiscoveryRow {
+  key: string
+  label: string
+  isKnown: boolean
+  industryCount: number
+  industries: string[]
+  totalContributions: number
+}
+
+// Every metric here is ALREADY visible somewhere today — the real
+// dashboard's "Additional Benchmarks" section renders every
+// metrics.extendedMetrics key dynamically, per industry. What this view
+// adds is the cross-industry rollup nothing else surfaces: which ones
+// recur widely enough to be worth promoting to a fixed hero stat everyone
+// sees by default (alongside revenue/conversion/customers), and which
+// "Unrecognized" raw keys might actually be the same underlying metric
+// fragmenting under different contributors' column-naming conventions —
+// "cac", "cost_per_acquisition", and "acquisition_cost" would each land
+// as a separate, smaller-sample row instead of merging into one, since
+// extractAllMetrics only merges names it already recognizes as synonyms.
+// Spotting that here is what tells you a synonym mapping is needed, not
+// automatic — this reads the pool, it never edits METRIC_SYNONYMS itself.
+function MetricDiscoveryTab({
+  dark,
+  card,
+  subtle,
+  subtler,
+}: {
+  dark: boolean
+  card: string
+  subtle: string
+  subtler: string
+}) {
+  const [rows, setRows] = useState<DiscoveryRow[] | null>(null)
+  const [industryCount, setIndustryCount] = useState(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/admin/metric-discovery')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) {
+          setLoadError(d.error)
+          return
+        }
+        setRows(d.rows)
+        setIndustryCount(d.industryCount)
+      })
+      .catch((err) => setLoadError(err.message || 'Failed to load'))
+  }, [])
+
+  const accent = '#5DCAA5'
+
+  return (
+    <div>
+      <div className="mb-6">
+        <p className={`text-sm ${subtle}`}>
+          Every extra metric detected across uploads, beyond the three fixed hero stats (revenue,
+          conversion rate, customers), rolled up across all {industryCount || '—'} industries in the
+          pool. Sorted by total contributions — the metrics closest to the top are the strongest
+          candidates for promoting into a fixed hero stat everyone sees by default.
+        </p>
+      </div>
+
+      {loadError && (
+        <div className="p-4 rounded-xl border border-red-500/30 bg-red-500/10 text-sm text-red-400 mb-4">
+          {loadError}
+        </div>
+      )}
+
+      {!rows && !loadError && <p className={`text-sm ${subtler}`}>Loading…</p>}
+
+      {rows && rows.length === 0 && (
+        <div className={`p-8 rounded-2xl border text-center ${card}`}>
+          <p className={`text-sm ${subtle}`}>
+            No extended metrics in the pool yet — nothing beyond the three fixed hero stats has been
+            contributed.
+          </p>
+        </div>
+      )}
+
+      {rows && rows.length > 0 && (
+        <div className={`rounded-2xl border overflow-hidden ${card}`}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className={`text-left border-b ${dark ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                <th className={`px-4 py-3 font-medium ${subtler}`}>Metric</th>
+                <th className={`px-4 py-3 font-medium ${subtler}`}>Status</th>
+                <th className={`px-4 py-3 font-medium text-right ${subtler}`}>Industries</th>
+                <th className={`px-4 py-3 font-medium text-right ${subtler}`}>Contributions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <Fragment key={row.key}>
+                  <tr
+                    onClick={() => setExpanded(expanded === row.key ? null : row.key)}
+                    className={`border-b cursor-pointer transition-colors ${dark ? 'border-zinc-800 hover:bg-white/[0.03]' : 'border-zinc-100 hover:bg-zinc-50'}`}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{row.label}</div>
+                      <div className={`text-xs font-mono ${subtler}`}>{row.key}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="text-xs font-medium px-2 py-0.5 rounded-full"
+                        style={
+                          row.isKnown
+                            ? { background: `${accent}1a`, color: accent }
+                            : {
+                                background: 'rgba(217,119,6,0.1)',
+                                color: '#d9a441',
+                              }
+                        }
+                      >
+                        {row.isKnown ? 'Known' : 'Unrecognized'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{row.industryCount}</td>
+                    <td className="px-4 py-3 text-right tabular-nums font-medium">
+                      {row.totalContributions}
+                    </td>
+                  </tr>
+                  {expanded === row.key && (
+                    <tr className={dark ? 'bg-white/[0.02]' : 'bg-zinc-50/60'}>
+                      <td colSpan={4} className="px-4 py-3">
+                        <p className={`text-xs mb-1.5 font-medium ${subtler}`}>
+                          Appears in {row.industryCount} industries:
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {row.industries.map((ind) => (
+                            <span
+                              key={ind}
+                              className={`text-xs px-2 py-1 rounded-md ${dark ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}
+                            >
+                              {ind}
+                            </span>
+                          ))}
+                        </div>
+                        {!row.isKnown && (
+                          <p className={`text-xs mt-2.5 ${subtler}`}>
+                            Not in <code>METRIC_SYNONYMS</code> — if this looks like a renamed
+                            version of an existing metric, add it as a synonym in{' '}
+                            <code>api/crowd/route.ts</code> so future uploads merge into one entry
+                            instead of fragmenting further.
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
