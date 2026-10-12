@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { scanForPII, type PIIScanResult } from '@/lib/piiScanner'
-import { buildDataSummaryWithRows, type DataSummary } from '@/lib/dataSummary'
+import { buildDataSummaryWithRows, INDUSTRY_OPTIONS, type DataSummary } from '@/lib/dataSummary'
 import PrivacyModal from '@/components/PrivacyModal'
 import PIIMeter from '@/components/PIIMeter'
 import Link from 'next/link'
@@ -106,6 +106,12 @@ export default function NewProjectPage() {
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false)
   const [dataSourceType, setDataSourceType] = useState<DataSourceType | null>(null)
   const [clientDataAck, setClientDataAck] = useState(false)
+  // Industry confirmation, shown once the file is parsed. Either the user
+  // confirms the industries found in the data, or (nothing recognized, or they
+  // say it is wrong) picks one themselves.
+  const [industryConfirmed, setIndustryConfirmed] = useState(false)
+  const [industryManualMode, setIndustryManualMode] = useState(false)
+  const [manualIndustry, setManualIndustry] = useState('')
 
   useEffect(() => {
     if (!user) return
@@ -131,6 +137,9 @@ export default function NewProjectPage() {
     setDataSummary(null)
     setSampledRows([])
     setSummaryError(null)
+    setIndustryConfirmed(false)
+    setIndustryManualMode(false)
+    setManualIndustry('')
 
     const text = await f.text()
     const result = scanForPII(text)
@@ -168,11 +177,49 @@ export default function NewProjectPage() {
 
   const needsDataSourceChoice = !!selectedCompany && !dataSourceType
 
+  const detectedIndustries = (dataSummary?.industrySegments || []).map((seg) => seg.industry)
+  const industryRecognized = detectedIndustries.length > 0 && !industryManualMode
+  const industryResolved = industryRecognized ? industryConfirmed : manualIndustry !== ''
+  // The confirmation only gates saving when the user is contributing to the
+  // shared pool, since that is the only place industry placement matters.
+  const industryBlocksSubmit = !!dataSummary && optIn && !industryResolved
+
+  const resolvedSummary = (): DataSummary | null => {
+    if (!dataSummary) return null
+    if (industryRecognized && industryConfirmed) {
+      return { ...dataSummary, industryConfirmedBy: 'column' }
+    }
+    if (!industryRecognized && manualIndustry) {
+      return {
+        ...dataSummary,
+        industrySegments: null,
+        industryColumn: null,
+        confirmedIndustry: manualIndustry,
+        industryConfirmedBy: 'user',
+      }
+    }
+    return dataSummary
+  }
+
+  const resolvedIndustries = (): string[] => {
+    if (industryRecognized && industryConfirmed) return detectedIndustries
+    if (!industryRecognized && manualIndustry) return [manualIndustry]
+    return []
+  }
+
   const handleSubmit = async () => {
     if (!file || !projectName || !user || needsDataSourceChoice || summarizing) return
+    if (industryBlocksSubmit) return
     setLoading(true)
     try {
-      const summaryPayload = dataSummary ? JSON.stringify(dataSummary) : null
+      const finalSummary = resolvedSummary()
+      const summaryPayload = finalSummary ? JSON.stringify(finalSummary) : null
+      const confirmedIndustries = resolvedIndustries()
+      const dominantIndustry =
+        industryRecognized && industryConfirmed
+          ? [...(dataSummary?.industrySegments || [])].sort((a, b) => b.rowCount - a.rowCount)[0]
+              ?.industry || null
+          : confirmedIndustries[0] || null
       const resolvedDataSourceType = selectedCompany ? dataSourceType : null
 
       // Insert the project row — analysis will be triggered on the project page
@@ -206,7 +253,8 @@ export default function NewProjectPage() {
           // this fix) and what both consumers already expected.
           target_audience: selectedAudience || null,
           data_source_type: resolvedDataSourceType,
-          industry: null,
+          industry: dominantIndustry,
+          industries: confirmedIndustries.length > 0 ? confirmedIndustries : null,
           created_at: new Date().toISOString(),
         })
         .select()
@@ -481,10 +529,149 @@ export default function NewProjectPage() {
           </div>
         )}
 
+        {dataSummary && !summarizing && (
+          <div className={`mb-4 p-4 rounded-xl border ${section}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="p-1.5 rounded-lg bg-purple-500/10">
+                <Users size={13} className="text-purple-500" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Confirm your industry</p>
+                <p className={`text-xs ${muted}`}>
+                  This decides which anonymized benchmark pool your data is compared against
+                  {optIn ? ' and added to' : ''}.
+                </p>
+              </div>
+            </div>
+
+            {industryRecognized ? (
+              <>
+                <p className="text-sm mb-3">
+                  I&apos;m seeing data from{' '}
+                  <span className="font-semibold">
+                    {detectedIndustries.length === 1
+                      ? `the ${detectedIndustries[0]} industry`
+                      : detectedIndustries.length === 2
+                        ? `${detectedIndustries[0]} & ${detectedIndustries[1]}`
+                        : `${detectedIndustries.slice(0, -1).join(', ')} & ${detectedIndustries[detectedIndustries.length - 1]}`}
+                  </span>
+                  . Is that correct?
+                </p>
+                {detectedIndustries.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {(dataSummary.industrySegments || []).map((seg) => (
+                      <span
+                        key={seg.industry}
+                        className="text-xs px-2 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-purple-500"
+                      >
+                        {seg.industry}{' '}
+                        <span className="opacity-60">{seg.rowCount.toLocaleString()} rows</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {(dataSummary.industryUnmatchedRows || 0) > 0 && (
+                  <p className="text-xs text-amber-500 flex items-center gap-1.5 mb-3">
+                    <Info size={11} className="shrink-0" />
+                    {dataSummary.industryUnmatchedRows?.toLocaleString()} rows in the{' '}
+                    {dataSummary.industryColumn} column did not match a known industry and will not
+                    be added to the benchmark pool.
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIndustryConfirmed(true)}
+                    className={`px-3.5 py-2 rounded-lg text-xs font-medium transition-colors ${
+                      industryConfirmed
+                        ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/30'
+                        : 'bg-blue-500 text-white hover:bg-blue-400'
+                    }`}
+                  >
+                    {industryConfirmed ? 'Confirmed' : 'Yes, that is correct'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIndustryConfirmed(false)
+                      setIndustryManualMode(true)
+                    }}
+                    className={`px-3.5 py-2 rounded-lg border text-xs font-medium transition-colors ${dark ? 'border-white/[0.08] hover:bg-white/[0.04]' : 'border-zinc-200 hover:bg-zinc-50'}`}
+                  >
+                    No, choose a different industry
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm mb-3">
+                  {industryManualMode && detectedIndustries.length > 0
+                    ? 'Choose the industry this data falls under.'
+                    : "I'm not able to recognize an industry. Choose the industry this data falls under, or re-upload with an industry column."}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={manualIndustry}
+                    onChange={(e) => setManualIndustry(e.target.value)}
+                    className={`px-3 py-2 rounded-lg border text-xs outline-none ${input}`}
+                  >
+                    <option value="">Select an industry</option>
+                    {INDUSTRY_OPTIONS.map((ind) => (
+                      <option key={ind} value={ind}>
+                        {ind}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFile(null)
+                      setDataSummary(null)
+                      setSampledRows([])
+                      setPiiResult(null)
+                      setIndustryConfirmed(false)
+                      setIndustryManualMode(false)
+                      setManualIndustry('')
+                    }}
+                    className={`px-3.5 py-2 rounded-lg border text-xs font-medium transition-colors ${dark ? 'border-white/[0.08] hover:bg-white/[0.04]' : 'border-zinc-200 hover:bg-zinc-50'}`}
+                  >
+                    Re-upload file
+                  </button>
+                  {industryManualMode && detectedIndustries.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIndustryManualMode(false)
+                        setManualIndustry('')
+                      }}
+                      className={`text-xs underline ${muted}`}
+                    >
+                      Back to detected industries
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+            {industryBlocksSubmit && (
+              <p className="text-xs text-amber-500 mt-3 flex items-center gap-1.5">
+                <Info size={11} className="shrink-0" /> Confirm an industry to contribute to the
+                shared pool.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Submit */}
         <button
           onClick={handleSubmit}
-          disabled={!file || !projectName || loading || needsDataSourceChoice || summarizing}
+          disabled={
+            !file ||
+            !projectName ||
+            loading ||
+            needsDataSourceChoice ||
+            summarizing ||
+            industryBlocksSubmit
+          }
           className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-blue-500 text-white font-semibold text-sm hover:bg-blue-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed mb-2"
         >
           {loading ? (

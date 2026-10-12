@@ -80,6 +80,17 @@ export interface DataSummary {
   metrics: Record<string, MetricSummary>
   dimensions: Record<string, DimensionSummary>
   industrySegments: IndustrySegment[] | null
+  // Which column the industry labels came from, and how many rows had a value
+  // that could not be mapped to a known industry. Those rows are left out of
+  // every segment, so the upload confirmation card tells the user about them.
+  industryColumn?: string | null
+  industryUnmatchedRows?: number
+  // Set by the post-upload confirmation step. 'column' means the user
+  // confirmed the industries detected from the data. 'user' means they picked
+  // one manually, in which case industrySegments is cleared and
+  // confirmedIndustry carries the choice into /api/crowd.
+  confirmedIndustry?: string | null
+  industryConfirmedBy?: 'column' | 'user' | null
   scatterPairs: ScatterPairSummary[] | null
   // Pre-computed group comparisons from ALL rows — verified server-side.
   // Claude uses these directly instead of computing from the sample.
@@ -177,7 +188,7 @@ function looksLikeDate(value: any): boolean {
   return tryParseFlexibleDate(value) !== null
 }
 
-const INDUSTRIES = [
+export const INDUSTRY_OPTIONS = [
   'Retail',
   'Healthcare',
   'Technology',
@@ -194,6 +205,8 @@ const INDUSTRIES = [
   'Other',
 ] as const
 
+const INDUSTRIES = INDUSTRY_OPTIONS
+
 const INDUSTRY_SYNONYMS: Record<string, string> = {
   tech: 'Technology',
   saas: 'Technology',
@@ -207,6 +220,8 @@ const INDUSTRY_SYNONYMS: Record<string, string> = {
   shopping: 'Retail',
   cpg: 'Retail',
   health: 'Healthcare',
+  hospital: 'Healthcare',
+  clinic: 'Healthcare',
   medical: 'Healthcare',
   pharma: 'Healthcare',
   wellness: 'Healthcare',
@@ -242,6 +257,17 @@ const INDUSTRY_SYNONYMS: Record<string, string> = {
   gaming: 'Media',
 }
 
+function escapeRegExp(v: string): string {
+  return v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Whole word matching only. Plain substring checks let short synonyms hit
+// inside unrelated words ("hospital" contains "it", "las vegas" contains
+// "gas"), which would label rows with the wrong industry.
+function containsWord(text: string, word: string): boolean {
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(word)}($|[^a-z0-9])`).test(text)
+}
+
 function normalizeIndustry(raw: string): string | null {
   const t = raw.trim().toLowerCase()
   if (!t) return null
@@ -249,10 +275,10 @@ function normalizeIndustry(raw: string): string | null {
   if (exact) return exact
   if (INDUSTRY_SYNONYMS[t]) return INDUSTRY_SYNONYMS[t]
   for (const [syn, canon] of Object.entries(INDUSTRY_SYNONYMS)) {
-    if (t.includes(syn)) return canon
+    if (containsWord(t, syn)) return canon
   }
   for (const ind of INDUSTRIES) {
-    if (t.includes(ind.toLowerCase())) return ind
+    if (ind !== 'Other' && containsWord(t, ind.toLowerCase())) return ind
   }
   return null
 }
@@ -924,6 +950,8 @@ async function buildCore(
   }
 
   let industrySegments: IndustrySegment[] | null = null
+  let industryColumn: string | null = null
+  let industryUnmatchedRows = 0
   const industryDetection = detectIndustryColumn(rows, dimensionCols)
   if (industryDetection) {
     const { column, valueMap } = industryDetection
@@ -931,11 +959,15 @@ async function buildCore(
     for (const row of rows) {
       const raw = row[column]
       const canon = typeof raw === 'string' ? valueMap[raw] : undefined
-      if (!canon) continue
+      if (!canon) {
+        industryUnmatchedRows++
+        continue
+      }
       if (!grouped.has(canon)) grouped.set(canon, [])
       grouped.get(canon)!.push(row)
     }
     if (grouped.size > 0) {
+      industryColumn = column
       industrySegments = Array.from(grouped.entries()).map(([industry, segRows]) => {
         const segMetricTotals = computeMetricTotals(segRows, metricCols)
         return {
@@ -973,6 +1005,8 @@ async function buildCore(
     metrics,
     dimensions,
     industrySegments,
+    industryColumn,
+    industryUnmatchedRows,
     scatterPairs: metricCols.length >= 2 ? computeScatterPairs(rows, metricCols) : null,
     groupComparisons: computeGroupComparisons(rows, dimensionCols, metricCols),
     warnings,
