@@ -1,208 +1,598 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useUser } from '@clerk/nextjs'
 import Navbar from '@/components/Navbar'
 import { useTheme } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import {
+  DEFAULT_KIT,
+  FONT_PAIRINGS,
+  deriveKitFromColor,
+  kitTokens,
+  normalizeHex,
+  resolveBrandKit,
+  validateKit,
+  type BrandKit,
+  type FontPairingKey,
+  type KitTokens,
+} from '@/lib/brandKit'
+import {
   CheckCircle,
   Palette,
   Building2,
   Info,
-  Sparkles,
-  RefreshCw,
-  CheckCircle2,
-  Image,
-  Star,
+  Type,
+  Image as ImageIcon,
+  Wand2,
 } from 'lucide-react'
 
-interface BrandSettings {
-  brand_name: string
-  brand_primary_color: string
-  brand_logo_url: string
-  gamma_theme_id: string
+type RoleKey = 'deep' | 'brand' | 'highlight' | 'surface'
+type SlideKey = 'finding' | 'stats' | 'recs'
+
+const ROLE_COPY: Record<RoleKey, { label: string; where: string }> = {
+  deep: {
+    label: 'Deep',
+    where: 'The dark side panel, slide titles, tag chips, and the main chart series.',
+  },
+  brand: {
+    label: 'Brand',
+    where: 'The middle card on stat and recommendation slides, and your second chart color.',
+  },
+  highlight: {
+    label: 'Highlight',
+    where: 'The big numbers on dark panels and the text inside tag chips.',
+  },
+  surface: {
+    label: 'Surface',
+    where: 'The slide background behind charts and cards.',
+  },
 }
 
-interface GammaTheme {
-  id: string
-  name: string
-  type: 'standard' | 'custom'
-  // Optional — a deck-matched custom theme (created via Gamma's upload-and-
-  // match feature) may not come back with these populated the way a
-  // manually-tagged standard theme does. Every usage below guards against
-  // undefined rather than assuming these are always arrays.
-  colorKeywords?: string[]
-  toneKeywords?: string[]
-}
-
-const DEFAULT_SETTINGS: BrandSettings = {
-  brand_name: '',
-  brand_primary_color: '#5DCAA5',
-  brand_logo_url: '',
-  gamma_theme_id: '',
-}
-
-const COLOR_PRESETS = [
-  '#5DCAA5',
-  '#8b5cf6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#06b6d4',
-  '#f97316',
-  '#ec4899',
-  '#6366f1',
-  '#14b8a6',
-  '#0f172a',
-  '#1a1a1a',
+const LOGO_POSITIONS = [
+  { value: 'bottom-right', label: 'Bottom right' },
+  { value: 'bottom-left', label: 'Bottom left' },
+  { value: 'top-right', label: 'Top right' },
+  { value: 'top-left', label: 'Top left' },
 ]
 
-// James's curated 5-10 Business-tier themeIds go here once he's picked them
-// in Gamma. Everyone (Free/Pro/Business/Enterprise) already has the full
-// open picker below regardless — this is purely an additional "Recommended"
-// shortlist surfaced above it for Business-tier accounts specifically.
-// Empty for now; the Recommended section simply doesn't render until this
-// has entries.
-const BUSINESS_CURATED_THEME_IDS: string[] = [
-  // 'theme_xxxxxxxx',
-]
+// One unit of the 960 by 540 reference slide, expressed against the preview's
+// own width so the preview scales with its container.
+const px = (n: number) => `${(n / 9.6).toFixed(3)}cqw`
 
-function swatchColorFromKeywords(keywords: string[] | undefined | null): string {
-  const k = (keywords || []).map((w) => w.toLowerCase())
-  if (k.some((w) => ['dark', 'black', 'carbon', 'onyx', 'night'].includes(w))) return '#1a1a2e'
-  if (k.some((w) => ['navy', 'indigo', 'blue', 'royal blue'].includes(w))) return '#1e3a5f'
-  if (k.some((w) => ['purple', 'violet', 'lavender'].includes(w))) return '#4c1d95'
-  if (k.some((w) => ['green', 'emerald', 'lime'].includes(w))) return '#064e3b'
-  if (k.some((w) => ['gold', 'champagne', 'amber', 'yellow'].includes(w))) return '#78350f'
-  if (k.some((w) => ['pink', 'fuchsia', 'rose'].includes(w))) return '#831843'
-  if (k.some((w) => ['orange', 'coral', 'peach'].includes(w))) return '#7c2d12'
-  if (k.some((w) => ['white', 'light', 'cream', 'ivory', 'snow'].includes(w))) return '#e2e8f0'
-  if (k.some((w) => ['gray', 'grey', 'slate', 'ash'].includes(w))) return '#334155'
-  return '#5DCAA5'
+// ── hex field ───────────────────────────────────────────────────────────────
+
+function HexField({
+  value,
+  onCommit,
+  className,
+}: {
+  value: string
+  onCommit: (hex: string) => void
+  className: string
+}) {
+  const [text, setText] = useState(value)
+  useEffect(() => setText(value), [value])
+  return (
+    <input
+      value={text}
+      maxLength={7}
+      onChange={(e) => {
+        setText(e.target.value)
+        const hex = normalizeHex(e.target.value)
+        if (hex) onCommit(hex)
+      }}
+      onBlur={() => setText(value)}
+      className={className}
+      aria-label="Hex color"
+      spellCheck={false}
+    />
+  )
 }
 
-function swatchTextColor(bg: string): string {
-  const lightBgs = ['#e2e8f0']
-  return lightBgs.includes(bg) ? '#1a1a1a' : '#ffffff'
+// ── live slide preview ──────────────────────────────────────────────────────
+
+function KitPreview({
+  kit,
+  t,
+  slide,
+  focusRole,
+}: {
+  kit: BrandKit
+  t: KitTokens
+  slide: SlideKey
+  focusRole: RoleKey | null
+}) {
+  const family = FONT_PAIRINGS[kit.fontPairing].family
+  const ring = (role: RoleKey): React.CSSProperties =>
+    focusRole === role ? { outline: '2px solid #5DCAA5', outlineOffset: 3 } : {}
+
+  const chip = (text: string) => (
+    <div
+      style={{
+        display: 'inline-block',
+        background: t.deep,
+        color: t.highlight,
+        fontSize: px(11),
+        fontWeight: 700,
+        letterSpacing: '0.12em',
+        padding: `${px(5)} ${px(10)}`,
+        borderRadius: px(3),
+        ...ring('highlight'),
+      }}
+    >
+      {text}
+    </div>
+  )
+
+  const surfaceStyle: React.CSSProperties = {
+    background: t.surface,
+    color: t.deep,
+    ...ring('surface'),
+  }
+
+  let body: React.ReactNode = null
+
+  if (slide === 'finding') {
+    body = (
+      <>
+        <div
+          style={{
+            width: '62.5%',
+            boxSizing: 'border-box',
+            padding: `${px(40)} ${px(44)}`,
+            ...surfaceStyle,
+          }}
+        >
+          {chip('PROMOTION IMPACT')}
+          <div style={{ marginTop: px(16), fontSize: px(31), lineHeight: 1.15, fontWeight: 700 }}>
+            Conversion rose 25% while the promotion ran
+          </div>
+          <div style={{ marginTop: px(10), fontSize: px(13), color: t.mutedOnSurface }}>
+            Monthly conversion rate, treatment against control.
+          </div>
+          <div style={{ margin: `${px(18)} 0 ${px(10)}`, height: 1, background: t.hairline }} />
+          <svg viewBox="0 0 512 262" style={{ width: '100%', display: 'block' }} aria-hidden="true">
+            <rect x="178" y="14" width="184" height="186" fill={t.deep} fillOpacity="0.08" />
+            <text x="270" y="30" textAnchor="middle" fontSize="12" fontWeight="700" fill={t.deep}>
+              Promotion
+            </text>
+            {[20, 65, 110, 155].map((y) => (
+              <line key={y} x1="40" y1={y} x2="512" y2={y} stroke={t.gridline} />
+            ))}
+            <line x1="40" y1="200" x2="512" y2="200" stroke={t.axis} />
+            {[
+              ['4.5%', 24],
+              ['4.0%', 69],
+              ['3.5%', 114],
+              ['3.0%', 159],
+              ['2.5%', 204],
+            ].map(([l, y]) => (
+              <text
+                key={l as string}
+                x="32"
+                y={y as number}
+                textAnchor="end"
+                fontSize="11"
+                fill={t.mutedOnSurface}
+              >
+                {l}
+              </text>
+            ))}
+            <polyline
+              points="40,146 132,155 224,137 316,146 408,137 500,146"
+              fill="none"
+              stroke={t.pairMuted}
+              strokeWidth="3"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            <polyline
+              points="40,146 132,137 224,74 316,65 408,110 500,128"
+              fill="none"
+              stroke={t.series[0]}
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            <circle cx="316" cy="65" r="5" fill={t.series[0]} />
+            <text x="316" y="54" textAnchor="middle" fontSize="14" fontWeight="800" fill={t.deep}>
+              4.0%
+            </text>
+            {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'].map((m, i) => (
+              <text
+                key={m}
+                x={40 + i * 92}
+                y="222"
+                textAnchor="middle"
+                fontSize="12"
+                fill={t.mutedOnSurface}
+              >
+                {m}
+              </text>
+            ))}
+          </svg>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            boxSizing: 'border-box',
+            background: t.deep,
+            color: '#FFFFFF',
+            padding: `${px(44)} ${px(40)} ${px(36)}`,
+            display: 'flex',
+            flexDirection: 'column',
+            ...ring('deep'),
+          }}
+        >
+          <div
+            style={{
+              marginTop: 'auto',
+              fontSize: px(11),
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              color: t.mutedOnDeep,
+            }}
+          >
+            LIFT DURING PROMOTION
+          </div>
+          <div
+            style={{
+              marginTop: px(6),
+              fontSize: px(104),
+              lineHeight: 1,
+              fontWeight: 800,
+              color: t.highlight,
+              ...ring('highlight'),
+            }}
+          >
+            +25%
+          </div>
+          <div style={{ marginTop: px(18), fontSize: px(16), lineHeight: 1.6 }}>
+            Treatment averaged 3.95% across March and April against 3.15% for control.
+          </div>
+          <div
+            style={{
+              margin: `${px(22)} 0 ${px(14)}`,
+              height: 1,
+              background: 'rgba(255,255,255,0.22)',
+            }}
+          />
+          <div style={{ fontSize: px(14), lineHeight: 1.5, fontWeight: 600 }}>
+            The lift did not hold. Plan a repeat or a retention follow up.
+          </div>
+          <div
+            style={{
+              marginTop: 'auto',
+              paddingTop: px(24),
+              fontSize: px(11),
+              color: t.mutedOnDeep,
+            }}
+          >
+            Source: your uploaded data
+          </div>
+        </div>
+      </>
+    )
+  } else if (slide === 'stats') {
+    const card = (
+      bg: string,
+      fg: string,
+      muted: string,
+      num: string,
+      label: string,
+      text: string,
+      role: RoleKey | null,
+      border?: string
+    ) => (
+      <div
+        style={{
+          flex: '1 1 0',
+          minWidth: 0,
+          boxSizing: 'border-box',
+          height: px(240),
+          background: bg,
+          color: fg,
+          border: border ? `1px solid ${border}` : undefined,
+          borderRadius: px(6),
+          padding: px(26),
+          boxShadow: '0 2px 10px rgba(0,0,0,0.14)',
+          display: 'flex',
+          flexDirection: 'column',
+          ...(role ? ring(role) : {}),
+        }}
+      >
+        <div style={{ fontSize: px(11), fontWeight: 700, letterSpacing: '0.12em', color: muted }}>
+          {label}
+        </div>
+        <div
+          style={{
+            marginTop: px(10),
+            fontSize: px(62),
+            lineHeight: 1,
+            fontWeight: 800,
+            color: num,
+          }}
+        >
+          {text.split('|')[0]}
+        </div>
+        <div style={{ marginTop: 'auto', fontSize: px(14), lineHeight: 1.5 }}>
+          {text.split('|')[1]}
+        </div>
+      </div>
+    )
+    body = (
+      <div
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          padding: `${px(44)} ${px(48)}`,
+          ...surfaceStyle,
+        }}
+      >
+        {chip('AT A GLANCE')}
+        <div style={{ marginTop: px(14), fontSize: px(38), lineHeight: 1.12, fontWeight: 700 }}>
+          LinkedIn is the standout channel
+        </div>
+        <div style={{ marginTop: px(18), height: 1, background: t.hairline }} />
+        <div style={{ display: 'flex', gap: px(24), marginTop: px(30) }}>
+          {card(
+            t.deep,
+            '#FFFFFF',
+            t.mutedOnDeep,
+            t.highlight,
+            'RETURN ON AD SPEND',
+            '24.97x|The highest return of the four channels.',
+            'deep'
+          )}
+          {card(
+            t.brand,
+            t.textOnBrand,
+            t.textOnBrand,
+            t.textOnBrand,
+            'GAP TO DISPLAY',
+            '6.4x|Display returns 3.88x over the same period.',
+            'brand'
+          )}
+          {card(
+            '#FFFFFF',
+            t.deep,
+            t.mutedOnSurface,
+            t.deep,
+            'LINKEDIN CONVERSION',
+            '9.1%|Display converts at 1.0%.',
+            null,
+            t.hairline
+          )}
+        </div>
+      </div>
+    )
+  } else {
+    const rec = (
+      bg: string,
+      fg: string,
+      badge: string,
+      badgeFg: string,
+      title: string,
+      text: string,
+      next: string,
+      role: RoleKey | null,
+      border?: string
+    ) => (
+      <div
+        style={{
+          flex: '1 1 0',
+          minWidth: 0,
+          boxSizing: 'border-box',
+          height: px(296),
+          background: bg,
+          color: fg,
+          border: border ? `1px solid ${border}` : undefined,
+          borderRadius: px(6),
+          padding: px(24),
+          boxShadow: '0 2px 10px rgba(0,0,0,0.14)',
+          display: 'flex',
+          flexDirection: 'column',
+          ...(role ? ring(role) : {}),
+        }}
+      >
+        <div style={{ width: px(36), height: px(36), borderRadius: px(6), background: badge }} />
+        <div style={{ marginTop: px(16), fontSize: px(18), lineHeight: 1.25, fontWeight: 700 }}>
+          {title}
+        </div>
+        <div style={{ marginTop: px(10), fontSize: px(13), lineHeight: 1.55 }}>{text}</div>
+        <div
+          style={{
+            marginTop: 'auto',
+            fontSize: px(11),
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            color: badgeFg,
+          }}
+        >
+          NEXT
+        </div>
+        <div style={{ marginTop: px(4), fontSize: px(13), lineHeight: 1.45, fontWeight: 600 }}>
+          {next}
+        </div>
+      </div>
+    )
+    body = (
+      <div
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          padding: `${px(44)} ${px(48)}`,
+          ...surfaceStyle,
+        }}
+      >
+        {chip('NEXT STEPS')}
+        <div style={{ marginTop: px(14), fontSize: px(38), lineHeight: 1.12, fontWeight: 700 }}>
+          Recommendations
+        </div>
+        <div style={{ marginTop: px(14), height: 1, background: t.hairline }} />
+        <div style={{ display: 'flex', gap: px(24), marginTop: px(28) }}>
+          {rec(
+            t.deep,
+            '#FFFFFF',
+            t.highlight,
+            t.highlight,
+            'Shift budget toward LinkedIn',
+            'LinkedIn returns 24.97x against 3.88x for display.',
+            'Move 10% of display spend next quarter.',
+            'deep'
+          )}
+          {rec(
+            t.brand,
+            t.textOnBrand,
+            t.highlight,
+            t.textOnBrand,
+            'Audit display targeting',
+            'A 1.0% conversion rate points to audience quality.',
+            'Pause the two weakest placements.',
+            'brand'
+          )}
+          {rec(
+            '#FFFFFF',
+            t.deep,
+            t.deep,
+            t.mutedOnSurface,
+            'Benchmark before you scale',
+            'Your industry median shows what typical looks like.',
+            'Review the benchmark slide first.',
+            null,
+            t.hairline
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ containerType: 'inline-size', width: '100%' }}>
+      <div
+        style={{
+          width: '100%',
+          aspectRatio: '16 / 9',
+          display: 'flex',
+          overflow: 'hidden',
+          fontFamily: family,
+          borderRadius: 8,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
+        }}
+      >
+        {body}
+      </div>
+    </div>
+  )
 }
+
+// ── page ────────────────────────────────────────────────────────────────────
 
 export default function BrandSettingsPage() {
   const { user } = useUser()
   const { dark } = useTheme()
-  const [settings, setSettings] = useState<BrandSettings>(DEFAULT_SETTINGS)
+
+  const [kit, setKit] = useState<BrandKit>({ ...DEFAULT_KIT })
+  const [seedColor, setSeedColor] = useState('#6B2D8B')
+  const [slide, setSlide] = useState<SlideKey>('finding')
+  const [focusRole, setFocusRole] = useState<RoleKey | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [logoPreviewError, setLogoPreviewError] = useState(false)
-  const [themes, setThemes] = useState<GammaTheme[]>([])
-  const [themesLoading, setThemesLoading] = useState(false)
-  const [themesError, setThemesError] = useState<string | null>(null)
-  const [themeSearch, setThemeSearch] = useState('')
-  const [themeFilter, setThemeFilter] = useState<'all' | 'standard' | 'custom'>('all')
-
-  // TODO: confirm the actual field name against account-status/route.ts's
-  // real response — guessing `tier`/`plan` defensively for now. Gating a
-  // whole section on an unconfirmed field name is exactly the kind of thing
-  // that silently shows/hides for the wrong users, so don't ship this
-  // without checking it against the real route.
-  const [userTier, setUserTier] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [logoError, setLogoError] = useState(false)
+  // Kept only so saving does not blank a value other code still reads.
+  const [legacyGammaThemeId, setLegacyGammaThemeId] = useState('')
 
   useEffect(() => {
     if (!user) return
-    fetch('/api/account-status')
-      .then((res) => res.json())
-      .then((data) => setUserTier((data.tier || null)?.toLowerCase() || null))
-      .catch(() => setUserTier(null))
-  }, [user])
-
-  useEffect(() => {
-    if (!user) return
-    supabase
-      .from('user_settings')
-      .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
-      .eq('user_id', user.id)
-      .single()
-      .then(({ data }) => {
-        if (data) {
-          setSettings({
-            brand_name: data.brand_name || '',
-            brand_primary_color: data.brand_primary_color || DEFAULT_SETTINGS.brand_primary_color,
-            brand_logo_url: data.brand_logo_url || '',
-            gamma_theme_id: data.gamma_theme_id || '',
+    ;(async () => {
+      const { data: row } = await supabase
+        .from('brand_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      const { data: legacy } = await supabase
+        .from('user_settings')
+        .select('brand_name, brand_primary_color, brand_logo_url, gamma_theme_id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      setLegacyGammaThemeId(legacy?.gamma_theme_id || '')
+      if (row) {
+        setKit(resolveBrandKit(row))
+      } else if (legacy) {
+        setKit(
+          resolveBrandKit({
+            brand_name: legacy.brand_name,
+            logo_url: legacy.brand_logo_url,
+            brand_color: legacy.brand_primary_color,
           })
-        }
-      })
+        )
+      }
+    })()
   }, [user])
 
-  const fetchThemes = async () => {
-    setThemesLoading(true)
-    setThemesError(null)
-    try {
-      const res = await fetch('/api/gamma-themes')
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to load themes')
-      setThemes(data.themes || [])
-    } catch (err: any) {
-      setThemesError(err.message || 'Failed to load themes')
-    } finally {
-      setThemesLoading(false)
-    }
-  }
+  const tokens = useMemo(() => kitTokens(kit), [kit])
+  const warnings = useMemo(() => validateKit(kit), [kit])
 
-  useEffect(() => {
-    fetchThemes()
-  }, [])
+  const setRole = (role: RoleKey, hex: string) => setKit((k) => ({ ...k, [role]: hex }))
+
+  const buildFromSeed = () => {
+    const derived = deriveKitFromColor(seedColor)
+    setKit((k) => ({
+      ...k,
+      deep: derived.deep,
+      brand: derived.brand,
+      highlight: derived.highlight,
+      surface: derived.surface,
+    }))
+  }
 
   const handleSave = async () => {
     if (!user) return
     setSaving(true)
-    const { error } = await supabase.from('user_settings').upsert(
+    setSaveError(null)
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('brand_settings').upsert(
       {
         user_id: user.id,
-        brand_name: settings.brand_name.trim(),
-        brand_primary_color: settings.brand_primary_color,
-        brand_logo_url: settings.brand_logo_url.trim(),
-        gamma_theme_id: settings.gamma_theme_id.trim(),
-        updated_at: new Date().toISOString(),
+        brand_name: kit.name.trim(),
+        logo_url: (kit.logoUrl || '').trim() || null,
+        logo_position: kit.logoPosition,
+        deep_color: kit.deep,
+        brand_color: kit.brand,
+        highlight_color: kit.highlight,
+        surface_color: kit.surface,
+        font_pairing: kit.fontPairing,
+        // Legacy columns, kept in step so older readers see the same colors.
+        primary_color: kit.highlight,
+        secondary_color: kit.deep,
+        updated_at: now,
+      },
+      { onConflict: 'user_id' }
+    )
+    if (error) {
+      setSaving(false)
+      setSaveError('Could not save your brand kit. Please try again.')
+      return
+    }
+    // Best effort: keep the old settings row in step for the admin account
+    // lookup, which still reads it. A failure here does not affect slides.
+    await supabase.from('user_settings').upsert(
+      {
+        user_id: user.id,
+        brand_name: kit.name.trim(),
+        brand_primary_color: kit.brand,
+        brand_logo_url: (kit.logoUrl || '').trim(),
+        gamma_theme_id: legacyGammaThemeId,
+        updated_at: now,
       },
       { onConflict: 'user_id' }
     )
     setSaving(false)
-    if (!error) {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
-    }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
   }
-
-  const selectedTheme = themes.find((t) => t.id === settings.gamma_theme_id)
-
-  // Business-tier accounts (and above, so an Enterprise account still sees
-  // it too) get this pinned "Recommended" strip above the full picker.
-  // Everyone else's experience is completely unchanged — same full list,
-  // same search, same filters, no gating on the browse-everything picker
-  // itself, only on this additional shortlist.
-  // checkCreditLimit() (the source of userTier, via account-status) only
-  // ever returns 'free' | 'starter' | 'business' — Enterprise is
-  // sales-assisted, not self-serve credit-metered, so it was never given
-  // its own tier value here. That means a userTier === 'enterprise' check
-  // can NEVER be true — this is confirmed against creditLimit.ts's actual
-  // return type, not a guess. Business-tier gating below is real and
-  // correct; there is currently no reliable signal to gate an
-  // Enterprise-only section on, so the Custom Branding section further
-  // down is shown to everyone instead of gated — see its own comment.
-  const isBusinessTierOrAbove = userTier === 'business'
-  const curatedThemes = themes.filter((t) => BUSINESS_CURATED_THEME_IDS.includes(t.id))
-  const showRecommended = isBusinessTierOrAbove && curatedThemes.length > 0
-
-  const filteredThemes = themes.filter((t) => {
-    const matchesSearch =
-      !themeSearch ||
-      t.name.toLowerCase().includes(themeSearch.toLowerCase()) ||
-      (t.toneKeywords || []).some((k) => k.toLowerCase().includes(themeSearch.toLowerCase())) ||
-      (t.colorKeywords || []).some((k) => k.toLowerCase().includes(themeSearch.toLowerCase()))
-    const matchesFilter = themeFilter === 'all' || t.type === themeFilter
-    return matchesSearch && matchesFilter
-  })
 
   const base = dark ? 'bg-[#080C14] text-white' : 'bg-zinc-50 text-[#080C14]'
   const card = dark ? 'bg-[#080C14] border-zinc-800' : 'bg-white border-zinc-200'
@@ -214,271 +604,136 @@ export default function BrandSettingsPage() {
   const section = dark ? 'bg-[#0F1420]/50 border-zinc-700' : 'bg-zinc-50 border-zinc-200'
 
   const logoIsPublic =
-    settings.brand_logo_url.startsWith('https://') && !settings.brand_logo_url.includes('localhost')
+    !!kit.logoUrl && kit.logoUrl.startsWith('https://') && !kit.logoUrl.includes('localhost')
+
+  const roles: RoleKey[] = ['deep', 'brand', 'highlight', 'surface']
 
   return (
     <div className={`min-h-screen ${base}`}>
+      {/* Typefaces the preview and the slides can use. */}
+      {Object.values(FONT_PAIRINGS).map((f) => (
+        // eslint-disable-next-line @next/next/no-page-custom-font
+        <link key={f.googleHref} rel="stylesheet" href={f.googleHref} />
+      ))}
       <Navbar />
-      <main className="pt-24 px-6 max-w-2xl mx-auto pb-20">
+      <main className="pt-24 px-6 max-w-5xl mx-auto pb-20">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight mb-1">Brand Settings</h1>
+          <h1 className="text-2xl font-bold tracking-tight mb-1">Brand Kit</h1>
           <p className={`text-sm ${subtle}`}>
-            These appear on every presentation exported from ampli. Gamma handles layout and design
-            — you control the identity.
+            Pick your colors and typeface and see exactly how your slides will look before you save.
+            Everything here applies to every Story Mode slide and PDF.
           </p>
         </div>
 
-        <div className="space-y-4">
-          <div className={`p-5 rounded-2xl border ${card}`}>
-            <div className="flex items-center gap-2 mb-4">
-              <Building2 size={15} className="text-[#5DCAA5]" />
-              <p className="font-semibold text-sm">Brand Name</p>
-            </div>
-            <input
-              value={settings.brand_name}
-              onChange={(e) => setSettings({ ...settings, brand_name: e.target.value })}
-              placeholder="Acme Corp"
-              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${input}`}
-            />
-            <p className={`text-xs mt-2 ${subtler}`}>
-              Used to personalize slide titles and context in exported decks.
-            </p>
-          </div>
-
-          <div className={`p-5 rounded-2xl border ${card}`}>
-            <div className="flex items-center gap-2 mb-4">
-              <Palette size={15} className="text-[#5DCAA5]" />
-              <p className="font-semibold text-sm">Primary Color</p>
-            </div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {COLOR_PRESETS.map((color) => (
-                <button
-                  key={color}
-                  onClick={() => setSettings({ ...settings, brand_primary_color: color })}
-                  className="w-8 h-8 rounded-lg transition-transform hover:scale-110 border-2"
-                  style={{
-                    background: color,
-                    borderColor: settings.brand_primary_color === color ? 'white' : 'transparent',
-                    boxShadow:
-                      settings.brand_primary_color === color ? `0 0 0 2px ${color}` : 'none',
-                  }}
-                  title={color}
-                />
-              ))}
-            </div>
-            <div className="flex items-center gap-3">
-              <input
-                type="color"
-                value={settings.brand_primary_color}
-                onChange={(e) => setSettings({ ...settings, brand_primary_color: e.target.value })}
-                className="w-10 h-10 rounded-lg border-0 cursor-pointer bg-transparent p-0"
-              />
-              <input
-                value={settings.brand_primary_color}
-                onChange={(e) => setSettings({ ...settings, brand_primary_color: e.target.value })}
-                onBlur={(e) => {
-                  if (!/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
-                    setSettings({
-                      ...settings,
-                      brand_primary_color: DEFAULT_SETTINGS.brand_primary_color,
-                    })
-                  }
-                }}
-                placeholder="#5DCAA5"
-                maxLength={7}
-                className={`flex-1 px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
-              />
-              <div
-                className="w-10 h-10 rounded-xl shrink-0"
-                style={{ background: settings.brand_primary_color }}
-              />
-            </div>
-            <p className={`text-xs mt-3 ${subtler}`}>
-              Used as a color hint when no custom Gamma theme is set.
-            </p>
-          </div>
-
-          <div className={`p-5 rounded-2xl border ${card}`}>
-            <div className="flex items-center gap-2 mb-4">
-              <Image size={15} className="text-[#5DCAA5]" />
-              <p className="font-semibold text-sm">Logo URL</p>
-            </div>
-            <input
-              value={settings.brand_logo_url}
-              onChange={(e) => {
-                setSettings({ ...settings, brand_logo_url: e.target.value })
-                setLogoPreviewError(false)
-              }}
-              placeholder="https://yourcompany.com/logo.png"
-              className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${input}`}
-            />
-            {settings.brand_logo_url && !logoIsPublic && (
-              <div
-                className={`flex items-start gap-2 mt-3 p-3 rounded-xl border ${dark ? 'bg-amber-950/20 border-amber-900/30' : 'bg-amber-50 border-amber-200'}`}
-              >
-                <Info size={13} className="text-amber-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-400">
-                  Must be a public <strong>https://</strong> URL. Gamma's servers fetch this
-                  directly.
-                </p>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
+          {/* Controls */}
+          <div className="space-y-4">
+            <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Wand2 size={15} className="text-[#5DCAA5]" />
+                <p className="font-semibold text-sm">Start from one color</p>
               </div>
-            )}
-            {settings.brand_logo_url && logoIsPublic && !logoPreviewError && (
-              <div
-                className={`mt-3 p-4 rounded-xl border flex items-center justify-center ${section}`}
-              >
-                <img
-                  src={settings.brand_logo_url}
-                  alt="Logo preview"
-                  className="max-h-12 max-w-[200px] object-contain"
-                  onError={() => setLogoPreviewError(true)}
-                />
-              </div>
-            )}
-            {logoPreviewError && (
-              <p className="text-xs text-red-400 mt-2">
-                Couldn't load logo — check it's publicly accessible.
+              <p className={`text-xs mb-3 ${subtler}`}>
+                Pick your main brand color and we will build the rest, then you can adjust each one.
               </p>
-            )}
-            <p className={`text-xs mt-3 ${subtler}`}>
-              PNG or SVG with transparent background works best. Appears in the header of every
-              exported slide.
-            </p>
-          </div>
-
-          <div className={`p-5 rounded-2xl border ${card}`}>
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <Sparkles size={15} className="text-[#5DCAA5]" />
-                <p className="font-semibold text-sm">Presentation Theme</p>
-              </div>
-              <button
-                onClick={fetchThemes}
-                disabled={themesLoading}
-                className={`p-1.5 rounded-lg transition-colors ${dark ? 'hover:bg-[#0F1420] text-zinc-400' : 'hover:bg-zinc-100 text-zinc-500'}`}
-                title="Refresh themes"
-              >
-                <RefreshCw size={13} className={themesLoading ? 'animate-spin' : ''} />
-              </button>
-            </div>
-            <p className={`text-xs mb-4 ${subtler}`}>
-              Pick a Gamma theme for your exported decks. Create a custom theme in Gamma with your
-              brand colors for best results.
-            </p>
-
-            {selectedTheme && (
-              <div
-                className={`flex items-center gap-3 p-3 rounded-xl border mb-4 ${dark ? 'bg-[#5DCAA5]/10 border-[#5DCAA5]/30' : 'bg-[#5DCAA5]/10 border-[#5DCAA5]'}`}
-              >
-                <div
-                  className="w-8 h-8 rounded-lg shrink-0"
-                  style={{ background: swatchColorFromKeywords(selectedTheme.colorKeywords) }}
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={normalizeHex(seedColor) || '#6B2D8B'}
+                  onChange={(e) => setSeedColor(e.target.value)}
+                  className="w-10 h-10 rounded-lg border-0 cursor-pointer bg-transparent p-0"
+                  aria-label="Main brand color"
                 />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold">{selectedTheme.name}</p>
-                  <p className={`text-[11px] truncate ${subtler}`}>
-                    {(selectedTheme.toneKeywords || []).slice(0, 4).join(', ')}
-                  </p>
-                </div>
-                <CheckCircle2 size={15} className="text-[#5DCAA5] shrink-0" />
-              </div>
-            )}
-
-            {showRecommended && (
-              <div className="mb-4">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Star size={12} className="text-amber-400" />
-                  <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtle}`}>
-                    Recommended for Business
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {curatedThemes.map((theme) => {
-                    const isSelected = settings.gamma_theme_id === theme.id
-                    const swatchBg = swatchColorFromKeywords(theme.colorKeywords)
-                    const swatchText = swatchTextColor(swatchBg)
-                    return (
-                      <button
-                        key={theme.id}
-                        onClick={() => setSettings({ ...settings, gamma_theme_id: theme.id })}
-                        className={`text-left rounded-xl border overflow-hidden transition-all hover:scale-[1.02] ${
-                          isSelected
-                            ? 'border-amber-400 ring-1 ring-amber-400'
-                            : dark
-                              ? 'border-zinc-700 hover:border-zinc-600'
-                              : 'border-zinc-200 hover:border-zinc-300'
-                        }`}
-                      >
-                        <div
-                          className="h-10 w-full flex items-center justify-between px-2.5"
-                          style={{ background: swatchBg }}
-                        >
-                          <span
-                            className="text-[10px] font-bold tracking-wide"
-                            style={{ color: swatchText }}
-                          >
-                            Aa
-                          </span>
-                          {isSelected && <CheckCircle2 size={13} className="text-amber-400" />}
-                        </div>
-                        <div className={`px-2.5 py-2 ${dark ? 'bg-[#0F1420]' : 'bg-white'}`}>
-                          <p className="text-xs font-semibold truncate">{theme.name}</p>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-2 mb-3">
-              <input
-                value={themeSearch}
-                onChange={(e) => setThemeSearch(e.target.value)}
-                placeholder="Search themes…"
-                className={`flex-1 px-3 py-2 rounded-xl border text-xs outline-none transition-colors ${input}`}
-              />
-              <div
-                className={`flex items-center rounded-xl border p-0.5 text-xs shrink-0 ${dark ? 'border-zinc-700 bg-[#0F1420]' : 'border-zinc-200 bg-zinc-100'}`}
-              >
-                {(['all', 'standard', 'custom'] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setThemeFilter(f)}
-                    className={`px-2.5 py-1 rounded-lg transition-colors capitalize ${themeFilter === f ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-[#080C14] shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {themesLoading ? (
-              <div className="flex items-center justify-center py-8 gap-2">
-                <RefreshCw size={14} className={`animate-spin ${subtle}`} />
-                <span className={`text-xs ${subtle}`}>Loading themes from Gamma…</span>
-              </div>
-            ) : themesError ? (
-              <div
-                className={`p-4 rounded-xl text-xs text-center ${dark ? 'bg-red-950/20 text-red-400' : 'bg-red-50 text-red-500'}`}
-              >
-                {themesError}
-                <button onClick={fetchThemes} className="block mx-auto mt-2 underline">
-                  Try again
+                <HexField
+                  value={seedColor}
+                  onCommit={setSeedColor}
+                  className={`flex-1 px-3 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
+                />
+                <button
+                  onClick={buildFromSeed}
+                  className="px-3.5 py-2.5 rounded-xl bg-[#080C14] text-white text-xs font-semibold hover:bg-[#0F1420] transition-colors border border-zinc-700"
+                >
+                  Build kit
                 </button>
               </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-80 overflow-y-auto pr-1">
-                {filteredThemes.map((theme) => {
-                  const isSelected = settings.gamma_theme_id === theme.id
-                  const swatchBg = swatchColorFromKeywords(theme.colorKeywords)
-                  const swatchText = swatchTextColor(swatchBg)
+            </div>
+
+            <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="flex items-center gap-2 mb-4">
+                <Palette size={15} className="text-[#5DCAA5]" />
+                <p className="font-semibold text-sm">Colors</p>
+              </div>
+              <div className="space-y-4">
+                {roles.map((role) => (
+                  <div
+                    key={role}
+                    onMouseEnter={() => setFocusRole(role)}
+                    onMouseLeave={() => setFocusRole(null)}
+                    onFocus={() => setFocusRole(role)}
+                    onBlur={() => setFocusRole(null)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={kit[role]}
+                        onChange={(e) => setRole(role, e.target.value.toUpperCase())}
+                        className="w-10 h-10 rounded-lg border-0 cursor-pointer bg-transparent p-0 shrink-0"
+                        aria-label={`${ROLE_COPY[role].label} color`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">{ROLE_COPY[role].label}</p>
+                        <p className={`text-xs leading-snug ${subtler}`}>{ROLE_COPY[role].where}</p>
+                      </div>
+                      <HexField
+                        value={kit[role]}
+                        onCommit={(hex) => setRole(role, hex)}
+                        className={`w-24 px-2.5 py-2 rounded-lg border text-xs font-mono outline-none transition-colors ${input}`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {warnings.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {warnings.map((w, i) => (
+                    <div
+                      key={i}
+                      className={`flex items-start gap-2 p-3 rounded-xl border ${
+                        w.level === 'warn'
+                          ? dark
+                            ? 'bg-amber-950/20 border-amber-900/30'
+                            : 'bg-amber-50 border-amber-200'
+                          : section
+                      }`}
+                    >
+                      <Info
+                        size={13}
+                        className={`shrink-0 mt-0.5 ${w.level === 'warn' ? 'text-amber-500' : subtle}`}
+                      />
+                      <p className={`text-xs ${w.level === 'warn' ? 'text-amber-500' : subtle}`}>
+                        {w.message}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="flex items-center gap-2 mb-3">
+                <Type size={15} className="text-[#5DCAA5]" />
+                <p className="font-semibold text-sm">Typeface</p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(Object.keys(FONT_PAIRINGS) as FontPairingKey[]).map((key) => {
+                  const f = FONT_PAIRINGS[key]
+                  const selected = kit.fontPairing === key
                   return (
                     <button
-                      key={theme.id}
-                      onClick={() => setSettings({ ...settings, gamma_theme_id: theme.id })}
-                      className={`text-left rounded-xl border overflow-hidden transition-all hover:scale-[1.02] ${
-                        isSelected
+                      key={key}
+                      onClick={() => setKit((k) => ({ ...k, fontPairing: key }))}
+                      className={`rounded-xl border p-3 text-left transition-colors ${
+                        selected
                           ? 'border-[#5DCAA5] ring-1 ring-[#5DCAA5]'
                           : dark
                             ? 'border-zinc-700 hover:border-zinc-600'
@@ -486,113 +741,147 @@ export default function BrandSettingsPage() {
                       }`}
                     >
                       <div
-                        className="h-10 w-full flex items-center justify-between px-2.5 relative"
-                        style={{ background: swatchBg }}
+                        style={{ fontFamily: f.family }}
+                        className="text-xl font-bold leading-none"
                       >
-                        <span
-                          className="text-[10px] font-bold tracking-wide"
-                          style={{ color: swatchText }}
-                        >
-                          Aa
-                        </span>
-                        {isSelected && <CheckCircle2 size={13} className="text-[#5DCAA5]" />}
-                        {theme.type === 'custom' && (
-                          <span className="absolute top-1 right-1 text-[8px] px-1 py-0.5 rounded bg-black/30 text-white font-medium">
-                            custom
-                          </span>
-                        )}
+                        Aa
                       </div>
-                      <div className={`px-2.5 py-2 ${dark ? 'bg-[#0F1420]' : 'bg-white'}`}>
-                        <p className="text-xs font-semibold truncate">{theme.name}</p>
-                        <p className={`text-[10px] truncate mt-0.5 ${subtler}`}>
-                          {(theme.toneKeywords || []).slice(0, 3).join(', ')}
-                        </p>
-                      </div>
+                      <div className={`text-[11px] mt-1.5 ${subtle}`}>{f.label}</div>
                     </button>
                   )
                 })}
-                {filteredThemes.length === 0 && (
-                  <div className={`col-span-3 text-center py-6 text-xs ${subtle}`}>
-                    No themes match "{themeSearch}"
-                  </div>
-                )}
               </div>
-            )}
-
-            {!settings.gamma_theme_id && !themesLoading && (
-              <p className={`text-xs mt-3 ${subtler}`}>
-                No theme selected — exports will try to match your Primary Color to a standard Gamma
-                theme automatically, falling back to your tone setting if no close match is found.
-              </p>
-            )}
-          </div>
-
-          {/* Not tier-gated — there's no reliable way to detect an
-              Enterprise account from userTier (see the comment above
-              isBusinessTierOrAbove). Safe to leave open to everyone since
-              this is a paste-in field with no default value and no effect
-              unless someone actually has a real ID to enter; a Free/Pro
-              user has nothing to gain by finding this. If a real
-              Enterprise signal becomes available later (a Clerk plan
-              slug, an account flag, whatever it turns out to be), gate
-              this the same way the Business Recommended section above
-              is gated. */}
-          <div className={`p-5 rounded-2xl border ${card}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <Sparkles size={15} className="text-amber-400" />
-              <p className="font-semibold text-sm">Custom Branding</p>
             </div>
-            <p className={`text-xs mb-4 ${subtler}`}>
-              If your account rep gave you a Theme ID, paste it here directly — no need to hunt for
-              it in the picker above. This overrides whatever's selected there.
-            </p>
 
-            <label className={`block text-xs font-medium mb-1.5 ${subtle}`}>Custom Theme ID</label>
-            <input
-              value={settings.gamma_theme_id}
-              onChange={(e) => setSettings({ ...settings, gamma_theme_id: e.target.value })}
-              placeholder="theme_xxxxxxxx"
-              className={`w-full px-4 py-2.5 rounded-xl border text-sm font-mono outline-none transition-colors ${input}`}
-            />
+            <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="flex items-center gap-2 mb-3">
+                <Building2 size={15} className="text-[#5DCAA5]" />
+                <p className="font-semibold text-sm">Brand name</p>
+              </div>
+              <input
+                value={kit.name}
+                onChange={(e) => setKit((k) => ({ ...k, name: e.target.value }))}
+                placeholder="Acme Corp"
+                className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${input}`}
+              />
+            </div>
+
+            <div className={`p-5 rounded-2xl border ${card}`}>
+              <div className="flex items-center gap-2 mb-3">
+                <ImageIcon size={15} className="text-[#5DCAA5]" />
+                <p className="font-semibold text-sm">Logo</p>
+              </div>
+              <input
+                value={kit.logoUrl || ''}
+                onChange={(e) => {
+                  setKit((k) => ({ ...k, logoUrl: e.target.value }))
+                  setLogoError(false)
+                }}
+                placeholder="https://yourcompany.com/logo.png"
+                className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-colors ${input}`}
+              />
+              {kit.logoUrl && !logoIsPublic && (
+                <p className="text-xs text-amber-500 mt-2">
+                  Use a public https:// address so the logo loads on every slide.
+                </p>
+              )}
+              {logoIsPublic && !logoError && (
+                <div
+                  className={`mt-3 p-4 rounded-xl border flex items-center justify-center ${section}`}
+                >
+                  <img
+                    src={kit.logoUrl as string}
+                    alt="Logo preview"
+                    className="max-h-12 max-w-full object-contain"
+                    onError={() => setLogoError(true)}
+                  />
+                </div>
+              )}
+              {logoError && (
+                <p className="text-xs text-red-400 mt-2">That image could not be loaded.</p>
+              )}
+              <label className={`block text-xs font-medium mt-3 mb-1.5 ${subtle}`}>
+                Position on slides
+              </label>
+              <select
+                value={kit.logoPosition}
+                onChange={(e) => setKit((k) => ({ ...k, logoPosition: e.target.value }))}
+                className={`w-full px-3 py-2.5 rounded-xl border text-sm outline-none ${input}`}
+              >
+                {LOGO_POSITIONS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className={`p-4 rounded-2xl border ${section}`}>
-            <p className={`text-xs font-semibold mb-2 ${subtle}`}>
-              What flows to your exported deck
-            </p>
-            <div className="space-y-1.5">
-              {[
-                { field: 'Logo', usage: 'Header of every slide' },
-                { field: 'Theme', usage: 'Colors, fonts, and visual style' },
-                { field: 'Brand name', usage: 'Title slide and contextual references' },
-              ].map(({ field, usage }) => (
-                <div key={field} className="flex items-center gap-2 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#5DCAA5] shrink-0" />
-                  <span className={`font-medium w-24 shrink-0 ${subtle}`}>{field}</span>
-                  <span className={subtler}>{usage}</span>
-                </div>
+          {/* Preview */}
+          <div className="lg:sticky lg:top-24 self-start space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Live preview</p>
+              <div
+                className={`flex rounded-xl border p-0.5 ${dark ? 'border-zinc-700' : 'border-zinc-200'}`}
+              >
+                {(
+                  [
+                    ['finding', 'Chart slide'],
+                    ['stats', 'Hero stats'],
+                    ['recs', 'Recommendations'],
+                  ] as [SlideKey, string][]
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setSlide(key)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      slide === key ? 'bg-[#5DCAA5] text-[#080C14]' : subtle
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <KitPreview kit={kit} t={tokens} slide={slide} focusRole={focusRole} />
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs ${subtler}`}>Chart colors</span>
+              {tokens.series.map((c, i) => (
+                <span
+                  key={i}
+                  className="w-6 h-6 rounded-md border border-black/10"
+                  style={{ background: c }}
+                  title={c}
+                />
               ))}
             </div>
-          </div>
+            <p className={`text-xs ${subtler}`}>
+              Hover a color to outline where it appears. Sample numbers shown, your slides use your
+              own data.
+            </p>
 
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors disabled:opacity-50"
-          >
-            {saved ? (
-              <>
-                <CheckCircle size={15} /> Saved
-              </>
-            ) : saving ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{' '}
-                Saving…
-              </>
-            ) : (
-              'Save Brand Settings'
-            )}
-          </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#080C14] text-white font-semibold text-sm hover:bg-[#0F1420] transition-colors disabled:opacity-50 border border-zinc-700"
+            >
+              {saved ? (
+                <>
+                  <CheckCircle size={15} /> Saved
+                </>
+              ) : saving ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{' '}
+                  Saving
+                </>
+              ) : (
+                'Save brand kit'
+              )}
+            </button>
+            {saveError && <p className="text-xs text-red-400">{saveError}</p>}
+          </div>
         </div>
       </main>
     </div>
