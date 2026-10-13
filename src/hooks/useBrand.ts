@@ -47,7 +47,7 @@ export function useBrand() {
       .select('*')
       .eq('user_id', user.id)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data }: { data: any }) => {
         if (data) {
           setRow(data as BrandRow)
           setLegacyPresets(Array.isArray((data as any).presets) ? (data as any).presets : null)
