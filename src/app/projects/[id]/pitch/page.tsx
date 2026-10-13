@@ -1,1395 +1,223 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useLayoutEffect, Component } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useParams } from 'next/navigation'
+import Link from 'next/link'
+import { flushSync } from 'react-dom'
+import { createRoot } from 'react-dom/client'
 import { supabase } from '@/lib/supabase'
 import { useBrand } from '@/hooks/useBrand'
 import { useTheme } from '@/hooks/useTheme'
-import ChartRenderer from '@/components/ChartRenderer'
-import type { AnalysisHandoff } from '@/lib/analysisTypes'
+import { FONT_PAIRINGS, type BrandKit, type FontPairingKey, type KitTokens } from '@/lib/brandKit'
 import {
+  applyEdits,
+  buildStory,
+  slideToCsv,
+  slideToText,
+  type StoryEdits,
+  type StorySlide,
+} from '@/lib/storyModel'
+import { StorySlideView, SLIDE_W, SLIDE_H } from '@/components/story/StorySlideView'
+import {
+  ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  X,
-  Timer,
-  Maximize,
-  Minimize,
-  RotateCcw,
-  LayoutGrid,
-  Bold,
-  Italic,
-  Plus,
-  Minus,
-  Sparkles,
-  ArrowLeft,
-  Download,
-  FileDown,
-  Trash2,
+  ChevronUp,
   Copy,
-  Undo2,
-  Redo2,
-  Check,
-  Loader2,
-  BarChart3,
-  LineChart as LineChartIcon,
-  AreaChart as AreaChartIcon,
-  PieChart as PieChartIcon,
-  TrendingUp,
-  TrendingDown,
-  UsersRound,
-  Target,
-  Crosshair,
-  Repeat2,
-  Megaphone,
-  DollarSign,
-  Award,
-  ShoppingCart,
-  Smartphone,
-  Globe2,
-  Zap,
-  MapPin,
-  CalendarDays,
-  ArrowUpRight,
-  Star,
-  ShieldCheck,
-  CheckCircle2,
-  ListChecks,
+  Download,
+  Eye,
+  EyeOff,
+  FileDown,
+  ImageIcon,
+  Palette,
+  Play,
+  RotateCcw,
+  Table2,
+  X,
 } from 'lucide-react'
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// Story Mode. Builds a branded story from the findings picked on the project
+// page: title, summary, hero stats, evidence, next steps. Layouts are fixed
+// on purpose so every slide looks finished. Text is editable, slides can be
+// hidden or reordered, and each slide can be copied out as an image, as text,
+// or as the data behind it. The whole story presents full screen or exports
+// as a PDF.
 
-type Box = { x: number; y: number; w: number; h: number }
-// 'full-bleed' was removed as a selectable layout — it placed the callout
-// box in the bottom right corner of the chart, overlapping the data. The
-// three remaining presets are the only ones that ever made sense: callout
-// right, callout left, callout below. A chart previously saved with
-// layout: 'full-bleed' still renders fine — boxesForLayout's default case
-// falls back to split-right-style boxes for any unrecognized value, so no
-// migration is needed for existing data.
-type LayoutPreset = 'split-right' | 'split-left' | 'top-bottom'
-type TextStyle = {
-  bold?: boolean
-  italic?: boolean
-  sizePx?: number
-  color?: string
-  fontFamily?: string
+const KIND_LABEL: Record<string, string> = {
+  title: 'Title',
+  summary: 'Summary',
+  stats: 'Hero stats',
+  chart: 'Chart',
+  table: 'Table',
+  recs: 'Next steps',
 }
 
-type Slide =
-  | { type: 'title'; project: any }
-  | { type: 'insights'; insights: any[] }
-  | { type: 'chart'; chart: any; index: number }
-  | { type: 'statgroup'; stats: { hero_stat: string; takeaway: string; index: number }[] }
-  | { type: 'table'; table: any; takeaway: string; index: number }
-  | { type: 'recommendations'; recommendations: any[]; narrative: string }
+// ── export helpers ──────────────────────────────────────────────────────────
 
-type GenerationState = 'idle' | 'generating' | 'ready' | 'no_data'
-type SaveState = 'saved' | 'saving' | 'error'
+const fontCssCache: Partial<Record<FontPairingKey, Promise<string>>> = {}
 
-const DEFAULT_SIZE_PX = 16
-const MIN_SIZE_PX = 10
-const MAX_SIZE_PX = 96
-const POLL_INTERVAL_MS = 2500
-const POLL_MAX_ATTEMPTS = 40
-const HISTORY_LIMIT = 50
-const SNAP_THRESHOLD = 6
-// No box (chart or hero) is ever allowed to render below this, on either
-// axis. Exists specifically to stop a degenerate 0/negative dimension —
-// from a stale saved box that no longer fits the current canvas size, or
-// from an edge case in the layout math on an unusually short slide area —
-// from ever reaching ChartRenderer's ResponsiveContainer, which is a known
-// way to crash Recharts entirely (an internal null-dereference inside its
-// own layout pass when given a zero-size container).
-const MIN_BOX_DIM = 60
-
-const GENERATION_STEPS = [
-  'Reading confirmed analysis findings',
-  'Mapping findings to slide structure',
-  'Building chart data from verified metrics',
-  'Writing narrative grounded in conversation',
-  'Generating recommendations',
-]
-
-const LAYOUT_OPTIONS: { key: LayoutPreset; label: string }[] = [
-  { key: 'split-right', label: 'Callout Right' },
-  { key: 'split-left', label: 'Callout Left' },
-  { key: 'top-bottom', label: 'Callout Below' },
-]
-
-// Chart size, relative to its layout slot. 1 is the default (the slot
-// boxesForLayout computes with the reference constants below). Nudged
-// with the Size control in the selection toolbar — a semantic step
-// instead of freehand pixel dragging, so "make the chart bigger" is a
-// real, repeatable action instead of a drag gesture that's easy to
-// overshoot into "takes up the whole slide."
-const DEFAULT_CHART_SCALE = 1
-const MIN_CHART_SCALE = 0.7
-const MAX_CHART_SCALE = 1.3
-const CHART_SCALE_STEP = 0.1
-
-// Chart types the visual switcher offers. Pie is left out of "always
-// available" — it only reads a single "value" key per point, so offering
-// it for a chart the model built with two numeric series (e.g. new vs
-// returning) would silently drop a series. Gated in the panel itself.
-const CHART_TYPE_OPTIONS: { key: string; label: string; icon: any }[] = [
-  { key: 'bar', label: 'Bar', icon: BarChart3 },
-  { key: 'line', label: 'Line', icon: LineChartIcon },
-  { key: 'area', label: 'Area', icon: AreaChartIcon },
-  { key: 'pie', label: 'Pie', icon: PieChartIcon },
-]
-
-// Curated icon set to complement slides — themed for the kind of
-// marketing/analytics decks this tool builds (funnel stages, buyer
-// segments, growth, channels). Sourced from lucide-react, the icon
-// library already used throughout the editor's own chrome, rather than
-// pulling in a second icon set. The am-pli_template.pptx reference deck's
-// own icon slide didn't make it through as an attachment, so this is a
-// reasonable default set, not a match to specific template glyphs — swap
-// individual entries here freely once the reference icons are available.
-const ICON_LIBRARY: { name: string; label: string; Icon: any }[] = [
-  { name: 'trending-up', label: 'Growth', Icon: TrendingUp },
-  { name: 'trending-down', label: 'Decline', Icon: TrendingDown },
-  { name: 'users-round', label: 'Audience', Icon: UsersRound },
-  { name: 'target', label: 'Target', Icon: Target },
-  { name: 'crosshair', label: 'Focus', Icon: Crosshair },
-  { name: 'repeat', label: 'Repeat purchase', Icon: Repeat2 },
-  { name: 'megaphone', label: 'Campaign', Icon: Megaphone },
-  { name: 'dollar-sign', label: 'Revenue', Icon: DollarSign },
-  { name: 'award', label: 'Win', Icon: Award },
-  { name: 'shopping-cart', label: 'Purchase', Icon: ShoppingCart },
-  { name: 'smartphone', label: 'Mobile', Icon: Smartphone },
-  { name: 'globe', label: 'Market', Icon: Globe2 },
-  { name: 'zap', label: 'Lift', Icon: Zap },
-  { name: 'map-pin', label: 'Location', Icon: MapPin },
-  { name: 'calendar', label: 'Timing', Icon: CalendarDays },
-  { name: 'arrow-up-right', label: 'Increase', Icon: ArrowUpRight },
-  { name: 'star', label: 'Highlight', Icon: Star },
-  { name: 'shield-check', label: 'Trust', Icon: ShieldCheck },
-  { name: 'check-circle', label: 'Success', Icon: CheckCircle2 },
-]
-const ICON_BY_NAME: Record<string, any> = Object.fromEntries(
-  ICON_LIBRARY.map((i) => [i.name, i.Icon])
-)
-const DEFAULT_ICON_SIZE = 40
-const MIN_ICON_SIZE = 20
-const MAX_ICON_SIZE = 96
-
-// Font simplified to Lexend only, per direct decision — the reference
-// deck's Funnel Display / Manrope pairing was deliberately dropped rather
-// than loaded as two extra web fonts. Kept as a real applied CSS value
-// (with sane system fallbacks), not just a UI label, so it actually
-// renders wherever EditableText is used, not only in exported output.
-const EDITOR_FONT_FAMILY = '"Lexend", ui-sans-serif, sans-serif'
-
-// Fields the editor is actually allowed to mutate — every commit writes
-// exactly this set back to Supabase, whichever of them actually changed.
-// A full-set write every time is a deliberate simplification over a
-// per-field diff — slightly more data on the wire per edit, but it means
-// every commit, undo, and redo persists correctly with one code path
-// instead of six slightly different ones.
-const EDITABLE_FIELDS = [
-  'charts',
-  'insights',
-  'recommendations',
-  'pitch_title',
-  'title_text_style',
-  'narrative_text_style',
-  'analysis_handoff',
-  'pitch_included_findings',
-]
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-// Converts a brand hex color to an rgba() string at a given alpha — used
-// everywhere the editor's own UI chrome (selection outlines, guide lines,
-// toolbar active states) needs a translucent version of the account's own
-// accent color, rather than a fixed hardcoded blue. Accepts 3- or 6-digit
-// hex; falls back to a neutral gray if given something unparseable, so a
-// malformed brand color value can never crash the editor.
-function hexToRgba(hex: string, alpha: number): string {
-  const clean = (hex || '').replace('#', '').trim()
-  const full =
-    clean.length === 3
-      ? clean
-          .split('')
-          .map((c) => c + c)
-          .join('')
-      : clean
-  const parsed = parseInt(full, 16)
-  if (full.length !== 6 || Number.isNaN(parsed)) return `rgba(148, 163, 184, ${alpha})`
-  const r = (parsed >> 16) & 255
-  const g = (parsed >> 8) & 255
-  const b = parsed & 255
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
-// Local copy of ChartRenderer's series-key detection — kept in sync
-// deliberately rather than imported, matching this file's existing
-// pattern of duplicating small chart helpers (see boxesForLayout being
-// duplicated in PDFExportModal.tsx) so the editor never has a hidden
-// runtime dependency on the renderer's internals just to compute what
-// data keys exist.
-function getDataKeysLocal(data: any[]): string[] {
-  if (!data || data.length === 0) return ['value']
-  const sample = data[0]
-  const keys = Object.keys(sample).filter((k) => k !== 'name' && typeof sample[k] === 'number')
-  return keys.length > 0 ? keys : ['value']
-}
-
-// Indexes every numeric series to its own first data point = 100 — the
-// standard "indexed to 100" convention for comparing trends on different
-// scales. Applied at render time only; the underlying chart.data always
-// stays in its original absolute units, so switching back to Absolute is
-// lossless and re-indexing never compounds.
-function toIndexedData(data: any[], keys: string[]): any[] {
-  if (!data || data.length === 0) return data
-  const base = data[0]
-  return data.map((point) => {
-    const next: any = { ...point }
-    for (const k of keys) {
-      const baseVal = base?.[k]
-      if (typeof point[k] === 'number' && typeof baseVal === 'number' && baseVal !== 0) {
-        next[k] = Math.round((point[k] / baseVal) * 1000) / 10
+// Slide exports are drawn inside an SVG image, which cannot see web fonts
+// loaded from another site. This fetches the typeface once and inlines it as
+// base64 so exported slides keep the brand font.
+function getFontCss(key: FontPairingKey): Promise<string> {
+  if (!fontCssCache[key]) {
+    fontCssCache[key] = (async () => {
+      try {
+        const css = await (await fetch(FONT_PAIRINGS[key].googleHref)).text()
+        const blocks = css
+          .split(/\/\*\s*/)
+          .slice(1)
+          .map((b) => '/* ' + b)
+          .filter((b) => /^\/\* latin \*\//.test(b))
+        const out: string[] = []
+        for (const b of blocks) {
+          const m = b.match(/url\((https:[^)]+)\)/)
+          if (!m) continue
+          const blob = await (await fetch(m[1])).blob()
+          const dataUrl: string = await new Promise((res) => {
+            const r = new FileReader()
+            r.onload = () => res(r.result as string)
+            r.readAsDataURL(blob)
+          })
+          out.push(b.replace(m[1], dataUrl))
+        }
+        return out.join('\n')
+      } catch {
+        return ''
       }
+    })()
+  }
+  return fontCssCache[key] as Promise<string>
+}
+
+async function captureSlide(
+  slide: StorySlide,
+  kit: BrandKit,
+  T: KitTokens,
+  as: 'png' | 'jpeg'
+): Promise<Blob | string | null> {
+  const host = document.createElement('div')
+  host.style.cssText = `position:fixed;left:-10000px;top:0;width:${SLIDE_W}px;height:${SLIDE_H}px;overflow:hidden;`
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    const css = await getFontCss(kit.fontPairing)
+    flushSync(() => root.render(<StorySlideView slide={slide} kit={kit} T={T} />))
+    if (css) {
+      const style = document.createElement('style')
+      style.textContent = css
+      host.appendChild(style)
     }
-    return next
-  })
-}
-
-function LayoutIcon({
-  layout,
-  active,
-  accentColor,
-}: {
-  layout: LayoutPreset
-  active?: boolean
-  accentColor: string
-}) {
-  const stroke = active ? accentColor : 'rgba(128,128,128,0.5)'
-  const fill = active ? hexToRgba(accentColor, 0.25) : 'rgba(128,128,128,0.08)'
-  if (layout === 'split-right')
-    return (
-      <svg width={28} height={20} viewBox="0 0 32 22">
-        <rect
-          x="1"
-          y="1"
-          width="20"
-          height="20"
-          rx="2"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-        <rect
-          x="23"
-          y="1"
-          width="8"
-          height="20"
-          rx="2"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-      </svg>
-    )
-  if (layout === 'split-left')
-    return (
-      <svg width={28} height={20} viewBox="0 0 32 22">
-        <rect
-          x="1"
-          y="1"
-          width="8"
-          height="20"
-          rx="2"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-        <rect
-          x="11"
-          y="1"
-          width="20"
-          height="20"
-          rx="2"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-      </svg>
-    )
-  if (layout === 'top-bottom')
-    return (
-      <svg width={28} height={20} viewBox="0 0 32 22">
-        <rect
-          x="1"
-          y="1"
-          width="30"
-          height="13"
-          rx="2"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-        <rect
-          x="1"
-          y="16"
-          width="30"
-          height="5"
-          rx="1.5"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth="1.2"
-        />
-      </svg>
-    )
-  return null
-}
-
-function boxesForLayout(
-  layout: LayoutPreset,
-  width: number,
-  height: number,
-  chartScale: number = DEFAULT_CHART_SCALE
-): { chart: Box; hero: Box } {
-  const padX = 48,
-    padY = 96,
-    // The chart was stretching to within 24px of the slide's bottom edge —
-    // filling nearly the entire vertical space, "giant" compared to a
-    // reference deck's chart, which visibly stops well short of the
-    // bottom with room to breathe. Matches: the reference clearly favors
-    // leaving whitespace over maximizing plot area.
-    padBottom = 64,
-    gap = 20,
-    heroW = 256,
-    takeawayStripH = 130
-  // chartScale grows the chart's share of its slot and shrinks the
-  // callout's by the same move — a size lever, not just a resize handle.
-  // Clamped so the callout can never be squeezed away entirely and the
-  // chart can never swallow the whole slide.
-  const scale = Math.min(MAX_CHART_SCALE, Math.max(MIN_CHART_SCALE, chartScale))
-  const scaledHeroW = Math.round(Math.max(160, Math.min(340, heroW / scale)))
-  const scaledStripH = Math.round(Math.max(90, Math.min(220, takeawayStripH / scale)))
-  // Every returned box is clamped to MIN_BOX_DIM on both axes before it
-  // ever leaves this function — the layout math below can produce a
-  // degenerate (even negative) width/height on an unusually small or
-  // short canvas, and nothing downstream should ever have to guard
-  // against that separately.
-  const clamp = (b: Box): Box => ({
-    ...b,
-    w: Math.max(MIN_BOX_DIM, b.w),
-    h: Math.max(MIN_BOX_DIM, b.h),
-  })
-  switch (layout) {
-    case 'split-left':
-      return {
-        hero: clamp({ x: padX, y: padY, w: scaledHeroW, h: height - padY - padBottom }),
-        chart: clamp({
-          x: padX + scaledHeroW + gap,
-          y: padY,
-          w: width - padX * 2 - scaledHeroW - gap,
-          h: height - padY - padBottom,
-        }),
-      }
-    case 'top-bottom':
-      return {
-        chart: clamp({
-          x: padX,
-          y: padY,
-          w: width - padX * 2,
-          h: height - padY - scaledStripH - gap - padBottom,
-        }),
-        hero: clamp({
-          x: padX,
-          y: height - scaledStripH - padBottom,
-          w: width - padX * 2,
-          h: scaledStripH,
-        }),
-      }
-    default:
-      return {
-        chart: clamp({
-          x: padX,
-          y: padY,
-          w: width - padX * 2 - scaledHeroW - gap,
-          h: height - padY - padBottom,
-        }),
-        hero: clamp({
-          x: width - padX - scaledHeroW,
-          y: padY,
-          w: scaledHeroW,
-          h: height - padY - padBottom,
-        }),
-      }
+    try {
+      await (document as any).fonts?.ready
+    } catch {}
+    await new Promise((r) => setTimeout(r, 80))
+    const domtoimage = (await import('dom-to-image-more')).default
+    const opts = { width: SLIDE_W, height: SLIDE_H, bgcolor: T.surface, scale: 2 }
+    if (as === 'png') return (await domtoimage.toBlob(host, opts)) as Blob | null
+    return (await domtoimage.toJpeg(host, { ...opts, quality: 0.93 })) as string
+  } finally {
+    root.unmount()
+    host.remove()
   }
 }
 
-// Snaps a box's edges/center against a set of candidate x/y positions
-// (canvas center, the other element on the slide) within SNAP_THRESHOLD
-// pixels, and reports which candidates it actually snapped to so the
-// caller can render live guide lines. Move-only — resize is left
-// unsnapped for this pass, a deliberate scoping choice, not an oversight.
-function computeSnap(
-  box: Box,
-  candidatesX: number[],
-  candidatesY: number[]
-): { box: Box; activeX: number[]; activeY: number[] } {
-  let { x, y } = box
-  const { w, h } = box
-  const activeX: number[] = []
-  const activeY: number[] = []
-
-  const edgesX = [x, x + w / 2, x + w]
-  for (const target of candidatesX) {
-    for (const edge of edgesX) {
-      if (Math.abs(edge - target) <= SNAP_THRESHOLD) {
-        x += target - edge
-        activeX.push(target)
-      }
-    }
-  }
-  const edgesY = [y, y + h / 2, y + h]
-  for (const target of candidatesY) {
-    for (const edge of edgesY) {
-      if (Math.abs(edge - target) <= SNAP_THRESHOLD) {
-        y += target - edge
-        activeY.push(target)
-      }
-    }
-  }
-  return {
-    box: { x, y, w, h },
-    activeX: Array.from(new Set(activeX)),
-    activeY: Array.from(new Set(activeY)),
-  }
+function download(name: string, data: Blob | string, type?: string) {
+  const blob = typeof data === 'string' ? new Blob([data], { type: type || 'text/plain' }) : data
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
-function slideCaption(slide: Slide): string {
-  if (slide.type === 'title') return slide.project.pitch_title || slide.project.name || 'Title'
-  if (slide.type === 'insights') return 'Key Insights'
-  if (slide.type === 'chart') return slide.chart?.title || `Chart ${slide.index + 1}`
-  if (slide.type === 'statgroup') return 'Key Stats'
-  if (slide.type === 'table') return slide.table?.title || `Table ${slide.index + 1}`
-  if (slide.type === 'recommendations') return 'Recommendations'
-  return ''
-}
+const slug = (s: string) =>
+  (s || 'story')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'story'
 
-// Scoped specifically around ChartRenderer — if a chart's own render throws
-// (currently under active investigation: same crash signature has now
-// survived two real content changes plus a confirmed deploy and hard
-// refresh, strong evidence it's inside an unrelated vendor chunk rather
-// than anything in this file), this contains the failure to that one
-// chart's box instead of taking down the whole editor. Everything else on
-// the slide, and every other slide, keeps working regardless.
-class ChartErrorBoundary extends Component<
-  { children: React.ReactNode; dark: boolean },
-  { hasError: boolean }
-> {
-  constructor(props: { children: React.ReactNode; dark: boolean }) {
-    super(props)
-    this.state = { hasError: false }
-  }
-  static getDerivedStateFromError() {
-    return { hasError: true }
-  }
-  componentDidCatch(error: unknown, info: unknown) {
-    console.error('Chart render crashed, caught by boundary:', error, info)
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          className="w-full h-full flex items-center justify-center rounded-2xl text-sm text-center px-4"
-          style={{
-            border: `1px dashed ${this.props.dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
-            color: this.props.dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
-          }}
-        >
-          Couldn't render this chart
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
+// ── scaled slide ────────────────────────────────────────────────────────────
 
-// ── SlideThumbnailPreview ──────────────────────────────────────────────────
-
-function SlideThumbnailPreview({
-  slide,
-  brand,
-  brandColors,
-}: {
-  slide: Slide
-  brand: any
-  brandColors: string[]
-}) {
-  const { dark } = useTheme()
-  const slideBg = dark
-    ? 'linear-gradient(145deg, #111113 0%, #1c1c1f 100%)'
-    : 'linear-gradient(145deg, #ffffff 0%, #f5f5fa 100%)'
-  const labelColor = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'
-
-  function renderContent() {
-    if (slide.type === 'title') {
-      return (
-        <div className="flex flex-col items-center justify-center h-full px-3 text-center">
-          <div
-            className="h-1.5 w-10 rounded-full mb-1.5"
-            style={{
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-          <div
-            className="text-[7px] font-bold leading-tight line-clamp-2"
-            style={{ color: brand.primaryColor }}
-          >
-            {slide.project.pitch_title || slide.project.name || 'Pitch title'}
-          </div>
-        </div>
-      )
-    }
-    if (slide.type === 'insights') {
-      return (
-        <div className="h-full p-2 flex flex-col">
-          <div className="text-[6px] font-bold mb-1" style={{ color: labelColor }}>
-            Key Insights
-          </div>
-          <div className="grid grid-cols-3 gap-0.5 flex-1">
-            {Array.from({ length: Math.min(6, Math.max(slide.insights.length, 3)) }).map((_, i) => (
-              <div
-                key={i}
-                className="rounded-sm"
-                style={{
-                  background: `${brand.primaryColor}20`,
-                  border: `0.5px solid ${brand.primaryColor}40`,
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      )
-    }
-    if (slide.type === 'chart') {
-      return (
-        <div className="h-full flex flex-col">
-          {Array.isArray(slide.chart?.data) && slide.chart.data.length > 0 ? (
-            <div
-              className="relative w-full overflow-hidden rounded-lg"
-              style={{ paddingBottom: '56.25%' }}
-            >
-              <div
-                className="absolute top-0 left-0"
-                style={{
-                  width: 560,
-                  height: 315,
-                  transform: 'scale(0.25)',
-                  transformOrigin: 'top left',
-                }}
-              >
-                <ChartRenderer chart={slide.chart} colors={brandColors} height={315} dark={dark} />
-              </div>
-            </div>
-          ) : (
-            <div
-              className="w-full h-full flex items-center justify-center text-[6px]"
-              style={{ color: labelColor }}
-            >
-              No data
-            </div>
-          )}
-        </div>
-      )
-    }
-    if (slide.type === 'statgroup') {
-      return (
-        <div className="h-full p-2 flex items-center justify-center gap-1">
-          {slide.stats.map((s, i) => (
-            <div
-              key={i}
-              className="flex-1 h-8 rounded-md flex items-center justify-center"
-              style={{ background: brand.secondaryColor }}
-            >
-              <div className="text-[6px] font-black" style={{ color: brand.primaryColor }}>
-                {s.hero_stat || '—'}
-              </div>
-            </div>
-          ))}
-        </div>
-      )
-    }
-    if (slide.type === 'table') {
-      return (
-        <div className="h-full p-2 flex flex-col">
-          <div className="text-[6px] font-bold mb-1" style={{ color: labelColor }}>
-            {slide.table?.title || 'Data Table'}
-          </div>
-          <div className="flex-1 space-y-0.5">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-2 rounded-sm w-full"
-                style={{
-                  background:
-                    i === 0
-                      ? `${brand.primaryColor}40`
-                      : dark
-                        ? 'rgba(255,255,255,0.06)'
-                        : 'rgba(0,0,0,0.05)',
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      )
-    }
-    if (slide.type === 'recommendations') {
-      return (
-        <div className="h-full p-2 flex flex-col">
-          <div className="text-[6px] font-bold mb-1" style={{ color: labelColor }}>
-            Recommendations
-          </div>
-          <div className="grid grid-cols-3 gap-0.5 flex-1">
-            {(slide.recommendations.length ? slide.recommendations.slice(0, 3) : [0, 1, 2]).map(
-              (_, i) => (
-                <div
-                  key={i}
-                  className="rounded-sm"
-                  style={{
-                    background: dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
-                    border: `0.5px solid ${dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'}`,
-                  }}
-                />
-              )
-            )}
-          </div>
-        </div>
-      )
-    }
-    return null
-  }
-
+function Scaled({ width, children }: { width: number; children: ReactNode }) {
+  const scale = width / SLIDE_W
   return (
     <div
-      className="relative w-full aspect-video rounded-lg overflow-hidden pointer-events-none"
-      style={{ background: slideBg }}
+      style={{
+        width,
+        height: (width * SLIDE_H) / SLIDE_W,
+        position: 'relative',
+        overflow: 'hidden',
+      }}
     >
       <div
-        className="absolute top-0 left-0 right-0 h-[2px]"
         style={{
-          background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
+          width: SLIDE_W,
+          height: SLIDE_H,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
         }}
-      />
-      {renderContent()}
-    </div>
-  )
-}
-
-// ── StyleToolbar ───────────────────────────────────────────────────────────
-
-function StyleToolbar({
-  style,
-  onChange,
-  brandColors,
-  accentColor,
-}: {
-  style: TextStyle
-  onChange: (s: TextStyle) => void
-  brandColors: string[]
-  accentColor: string
-}) {
-  const { dark } = useTheme()
-  const currentSize = style.sizePx ?? DEFAULT_SIZE_PX
-  const press = (fn: () => void) => (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    fn()
-  }
-  const toolbarCls = dark ? 'bg-zinc-900/95 border-white/10' : 'bg-white/95 border-black/10'
-  const btnBase = dark
-    ? 'border-white/10 opacity-60 hover:opacity-90'
-    : 'border-black/10 opacity-60 hover:opacity-90'
-  const activeStyle: React.CSSProperties = {
-    borderColor: accentColor,
-    background: hexToRgba(accentColor, 0.2),
-    color: accentColor,
-  }
-  const divider = dark ? 'bg-white/10' : 'bg-black/10'
-  return (
-    <div
-      data-no-drag="true"
-      className={`absolute -top-11 left-0 z-50 flex items-center gap-1 p-1.5 rounded-xl border shadow-2xl whitespace-nowrap ${toolbarCls}`}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <button
-        onMouseDown={press(() => onChange({ ...style, bold: !style.bold }))}
-        className={`p-1.5 rounded-lg border ${style.bold ? '' : btnBase}`}
-        style={style.bold ? activeStyle : undefined}
       >
-        <Bold size={12} />
-      </button>
-      <button
-        onMouseDown={press(() => onChange({ ...style, italic: !style.italic }))}
-        className={`p-1.5 rounded-lg border ${style.italic ? '' : btnBase}`}
-        style={style.italic ? activeStyle : undefined}
-      >
-        <Italic size={12} />
-      </button>
-      <div className={`w-px h-5 mx-0.5 ${divider}`} />
-      <button
-        onMouseDown={press(() =>
-          onChange({ ...style, sizePx: Math.max(MIN_SIZE_PX, currentSize - 2) })
-        )}
-        className={`p-1.5 rounded-lg border ${btnBase}`}
-      >
-        <Minus size={11} />
-      </button>
-      <span className="text-[10px] font-mono opacity-60 w-7 text-center">{currentSize}</span>
-      <button
-        onMouseDown={press(() =>
-          onChange({ ...style, sizePx: Math.min(MAX_SIZE_PX, currentSize + 2) })
-        )}
-        className={`p-1.5 rounded-lg border ${btnBase}`}
-      >
-        <Plus size={11} />
-      </button>
-      <div className={`w-px h-5 mx-0.5 ${divider}`} />
-      {brandColors.map((c) => (
-        <button
-          key={c}
-          onMouseDown={press(() => onChange({ ...style, color: c }))}
-          className={`w-5 h-5 rounded-full border-2 ${style.color === c ? 'border-white' : 'border-transparent'}`}
-          style={{ background: c }}
-        />
-      ))}
-    </div>
-  )
-}
-
-// ── DraggableBox ───────────────────────────────────────────────────────────
-
-function DraggableBox({
-  box,
-  onChange,
-  onCommit,
-  selected,
-  onSelect,
-  snapX,
-  snapY,
-  onGuides,
-  accentColor,
-  maxW,
-  maxH,
-  children,
-}: {
-  box: Box
-  onChange: (b: Box) => void
-  onCommit: (b: Box) => void
-  selected: boolean
-  onSelect: () => void
-  snapX?: number[]
-  snapY?: number[]
-  onGuides?: (g: { x: number[]; y: number[] } | null) => void
-  accentColor: string
-  // Upper bound on free-drag resize, in px. Without this the corner handle
-  // has no ceiling — nothing stopped a chart from being dragged out to
-  // fill nearly the whole slide. Optional so other DraggableBox use sites
-  // aren't forced to supply one.
-  maxW?: number
-  maxH?: number
-  children: React.ReactNode
-}) {
-  const dragRef = useRef<{
-    mode: 'move' | 'resize'
-    startX: number
-    startY: number
-    orig: Box
-    moved: boolean
-  } | null>(null)
-  const currentBoxRef = useRef(box)
-  useEffect(() => {
-    currentBoxRef.current = box
-  }, [box])
-  const DRAG_THRESHOLD = 4
-
-  const onPointerDown = (e: React.PointerEvent, mode: 'move' | 'resize') => {
-    if ((e.target as HTMLElement).closest('[data-no-drag]')) return
-    dragRef.current = { mode, startX: e.clientX, startY: e.clientY, orig: box, moved: false }
-    window.addEventListener('pointermove', onPointerMove)
-    window.addEventListener('pointerup', onPointerUp)
-  }
-  const onPointerMove = (e: PointerEvent) => {
-    const d = dragRef.current
-    if (!d) return
-    const dx = e.clientX - d.startX,
-      dy = e.clientY - d.startY
-    if (!d.moved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return
-    d.moved = true
-    if (d.mode === 'move') {
-      let next: Box = { ...d.orig, x: d.orig.x + dx, y: d.orig.y + dy }
-      if ((snapX && snapX.length > 0) || (snapY && snapY.length > 0)) {
-        const snapped = computeSnap(next, snapX || [], snapY || [])
-        next = snapped.box
-        onGuides?.({ x: snapped.activeX, y: snapped.activeY })
-      }
-      onChange(next)
-    } else {
-      const nextW = Math.max(80, d.orig.w + dx)
-      const nextH = Math.max(60, d.orig.h + dy)
-      onChange({
-        ...d.orig,
-        w: maxW ? Math.min(maxW, nextW) : nextW,
-        h: maxH ? Math.min(maxH, nextH) : nextH,
-      })
-    }
-  }
-  const onPointerUp = () => {
-    const d = dragRef.current
-    window.removeEventListener('pointermove', onPointerMove)
-    window.removeEventListener('pointerup', onPointerUp)
-    if (d?.moved) onCommit(currentBoxRef.current)
-    onGuides?.(null)
-    dragRef.current = null
-  }
-
-  return (
-    <div
-      className="absolute group/box"
-      style={{
-        left: box.x,
-        top: box.y,
-        width: box.w,
-        height: box.h,
-        outline: selected ? `1.5px dashed ${hexToRgba(accentColor, 0.7)}` : 'none',
-      }}
-      onPointerDown={(e) => onPointerDown(e, 'move')}
-      onClick={(e) => {
-        if (!(e.target as HTMLElement).closest('[data-no-drag]')) onSelect()
-      }}
-    >
-      <div className="w-full h-full" style={{ cursor: selected ? 'move' : 'pointer' }}>
         {children}
       </div>
-      {selected && (
-        <div
-          onPointerDown={(e) => {
-            e.stopPropagation()
-            onPointerDown(e, 'resize')
-          }}
-          className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-sm border-2 border-white cursor-nwse-resize z-50"
-          style={{ background: accentColor }}
-        />
-      )}
     </div>
   )
 }
 
-// ── EditableText ───────────────────────────────────────────────────────────
-
-function EditableText({
-  value,
-  onCommit,
-  placeholder,
-  className,
-  style,
-  multiline,
-  theme,
-  textStyle,
-  onStyleChange,
-  brandColors,
-  accentColor,
+const Thumb = memo(function Thumb({
+  slide,
+  kit,
+  T,
 }: {
-  value: string
-  onCommit: (v: string) => void
-  placeholder?: string
-  className?: string
-  style?: React.CSSProperties
-  multiline?: boolean
-  theme: 'dark' | 'light'
-  textStyle?: TextStyle
-  onStyleChange?: (s: TextStyle) => void
-  brandColors?: string[]
-  accentColor?: string
+  slide: StorySlide
+  kit: BrandKit
+  T: KitTokens
 }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(value)
-  const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
-  useEffect(() => {
-    setDraft(value)
-  }, [value])
-  useEffect(() => {
-    if (editing) {
-      ref.current?.focus()
-      ref.current?.select()
-    }
-  }, [editing])
-
-  const commit = () => {
-    setEditing(false)
-    if (draft !== value) onCommit(draft)
-  }
-  const resolvedAccent = accentColor || '#5DCAA5'
-  const appliedStyle: React.CSSProperties = {
-    ...style,
-    fontWeight: textStyle?.bold ? 700 : style?.fontWeight,
-    fontStyle: textStyle?.italic ? 'italic' : undefined,
-    color: textStyle?.color || style?.color,
-    fontSize: textStyle?.sizePx ? `${textStyle.sizePx}px` : style?.fontSize,
-    fontFamily: textStyle?.fontFamily || style?.fontFamily || EDITOR_FONT_FAMILY,
-  }
-
-  if (editing) {
-    const inputCls = `${className} bg-transparent outline-none border-b-2 w-full resize-none`
-    const editingStyle: React.CSSProperties = { ...appliedStyle, borderColor: resolvedAccent }
-    return (
-      <div className="relative inline-block w-full">
-        {onStyleChange && brandColors && (
-          <StyleToolbar
-            style={textStyle || {}}
-            onChange={onStyleChange}
-            brandColors={brandColors}
-            accentColor={resolvedAccent}
-          />
-        )}
-        {multiline ? (
-          <textarea
-            ref={ref as any}
-            data-no-drag="true"
-            value={draft}
-            className={inputCls}
-            style={editingStyle}
-            rows={3}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                setDraft(value)
-                setEditing(false)
-              }
-            }}
-          />
-        ) : (
-          <input
-            ref={ref as any}
-            data-no-drag="true"
-            value={draft}
-            className={inputCls}
-            style={editingStyle}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === 'Escape') {
-                if (e.key === 'Escape') setDraft(value)
-                commit()
-              }
-            }}
-          />
-        )}
-      </div>
-    )
-  }
-
   return (
-    <div
-      data-no-drag="true"
-      onPointerUp={() => setEditing(true)}
-      className={`${className} cursor-text rounded transition-colors hover:bg-white/10 px-0.5 -mx-0.5`}
-      style={appliedStyle}
-    >
-      {value || <span className="opacity-30">{placeholder}</span>}
-    </div>
+    <Scaled width={158}>
+      <StorySlideView slide={slide} kit={kit} T={T} />
+    </Scaled>
   )
-}
+})
 
-// ── Main page ──────────────────────────────────────────────────────────────
+// ── page ────────────────────────────────────────────────────────────────────
 
-export default function PitchDeckPage() {
-  const { id } = useParams()
-  const router = useRouter()
-  const { brand } = useBrand()
+export default function StoryModePage() {
+  const { id } = useParams() as { id: string }
   const { dark } = useTheme()
-  const containerRef = useRef<HTMLDivElement>(null)
-  const slideAreaRef = useRef<HTMLDivElement>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollAttempts = useRef(0)
-  const historyRef = useRef<{ past: any[]; future: any[] }>({ past: [], future: [] })
+  const { kit, tokens: T } = useBrand()
 
   const [project, setProject] = useState<any>(null)
-  const [slides, setSlides] = useState<Slide[]>([])
-  const [genState, setGenState] = useState<GenerationState>('idle')
-  const [genStep, setGenStep] = useState(0)
-  const [genError, setGenError] = useState<string | null>(null)
-  const [current, setCurrent] = useState(0)
-  const [direction, setDirection] = useState<'left' | 'right'>('right')
-  const [animating, setAnimating] = useState(false)
-  const [visible, setVisible] = useState(true)
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
-  const [timerRunning, setTimerRunning] = useState(false)
-  const timerRef = useRef<any>(null)
-  const [slideSize, setSlideSize] = useState({ width: 1000, height: 560 })
-  const [gammaLoading, setGammaLoading] = useState(false)
-  const [gammaError, setGammaError] = useState<string | null>(null)
-  const [selectedBox, setSelectedBox] = useState<'chart' | 'hero' | null>(null)
-  const [showLayoutPicker, setShowLayoutPicker] = useState(false)
-  const [selectedIconId, setSelectedIconId] = useState<string | null>(null)
-  const [showIconPicker, setShowIconPicker] = useState(false)
-  // Pre-Pitch-Mode finding picker — which findings to actually build
-  // slides for. Forced open the first time a project has findings but no
-  // saved selection yet (project.pitch_included_findings == null);
-  // reopenable anytime after via the header's "Edit slides" button to
-  // adjust without regenerating anything.
-  const [findingPickerOpen, setFindingPickerOpen] = useState(false)
-  const [findingPickerChecked, setFindingPickerChecked] = useState<Set<number>>(new Set())
-  const [saveState, setSaveState] = useState<SaveState>('saved')
-  const [historyTick, setHistoryTick] = useState(0) // bumps to force undo/redo button enable-state re-renders
-  const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null)
-  const [draggedSlideIdx, setDraggedSlideIdx] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [edits, setEdits] = useState<StoryEdits>({})
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved')
+  const [selectedId, setSelectedId] = useState<string>('')
+  const [presenting, setPresenting] = useState(false)
+  const [presentIdx, setPresentIdx] = useState(0)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
-  // Single source of truth for the editor's own interactive chrome color
-  // (selection outlines, drag handles, toolbar active states, snap guides,
-  // loading screens) — this is what makes the WHOLE tool, not just slide
-  // content, follow the account's adjustable brand color. Falls back to
-  // ampli's own accent only if brand hasn't loaded yet.
-  const accent = brand.primaryColor || '#5DCAA5'
+  const editsRef = useRef<StoryEdits>({})
+  const saveTimer = useRef<any>(null)
+  const toastTimer = useRef<any>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const presentRef = useRef<HTMLDivElement>(null)
+  const [stageW, setStageW] = useState(760)
+  const [viewport, setViewport] = useState({ w: 1280, h: 720 })
 
-  const handleGammaExport = async (format: 'pptx' | 'pdf') => {
-    if (!project) return
-    setGammaLoading(true)
-    setGammaError(null)
-    try {
-      const res = await fetch('/api/gamma', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: project.id, exportFormat: format }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.exportUrl) {
-        throw new Error(data.error || 'Export failed')
-      }
-      // Trigger browser download — user never leaves ampli
-      const a = document.createElement('a')
-      a.href = data.exportUrl
-      a.download = `${project.name || 'presentation'}.${format}`
-      a.click()
-    } catch (err: any) {
-      setGammaError(err.message || 'Export failed — please try again')
-    } finally {
-      setGammaLoading(false)
-    }
-  }
-
-  const BRAND_COLORS = [
-    brand.primaryColor,
-    brand.secondaryColor,
-    '#10b981',
-    '#f59e0b',
-    '#ef4444',
-    '#06b6d4',
-  ]
-
-  const T = {
-    pageBg: dark
-      ? 'linear-gradient(135deg, #09090b 0%, #18181b 100%)'
-      : 'linear-gradient(135deg, #e2e2ec 0%, #d6d6e4 100%)',
-    slideBg: dark
-      ? 'linear-gradient(145deg, #111113 0%, #1c1c1f 100%)'
-      : 'linear-gradient(145deg, #ffffff 0%, #f5f5fa 100%)',
-    slideBorder: dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-    textColor: dark ? '#ffffff' : '#0a0a0b',
-    dimColor: dark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.45)',
-    dimColor2: dark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)',
-    cardBg: dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
-    cardBorder: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-    divider: dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-    chromeBorder: dark ? 'border-white/5' : 'border-black/5',
-    text: dark ? 'text-white' : 'text-zinc-900',
-    railBg: dark ? '' : 'bg-white/40',
-    btnHover: dark ? 'hover:bg-white/10' : 'hover:bg-black/5',
-    btnBorder: dark ? 'border-white/10' : 'border-black/10',
-    timerActive: dark ? 'bg-red-500/20 text-red-400' : 'bg-red-500/15 text-red-600',
-    dimOpacity: dark ? 'opacity-40' : 'opacity-50',
-    slideTheme: dark ? ('dark' as const) : ('light' as const),
-  }
-
-  // Build slides — selection-aware when analysis_handoff.selectedFindings exists
-  // Groups consecutive/selected stat-only chart slides (a hero stat with no
-  // real comparison to chart — see isStatOnly in renderChartSlide) into
-  // batches of up to 3, each becoming one 'statgroup' slide instead of one
-  // full slide per stat. Every stat-only slide is grouped this way,
-  // including a lone leftover of 1 — the point is one consistent bubble
-  // treatment for hero stats, not "group when there happen to be several."
-  // Non-stat chart/table slides pass through untouched, in their original
-  // position. This only regroups at build time (initial generation or
-  // reopening the finding picker); a chart manually switched to a stat
-  // card later via the panel's "Show as stat card" toggle stays its own
-  // individual slide — retroactively re-grouping on every edit would mean
-  // slide identity/order shifting under the user's feet mid-edit.
-  const groupStatSlides = (contentSlides: Slide[]): Slide[] => {
-    const out: Slide[] = []
-    let buffer: { hero_stat: string; takeaway: string; index: number }[] = []
-    const flush = () => {
-      if (buffer.length === 0) return
-      out.push({ type: 'statgroup', stats: buffer })
-      buffer = []
-    }
-    for (const slide of contentSlides) {
-      const isStatOnly =
-        slide.type === 'chart' &&
-        (slide.chart?.type === 'stat' ||
-          !Array.isArray(slide.chart?.data) ||
-          slide.chart.data.length <= 1)
-      if (isStatOnly && slide.type === 'chart') {
-        buffer.push({
-          hero_stat: slide.chart.hero_stat || '',
-          takeaway: slide.chart.takeaway || '',
-          index: slide.index,
-        })
-        if (buffer.length === 3) flush()
-      } else {
-        flush()
-        out.push(slide)
-      }
-    }
-    flush()
-    return out
-  }
-
-  const buildSlides = (data: any): Slide[] => {
-    const handoff = data.analysis_handoff
-    const allSelections: any[] = handoff?.selectedFindings || []
-    // Pre-Pitch-Mode finding picker (see the gating screen further down):
-    // an array of indices into allSelections the user actually chose to
-    // include. Undefined means the picker hasn't been shown/confirmed
-    // yet for this project — every finding is included by default so
-    // nothing regresses for a project that predates this feature.
-    const included: number[] | undefined = data.pitch_included_findings
-    const selections =
-      included && Array.isArray(included)
-        ? allSelections.filter((_, i) => included.includes(i))
-        : allSelections
-    // Same defensive filter as AnalysisView.tsx, against the same root
-    // cause: a stray null in project.charts crashes the instant something
-    // reads a property off it. This is the array Pitch Mode's own
-    // buildSlides() maps over below, so it needs the identical guard.
-    const rawCharts: any[] = data.charts || []
-    const safeCharts = rawCharts.filter((c) => c && typeof c === 'object')
-    const titleSlide: Slide = { type: 'title', project: data }
-    const recsSlide: Slide = {
-      type: 'recommendations',
-      recommendations: data.recommendations || [],
-      narrative: data.narrative || '',
-    }
-
-    if (allSelections.length > 0) {
-      const contentSlides: Slide[] = selections.map((sel: any) => {
-        // i must be the index into the ORIGINAL allSelections/safeCharts
-        // arrays (not the filtered `selections` array) — every downstream
-        // consumer (updateChart, chart_box lookups, undo/redo) addresses
-        // charts by that original index, so filtering must never change
-        // what index a kept finding is known by.
-        const i = allSelections.indexOf(sel)
-        if (sel.type === 'table') {
-          return { type: 'table' as const, table: sel.table, takeaway: sel.takeaway, index: i }
-        }
-
-        // Match generated chart by index — but always override hero_stat and
-        // takeaway with the user-confirmed values from the selection. The AI
-        // may have reworded or changed these; the user's explicit choices win.
-        const generatedChart = safeCharts[i]
-        // Spread generatedChart FIRST, then override only the fields that
-        // genuinely need AI-vs-confirmed reconciliation. Previously this
-        // object was built field-by-field from an explicit whitelist that
-        // never included chart_box, hero_box, chart_scale, value_mode,
-        // icons, pre_stat_type, or any *_text_style field — since
-        // buildSlides() re-runs on every single edit (it's called inside
-        // commitProjectChange), every one of those was silently discarded
-        // the instant it was set, even though it saved to Supabase
-        // correctly. Spreading first means every editor-added field
-        // survives by default; only fields with real reconciliation logic
-        // need to be listed explicitly below.
-        const chart = {
-          ...generatedChart,
-          // Chart type and data come from generation (AI filled in data points)
-          type:
-            generatedChart?.type ||
-            (sel.chartType === 'grouped_bar' ? 'bar' : sel.chartType || 'bar'),
-          data: generatedChart?.data?.length > 0 ? generatedChart.data : sel.chartData || [],
-          stacked: generatedChart?.stacked || false,
-          // Title and description from generation — AI writes these
-          title: generatedChart?.title || sel.finding?.label || '',
-          description: generatedChart?.description || sel.finding?.interpretation || '',
-          // Hero stat and takeaway are USER-CONFIRMED — never use AI's version
-          hero_stat: sel.heroStat,
-          takeaway: sel.takeaway,
-          layout: generatedChart?.layout || 'split-right',
-          // Carry through any annotations or reference lines from generation
-          annotations: generatedChart?.annotations,
-          reference_line: generatedChart?.reference_line,
-        }
-        return { type: 'chart' as const, chart, index: i }
-      })
-      return [titleSlide, ...groupStatSlides(contentSlides), recsSlide]
-    }
-
-    // Legacy flow — no selections, use generic structure
-    const legacyCharts = included ? safeCharts.filter((_, i) => included.includes(i)) : safeCharts
-    const legacyIndexOf = (c: any) => safeCharts.indexOf(c)
-    return [
-      titleSlide,
-      { type: 'insights', insights: data.insights || [] },
-      ...groupStatSlides(
-        legacyCharts.map((chart: any) => ({
-          type: 'chart' as const,
-          chart,
-          index: legacyIndexOf(chart),
-        }))
-      ),
-      recsSlide,
-    ]
-  }
-
-  // ── Central commit path ────────────────────────────────────────────────
-  // Every mutation in this file (chart edits, table edits, recommendation
-  // edits, slide reorder/duplicate/delete/add) funnels through this one
-  // function. That's deliberate: it's what makes undo/redo work uniformly
-  // instead of needing separate history logic bolted onto six different
-  // update functions, and it's the one place that talks to Supabase, so
-  // save-state tracking stays consistent no matter what changed.
-  const persistProject = useCallback(async (next: any) => {
-    setSaveState('saving')
-    const payload: Record<string, any> = {}
-    for (const field of EDITABLE_FIELDS) payload[field] = next[field]
-    const { error } = await supabase.from('projects').update(payload).eq('id', next.id)
-    setSaveState(error ? 'error' : 'saved')
-    if (error) console.error('Failed to save pitch deck edit:', error)
+  const say = useCallback((msg: string) => {
+    setToast(msg)
+    clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
-  const commitProjectChange = useCallback(
-    (updater: (prev: any) => any, focusContentIndex?: number) => {
-      if (!project) return
-      const snapshot = structuredClone(project)
-      historyRef.current.past = [...historyRef.current.past, snapshot].slice(-HISTORY_LIMIT)
-      historyRef.current.future = []
-      setHistoryTick((t) => t + 1)
-
-      const next = updater(project)
-      setProject(next)
-      const nextSlides = buildSlides(next)
-      setSlides(nextSlides)
-
-      if (focusContentIndex !== undefined) {
-        const idx = nextSlides.findIndex(
-          (s) =>
-            (s.type === 'chart' || s.type === 'table') && (s as any).index === focusContentIndex
-        )
-        if (idx !== -1) setCurrent(idx)
-      } else {
-        setCurrent((c) => Math.min(c, nextSlides.length - 1))
-      }
-
-      persistProject(next)
-    },
-    [project, persistProject]
-  )
-
-  const undo = useCallback(() => {
-    if (!project || historyRef.current.past.length === 0) return
-    const previous = historyRef.current.past[historyRef.current.past.length - 1]
-    historyRef.current.past = historyRef.current.past.slice(0, -1)
-    historyRef.current.future = [structuredClone(project), ...historyRef.current.future].slice(
-      0,
-      HISTORY_LIMIT
-    )
-    setHistoryTick((t) => t + 1)
-    setProject(previous)
-    const nextSlides = buildSlides(previous)
-    setSlides(nextSlides)
-    setCurrent((c) => Math.min(c, nextSlides.length - 1))
-    persistProject(previous)
-  }, [project, persistProject])
-
-  const redo = useCallback(() => {
-    if (!project || historyRef.current.future.length === 0) return
-    const nextState = historyRef.current.future[0]
-    historyRef.current.future = historyRef.current.future.slice(1)
-    historyRef.current.past = [...historyRef.current.past, structuredClone(project)].slice(
-      -HISTORY_LIMIT
-    )
-    setHistoryTick((t) => t + 1)
-    setProject(nextState)
-    const nextSlides = buildSlides(nextState)
-    setSlides(nextSlides)
-    setCurrent((c) => Math.min(c, nextSlides.length - 1))
-    persistProject(nextState)
-  }, [project, persistProject])
-
-  const startPolling = useCallback((projectId: string) => {
-    pollAttempts.current = 0
-    if (pollRef.current) clearInterval(pollRef.current)
-    let stepIdx = 0
-    const stepTimer = setInterval(() => {
-      stepIdx = Math.min(stepIdx + 1, GENERATION_STEPS.length - 1)
-      setGenStep(stepIdx)
-    }, 3500)
-    pollRef.current = setInterval(async () => {
-      pollAttempts.current += 1
-      if (pollAttempts.current > POLL_MAX_ATTEMPTS) {
-        clearInterval(pollRef.current!)
-        clearInterval(stepTimer)
-        setGenError(
-          'Slide generation is taking longer than expected. Please go back and try again.'
-        )
-        setGenState('no_data')
-        return
-      }
-      const { data } = await supabase.from('projects').select('*').eq('id', projectId).single()
-      if (data?.charts?.length > 0) {
-        clearInterval(pollRef.current!)
-        clearInterval(stepTimer)
-        setProject(data)
-        setSlides(buildSlides(data))
-        setGenState('ready')
-      }
-    }, POLL_INTERVAL_MS)
-    return () => {
-      clearInterval(pollRef.current!)
-      clearInterval(stepTimer)
-    }
-  }, [])
-
-  const triggerGeneration = useCallback(
-    async (data: any) => {
-      setGenState('generating')
-      setGenStep(0)
-      const handoff: AnalysisHandoff | null = data.analysis_handoff || null
-      try {
-        await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId: data.id,
-            dataSummary: data.raw_data || null,
-            rawSample: null,
-            prompt: data.prompt || null,
-            tone: data.tone || 'executive',
-            projectName: data.name,
-            targetCompany: data.target_company || null,
-            targetAudience: null,
-            optIn: data.opt_in_crowd || false,
-            dataSourceType: data.data_source_type || null,
-            confirmedAnalysis: handoff?.confirmedAnalysis || null,
-            selectedFindings: handoff?.selectedFindings || null,
-          }),
-        })
-        startPolling(data.id)
-      } catch {
-        setGenError('Failed to start slide generation. Please go back and try again.')
-        setGenState('no_data')
-      }
-    },
-    [startPolling]
-  )
-
+  // load
   useEffect(() => {
     if (!id) return
     supabase
@@ -1397,1918 +225,531 @@ export default function PitchDeckPage() {
       .select('*')
       .eq('id', id)
       .single()
-      .then(({ data }) => {
-        if (!data) return
-        setProject(data)
-        if (data.charts?.length > 0) {
-          setSlides(buildSlides(data))
-          setGenState('ready')
-        } else if (data.analysis_handoff || data.raw_data) {
-          triggerGeneration(data)
-        } else {
-          setGenState('no_data')
+      .then(({ data }: { data: any }) => {
+        if (data) {
+          setProject(data)
+          const e = (
+            data.story_edits && typeof data.story_edits === 'object' ? data.story_edits : {}
+          ) as StoryEdits
+          setEdits(e)
+          editsRef.current = e
         }
+        setLoading(false)
       })
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
   }, [id])
 
-  // Forces the finding picker open the first time a project has findings
-  // but no saved inclusion list yet — see state declaration above for why.
-  // Keyed on pitch_included_findings specifically (not just project.id) so
-  // it also re-triggers correctly if that field is ever cleared.
-  useEffect(() => {
-    if (!project) return
-    const allFindings: any[] = project.analysis_handoff?.selectedFindings || []
-    const legacyCharts: any[] = (project.charts || []).filter(
-      (c: any) => c && typeof c === 'object'
-    )
-    const findingCount = allFindings.length > 0 ? allFindings.length : legacyCharts.length
-    if (findingCount > 0 && project.pitch_included_findings == null) {
-      setFindingPickerChecked(new Set(Array.from({ length: findingCount }, (_, i) => i)))
-      setFindingPickerOpen(true)
-    }
-  }, [project?.id, project?.pitch_included_findings])
+  const baseSlides = useMemo(() => buildStory(project), [project])
+  const slides = useMemo(() => applyEdits(baseSlides, edits), [baseSlides, edits])
+  const hidden = useMemo(() => new Set(edits.hidden || []), [edits.hidden])
+  const visible = useMemo(() => slides.filter((s) => !hidden.has(s.id)), [slides, hidden])
 
+  useEffect(() => {
+    if (slides.length === 0) return
+    if (!slides.some((s) => s.id === selectedId)) setSelectedId(slides[0].id)
+  }, [slides, selectedId])
+
+  const index = Math.max(
+    0,
+    slides.findIndex((s) => s.id === selectedId)
+  )
+  const slide = slides[index]
+
+  // size the stage
   useLayoutEffect(() => {
-    if (genState !== 'ready') return
-    const el = slideAreaRef.current
+    const el = stageRef.current
     if (!el) return
     const measure = () => {
-      const rect = el.getBoundingClientRect()
-      if (rect.width > 0 && rect.height > 0)
-        setSlideSize({ width: rect.width, height: rect.height })
+      const r = el.getBoundingClientRect()
+      setStageW(Math.max(320, Math.min(r.width - 48, (r.height - 48) * (16 / 9))))
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [genState])
+  }, [loading, slides.length])
 
   useEffect(() => {
-    if (timerRunning) timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
-    else clearInterval(timerRef.current)
-    return () => clearInterval(timerRef.current)
-  }, [timerRunning])
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen()
-      setIsFullscreen(true)
-    } else {
-      document.exitFullscreen()
-      setIsFullscreen(false)
-    }
-  }
-  useEffect(() => {
-    const h = () => setIsFullscreen(!!document.fullscreenElement)
-    document.addEventListener('fullscreenchange', h)
-    return () => document.removeEventListener('fullscreenchange', h)
+    const on = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
+    on()
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
   }, [])
 
-  const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
-
-  const go = useCallback(
-    (dir: 'prev' | 'next') => {
-      if (animating) return
-      const next = dir === 'next' ? current + 1 : current - 1
-      if (next < 0 || next >= slides.length) return
-      setSelectedBox(null)
-      setShowLayoutPicker(false)
-      setDirection(dir === 'next' ? 'right' : 'left')
-      setAnimating(true)
-      setVisible(false)
-      setTimeout(() => {
-        setCurrent(next)
-        setVisible(true)
-        setTimeout(() => setAnimating(false), 400)
-      }, 300)
+  // ── editing ───────────────────────────────────────────────────────────────
+  const commit = useCallback(
+    (fn: (e: StoryEdits) => StoryEdits) => {
+      const next = fn(editsRef.current)
+      editsRef.current = next
+      setEdits(next)
+      setSaveState('saving')
+      clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(async () => {
+        const { error } = await supabase
+          .from('projects')
+          .update({ story_edits: editsRef.current })
+          .eq('id', id)
+        setSaveState(error ? 'error' : 'saved')
+      }, 700)
     },
-    [animating, current, slides.length]
+    [id]
   )
 
-  const goTo = useCallback(
-    (i: number) => {
-      if (i === current) return
-      setSelectedBox(null)
-      setShowLayoutPicker(false)
-      setDirection(i > current ? 'right' : 'left')
-      setVisible(false)
-      setTimeout(() => {
-        setCurrent(i)
-        setVisible(true)
-      }, 300)
-    },
-    [current]
-  )
+  const setField = (slideId: string, key: string, value: string) =>
+    commit((e) => ({
+      ...e,
+      fields: { ...e.fields, [slideId]: { ...(e.fields?.[slideId] || {}), [key]: value } },
+    }))
+
+  const resetSlide = (slideId: string) =>
+    commit((e) => {
+      const fields = { ...(e.fields || {}) }
+      delete fields[slideId]
+      return { ...e, fields }
+    })
+
+  const toggleHidden = (slideId: string) =>
+    commit((e) => {
+      const h = new Set(e.hidden || [])
+      if (h.has(slideId)) h.delete(slideId)
+      else h.add(slideId)
+      return { ...e, hidden: Array.from(h) }
+    })
+
+  const move = (slideId: string, dir: -1 | 1) => {
+    const ids = slides.map((s) => s.id)
+    const i = ids.indexOf(slideId)
+    const j = i + dir
+    if (i < 1 || j < 1 || j >= ids.length) return // the title slide stays first
+    ;[ids[i], ids[j]] = [ids[j], ids[i]]
+    commit((e) => ({ ...e, order: ids }))
+  }
+
+  // ── slide actions ─────────────────────────────────────────────────────────
+  const copyImage = async () => {
+    if (!slide) return
+    setBusy('image')
+    try {
+      const ClipboardItemCtor = (window as any).ClipboardItem
+      if (ClipboardItemCtor && navigator.clipboard?.write) {
+        const pending = captureSlide(slide, kit, T, 'png').then((b) => {
+          if (!b) throw new Error('empty')
+          return b as Blob
+        })
+        await navigator.clipboard.write([new ClipboardItemCtor({ 'image/png': pending })])
+        say('Slide copied. Paste it into your deck.')
+      } else {
+        throw new Error('no clipboard')
+      }
+    } catch {
+      try {
+        const blob = (await captureSlide(slide, kit, T, 'png')) as Blob | null
+        if (blob) {
+          download(`${slug(project?.name)}_${slide.id}.png`, blob)
+          say('Your browser blocked copying, so the slide downloaded as an image.')
+        } else say('Could not create the image. Please try again.')
+      } catch {
+        say('Could not create the image. Please try again.')
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const copyText = async () => {
+    if (!slide) return
+    try {
+      await navigator.clipboard.writeText(slideToText(slide))
+      say('Slide text copied.')
+    } catch {
+      say('Your browser blocked copying text.')
+    }
+  }
+
+  const csv = slide ? slideToCsv(slide) : null
+  const downloadData = () => {
+    if (!slide || !csv) return
+    download(`${slug(project?.name)}_${slide.id}.csv`, csv, 'text/csv')
+    say('Data downloaded.')
+  }
+
+  const exportPdf = async () => {
+    if (visible.length === 0) return
+    setBusy('pdf')
+    try {
+      const jsPDF = (await import('jspdf')).default
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [SLIDE_W, SLIDE_H] })
+      for (let i = 0; i < visible.length; i++) {
+        say(`Rendering slide ${i + 1} of ${visible.length}`)
+        const dataUrl = (await captureSlide(visible[i], kit, T, 'jpeg')) as string
+        if (i > 0) pdf.addPage()
+        pdf.addImage(dataUrl, 'JPEG', 0, 0, SLIDE_W, SLIDE_H)
+      }
+      pdf.save(`${project?.pitch_title || project?.name || 'story'}.pdf`)
+      say('PDF downloaded.')
+    } catch (err) {
+      console.error(err)
+      say('PDF export failed. Please try again.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // ── present ───────────────────────────────────────────────────────────────
+  const startPresent = () => {
+    if (visible.length === 0) return
+    const at = visible.findIndex((s) => s.id === selectedId)
+    setPresentIdx(at >= 0 ? at : 0)
+    setPresenting(true)
+  }
 
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      const active = document.activeElement
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
-      const isMod = e.metaKey || e.ctrlKey
-      if (isMod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-        e.preventDefault()
-        undo()
-        return
-      }
-      if (isMod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
-        e.preventDefault()
-        redo()
-        return
-      }
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go('next')
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') go('prev')
-      if (e.key === 'Escape' && !document.fullscreenElement) router.push(`/projects/${id}`)
+    if (!presenting) return
+    const el = presentRef.current
+    try {
+      el?.requestFullscreen?.()
+    } catch {}
+    const onFs = () => {
+      if (!document.fullscreenElement) setPresenting(false)
     }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [go, undo, redo, id, router])
-
-  // ── Patch helpers ──────────────────────────────────────────────────────
-  // All rewritten to funnel through commitProjectChange so every edit,
-  // from any slide type, participates in the same undo/redo history and
-  // the same save-state tracking.
-
-  const updateChart = (chartIndex: number, patch: any) => {
-    commitProjectChange((prev: any) => {
-      const updated = [...(prev.charts || [])]
-      updated[chartIndex] = { ...updated[chartIndex], ...patch }
-      return { ...prev, charts: updated }
-    })
-  }
-  const updateInsight = (insightIndex: number, patch: any) => {
-    commitProjectChange((prev: any) => {
-      const updated = [...(prev.insights || [])]
-      updated[insightIndex] = { ...updated[insightIndex], ...patch }
-      return { ...prev, insights: updated }
-    })
-  }
-  const updateRecommendation = (recIndex: number, patch: any) => {
-    commitProjectChange((prev: any) => {
-      const updated = [...(prev.recommendations || [])]
-      updated[recIndex] = { ...updated[recIndex], ...patch }
-      return { ...prev, recommendations: updated }
-    })
-  }
-  const updateProjectField = (field: string, value: any) => {
-    commitProjectChange((prev: any) => ({ ...prev, [field]: value }))
-  }
-  const applyLayout = (chartIndex: number, layout: LayoutPreset, scale?: number) => {
-    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height, scale)
-    updateChart(chartIndex, { layout, chart_box: boxes.chart, hero_box: boxes.hero })
-    setShowLayoutPicker(false)
-  }
-  const resetBoxes = (chart: any, chartIndex: number) => {
-    const layout: LayoutPreset = chart.layout || 'split-right'
-    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height, DEFAULT_CHART_SCALE)
-    updateChart(chartIndex, {
-      chart_box: boxes.chart,
-      hero_box: boxes.hero,
-      chart_scale: DEFAULT_CHART_SCALE,
-    })
-  }
-  // Nudges the chart's share of its layout slot up or down by one step and
-  // re-derives both boxes from scratch at the new scale — this is the
-  // "Size" control in the selection toolbar. Deliberately re-derives from
-  // boxesForLayout every time rather than scaling the live (possibly
-  // hand-dragged) box, so Size always produces the same clean result
-  // regardless of what free-drag resizing did before it.
-  const nudgeChartScale = (chart: any, chartIndex: number, direction: 1 | -1) => {
-    const layout: LayoutPreset = chart.layout || 'split-right'
-    const current = typeof chart.chart_scale === 'number' ? chart.chart_scale : DEFAULT_CHART_SCALE
-    const next = Math.min(
-      MAX_CHART_SCALE,
-      Math.max(MIN_CHART_SCALE, Math.round((current + direction * CHART_SCALE_STEP) * 100) / 100)
-    )
-    const boxes = boxesForLayout(layout, slideSize.width, slideSize.height, next)
-    updateChart(chartIndex, { chart_box: boxes.chart, hero_box: boxes.hero, chart_scale: next })
-  }
-
-  // ── Icons ──────────────────────────────────────────────────────────────
-  // Icons live on the chart object itself (chart.icons), so they persist
-  // and undo/redo through the exact same path as everything else on the
-  // slide — no separate save mechanism to keep in sync.
-  const addIcon = (chart: any, chartIndex: number, iconName: string) => {
-    const id = `icon-${Date.now()}-${Math.round(Math.random() * 1000)}`
-    const size = DEFAULT_ICON_SIZE
-    const newIcon = {
-      id,
-      name: iconName,
-      x: slideSize.width / 2 - size / 2,
-      y: slideSize.height / 2 - size / 2,
-      size,
-      color: accent,
+    document.addEventListener('fullscreenchange', onFs)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPresenting(false)
+      else if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown')
+        setPresentIdx((i) => Math.min(i + 1, visible.length - 1))
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') setPresentIdx((i) => Math.max(i - 1, 0))
     }
-    updateChart(chartIndex, { icons: [...(chart.icons || []), newIcon] })
-    setSelectedIconId(id)
-    setShowIconPicker(false)
-  }
-  const updateIconLive = (chartIndex: number, iconId: string, patch: any) => {
-    setSlides((s) =>
-      s.map((sl) =>
-        sl.type === 'chart' && sl.index === chartIndex
-          ? {
-              ...sl,
-              chart: {
-                ...sl.chart,
-                icons: (sl.chart.icons || []).map((ic: any) =>
-                  ic.id === iconId ? { ...ic, ...patch } : ic
-                ),
-              },
-            }
-          : sl
-      )
-    )
-  }
-  const commitIcon = (chart: any, chartIndex: number, iconId: string, patch: any) => {
-    updateChart(chartIndex, {
-      icons: (chart.icons || []).map((ic: any) => (ic.id === iconId ? { ...ic, ...patch } : ic)),
-    })
-  }
-  const deleteIcon = (chart: any, chartIndex: number, iconId: string) => {
-    updateChart(chartIndex, { icons: (chart.icons || []).filter((ic: any) => ic.id !== iconId) })
-    setSelectedIconId(null)
-  }
-
-  // ── Stat / chart type / value mode — the panel's contextual controls ────
-  const toggleStatMode = (chart: any, chartIndex: number) => {
-    const isStatOnly =
-      chart.type === 'stat' || (Array.isArray(chart.data) && chart.data.length <= 1)
-    if (isStatOnly) {
-      updateChart(chartIndex, { type: chart.pre_stat_type || 'bar', pre_stat_type: undefined })
-    } else {
-      updateChart(chartIndex, { type: 'stat', pre_stat_type: chart.type || 'bar' })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('fullscreenchange', onFs)
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
     }
-  }
-  const setChartType = (chartIndex: number, type: string) => {
-    updateChart(chartIndex, { type })
-  }
-  const setValueMode = (chartIndex: number, mode: 'absolute' | 'indexed') => {
-    updateChart(chartIndex, { value_mode: mode })
-  }
+  }, [presenting, visible.length])
 
-  // Table edits — table data lives inside analysis_handoff.selectedFindings,
-  // not in the charts array, so this has its own commit path.
-  const updateTableSlide = (selIndex: number, patch: { table?: any; takeaway?: string }) => {
-    commitProjectChange((prev: any) => {
-      const handoff = prev.analysis_handoff
-      const sel = handoff?.selectedFindings
-      if (!Array.isArray(sel) || !sel[selIndex]) return prev
-      const newSel = [...sel]
-      newSel[selIndex] = {
-        ...newSel[selIndex],
-        ...(patch.table ? { table: patch.table } : {}),
-        ...(patch.takeaway !== undefined ? { takeaway: patch.takeaway } : {}),
-      }
-      return { ...prev, analysis_handoff: { ...handoff, selectedFindings: newSel } }
-    })
-  }
-  const updateTableField = (
-    selIndex: number,
-    field: 'title' | 'description' | 'footnote',
-    value: string
-  ) => {
-    const table = project?.analysis_handoff?.selectedFindings?.[selIndex]?.table
-    if (!table) return
-    updateTableSlide(selIndex, { table: { ...table, [field]: value } })
-  }
-  const updateTableHeader = (selIndex: number, headerIndex: number, value: string) => {
-    const table = project?.analysis_handoff?.selectedFindings?.[selIndex]?.table
-    if (!table) return
-    const newHeaders = (table.headers || []).map((h: string, i: number) =>
-      i === headerIndex ? value : h
-    )
-    updateTableSlide(selIndex, { table: { ...table, headers: newHeaders } })
-  }
-  const updateTableCell = (
-    selIndex: number,
-    rowIndex: number,
-    cellIndex: number,
-    value: string
-  ) => {
-    const table = project?.analysis_handoff?.selectedFindings?.[selIndex]?.table
-    if (!table) return
-    const newRows = (table.rows || []).map((row: any[], ri: number) =>
-      ri !== rowIndex
-        ? row
-        : row.map((cell: any, ci: number) => {
-            if (ci !== cellIndex) return cell
-            return typeof cell === 'object' && cell !== null ? { ...cell, display: value } : value
-          })
-    )
-    updateTableSlide(selIndex, { table: { ...table, rows: newRows } })
-  }
-
-  // ── Slide management ───────────────────────────────────────────────────
-  // Operates on chart and table content slides only — title, insights, and
-  // recommendations are fixed singleton slides in this data model, not
-  // reorderable/duplicable content. charts[] and analysis_handoff's
-  // selectedFindings[] (when present) are kept in lockstep, since
-  // buildSlides pairs them by index — the same permutation is applied to
-  // both, unconditionally, since even an unused charts[] slot for a
-  // table-type selection is harmless to move alongside it.
-  const moveContentSlide = (fromIdx: number, toIdx: number) => {
-    if (fromIdx === toIdx) return
-    commitProjectChange((prev: any) => {
-      const charts = [...(prev.charts || [])]
-      if (fromIdx < charts.length && toIdx < charts.length) {
-        const [moved] = charts.splice(fromIdx, 1)
-        charts.splice(toIdx, 0, moved)
-      }
-      let analysis_handoff = prev.analysis_handoff
-      const sel = analysis_handoff?.selectedFindings
-      if (Array.isArray(sel) && fromIdx < sel.length && toIdx < sel.length) {
-        const newSel = [...sel]
-        const [movedSel] = newSel.splice(fromIdx, 1)
-        newSel.splice(toIdx, 0, movedSel)
-        analysis_handoff = { ...analysis_handoff, selectedFindings: newSel }
-      }
-      return { ...prev, charts, analysis_handoff }
-    }, toIdx)
-  }
-  const duplicateContentSlide = (idx: number) => {
-    commitProjectChange((prev: any) => {
-      const charts = [...(prev.charts || [])]
-      if (idx < charts.length) charts.splice(idx + 1, 0, structuredClone(charts[idx]))
-      let analysis_handoff = prev.analysis_handoff
-      const sel = analysis_handoff?.selectedFindings
-      if (Array.isArray(sel) && idx < sel.length) {
-        const newSel = [...sel]
-        newSel.splice(idx + 1, 0, structuredClone(sel[idx]))
-        analysis_handoff = { ...analysis_handoff, selectedFindings: newSel }
-      }
-      return { ...prev, charts, analysis_handoff }
-    }, idx + 1)
-  }
-  const deleteContentSlide = (idx: number) => {
-    commitProjectChange((prev: any) => {
-      const charts = [...(prev.charts || [])]
-      if (idx < charts.length) charts.splice(idx, 1)
-      let analysis_handoff = prev.analysis_handoff
-      const sel = analysis_handoff?.selectedFindings
-      if (Array.isArray(sel) && idx < sel.length) {
-        const newSel = [...sel]
-        newSel.splice(idx, 1)
-        analysis_handoff = { ...analysis_handoff, selectedFindings: newSel }
-      }
-      return { ...prev, charts, analysis_handoff }
-    })
-  }
-  // ── Finding picker ────────────────────────────────────────────────────
-  const findingPickerItems = (() => {
-    if (!project) return []
-    const allFindings: any[] = project.analysis_handoff?.selectedFindings || []
-    if (allFindings.length > 0) {
-      return allFindings.map((sel: any, i: number) => ({
-        index: i,
-        label: sel.finding?.label || (sel.type === 'table' ? `Table ${i + 1}` : `Chart ${i + 1}`),
-        sub:
-          sel.type === 'table'
-            ? 'Table'
-            : sel.chartType === 'grouped_bar'
-              ? 'Bar'
-              : sel.chartType || 'Chart',
-      }))
+  // arrow keys in the editor
+  useEffect(() => {
+    if (presenting) return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+      if (e.key === 'ArrowRight' && slides[index + 1]) setSelectedId(slides[index + 1].id)
+      if (e.key === 'ArrowLeft' && slides[index - 1]) setSelectedId(slides[index - 1].id)
     }
-    const legacyCharts: any[] = (project.charts || []).filter(
-      (c: any) => c && typeof c === 'object'
-    )
-    return legacyCharts.map((c: any, i: number) => ({
-      index: i,
-      label: c.title || `Chart ${i + 1}`,
-      sub: c.type || 'chart',
-    }))
-  })()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [presenting, slides, index])
 
-  const openFindingPicker = () => {
-    const saved: number[] | undefined = project?.pitch_included_findings
-    setFindingPickerChecked(
-      new Set(saved && Array.isArray(saved) ? saved : findingPickerItems.map((f) => f.index))
-    )
-    setFindingPickerOpen(true)
-  }
+  // ── chrome ────────────────────────────────────────────────────────────────
+  const bg = dark ? 'bg-[#0A0A0F] text-white' : 'bg-[#F8F8FA] text-[#080C14]'
+  const bar = dark ? 'border-zinc-800 bg-[#0A0A0F]' : 'border-zinc-200 bg-white'
+  const panel = dark ? 'border-zinc-800 bg-[#0F1420]' : 'border-zinc-200 bg-white'
+  const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
+  const input = dark
+    ? 'bg-[#0A0A0F] border-zinc-700 text-white focus:border-[#5DCAA5]'
+    : 'bg-white border-zinc-300 text-[#080C14] focus:border-[#5DCAA5]'
+  const ghost = dark
+    ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800'
+    : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'
 
-  const confirmFindingPicker = () => {
-    commitProjectChange((prev: any) => ({
-      ...prev,
-      pitch_included_findings: Array.from(findingPickerChecked).sort((a, b) => a - b),
-    }))
-    setFindingPickerOpen(false)
-  }
-
-  const addBlankSlide = () => {
-    if (!project) return
-    const newIndex = (project.charts || []).length
-    commitProjectChange((prev: any) => {
-      const charts = [
-        ...(prev.charts || []),
-        {
-          type: 'bar',
-          data: [],
-          title: '',
-          description: '',
-          hero_stat: '',
-          takeaway: '',
-          layout: 'split-right',
-          value_mode: 'absolute',
-          icons: [],
-        },
-      ]
-      let analysis_handoff = prev.analysis_handoff
-      const sel = analysis_handoff?.selectedFindings
-      if (Array.isArray(sel)) {
-        analysis_handoff = {
-          ...analysis_handoff,
-          selectedFindings: [
-            ...sel,
-            {
-              type: 'finding',
-              heroStat: '',
-              takeaway: '',
-              chartType: 'bar',
-              chartData: [],
-            },
-          ],
-        }
-      }
-      return { ...prev, charts, analysis_handoff }
-    }, newIndex)
-  }
-
-  // ── Slide renderers ────────────────────────────────────────────────────
-
-  const HeroPanelContent = ({ chart, chartIndex }: { chart: any; chartIndex: number }) => (
-    <div
-      className="flex flex-col items-center justify-center rounded-2xl p-6 h-full w-full"
-      style={{
-        background: `linear-gradient(135deg, ${brand.primaryColor}${dark ? '22' : '18'}, ${brand.primaryColor}${dark ? '44' : '30'})`,
-      }}
-    >
-      <EditableText
-        value={chart.hero_stat || ''}
-        onCommit={(v) => updateChart(chartIndex, { hero_stat: v })}
-        placeholder="+0%"
-        theme={T.slideTheme}
-        className="font-black mb-3 leading-none text-center text-6xl"
-        style={{ color: brand.primaryColor }}
-        textStyle={chart.hero_text_style || {}}
-        onStyleChange={(s) => updateChart(chartIndex, { hero_text_style: s })}
-        brandColors={BRAND_COLORS}
-        accentColor={accent}
-      />
-      <EditableText
-        value={chart.takeaway || ''}
-        onCommit={(v) => updateChart(chartIndex, { takeaway: v })}
-        placeholder="Add a takeaway..."
-        theme={T.slideTheme}
-        multiline
-        className="text-center leading-relaxed opacity-90 text-lg font-medium"
-        style={{ color: dark ? '#ffffff' : '#0a0a0b' }}
-        textStyle={chart.takeaway_text_style || {}}
-        onStyleChange={(s) => updateChart(chartIndex, { takeaway_text_style: s })}
-        brandColors={BRAND_COLORS}
-        accentColor={accent}
-      />
-    </div>
+  const fontLink = (
+    // eslint-disable-next-line @next/next/no-page-custom-font
+    <link rel="stylesheet" href={FONT_PAIRINGS[kit.fontPairing].googleHref} />
   )
 
-  const renderChartSlide = (chart: any, index: number) => {
-    const layout: LayoutPreset = chart.layout || 'split-right'
-    const dataPointCount = Array.isArray(chart?.data) ? chart.data.length : 0
-    // A slide with one data point (or none) isn't a comparison a bar/line
-    // chart can meaningfully show — a single bar filling the full height of
-    // its box, or an empty chart, both read as broken rather than clean.
-    // Anything down to one point (a correlation coefficient, a single
-    // ratio) is really just the hero stat on its own, so it renders as a
-    // clean stat card instead of being forced through Recharts.
-    // chart.type === 'stat' is the explicit, AI-authored version of the
-    // same thing; either path lands here.
-    const isStatOnly = chart.type === 'stat' || dataPointCount <= 1
-    // Only offer the manual override when there's actually enough data to
-    // make a real chart out of — no point offering "show as chart" for a
-    // single data point with nothing to compare it against.
-    const canToggleStat = dataPointCount >= 2
-
-    const icons: any[] = Array.isArray(chart.icons) ? chart.icons : []
-
-    const headerBlock = (
-      <div className="absolute top-0 left-0 px-8 pt-6" style={{ width: slideSize.width - 64 }}>
-        <EditableText
-          value={chart.title || ''}
-          onCommit={(v) => updateChart(index, { title: v })}
-          placeholder="Chart title"
-          theme={T.slideTheme}
-          className="text-xl font-bold leading-tight"
-          textStyle={chart.title_text_style || {}}
-          onStyleChange={(s) => updateChart(index, { title_text_style: s })}
-          brandColors={BRAND_COLORS}
-          accentColor={accent}
-        />
-        <EditableText
-          value={chart.description || ''}
-          onCommit={(v) => updateChart(index, { description: v })}
-          placeholder="Add a description..."
-          theme={T.slideTheme}
-          className="text-sm mt-1"
-          style={{ color: T.dimColor }}
-          textStyle={chart.description_text_style || {}}
-          onStyleChange={(s) => updateChart(index, { description_text_style: s })}
-          brandColors={BRAND_COLORS}
-          accentColor={accent}
-        />
-      </div>
-    )
-
-    // Icons are a slide-level overlay, independent of the chart/stat split
-    // below, so both branches render the exact same layer. Reuses
-    // DraggableBox rather than a bespoke drag implementation — an icon is
-    // just a box with an SVG glyph centered in it.
-    const iconLayer = icons.map((ic) => {
-      const IconGlyph = ICON_BY_NAME[ic.name] || Star
-      const box: Box = { x: ic.x, y: ic.y, w: ic.size, h: ic.size }
-      return (
-        <DraggableBox
-          key={ic.id}
-          box={box}
-          onChange={(b) =>
-            updateIconLive(index, ic.id, { x: b.x, y: b.y, size: Math.min(b.w, b.h) })
-          }
-          onCommit={(b) =>
-            commitIcon(chart, index, ic.id, { x: b.x, y: b.y, size: Math.min(b.w, b.h) })
-          }
-          selected={selectedIconId === ic.id}
-          onSelect={() => {
-            setSelectedIconId(ic.id)
-            setSelectedBox(null)
-          }}
-          accentColor={accent}
-          maxW={slideSize.width - 96}
-          maxH={slideSize.height - 96 - 24}
-        >
-          <IconGlyph size="100%" color={ic.color || accent} strokeWidth={1.75} />
-        </DraggableBox>
-      )
-    })
-
-    const clearSelection = (e: React.PointerEvent) => {
-      if (!(e.target as HTMLElement).closest('[data-no-drag]')) {
-        setSelectedBox(null)
-        setSelectedIconId(null)
-        setShowLayoutPicker(false)
-      }
-    }
-
-    if (isStatOnly) {
-      return (
-        <div className="absolute inset-0" onPointerDown={clearSelection}>
-          {headerBlock}
-          <div
-            className="absolute inset-0 flex items-center justify-center px-24"
-            style={{ paddingTop: 96, paddingBottom: 24 }}
-          >
-            <div className="w-full max-w-md" data-no-drag="true">
-              <HeroPanelContent chart={chart} chartIndex={index} />
-            </div>
-          </div>
-          {iconLayer}
-        </div>
-      )
-    }
-
-    const chartScale =
-      typeof chart.chart_scale === 'number' ? chart.chart_scale : DEFAULT_CHART_SCALE
-    const defaults = boxesForLayout(layout, slideSize.width, slideSize.height, chartScale)
-    // A saved box is only trusted if it's shaped like a real box (numeric,
-    // non-degenerate w/h) AND still roughly fits the CURRENT canvas — a box
-    // saved while the slide area measured one size, then rendered later at
-    // a meaningfully different size (a different window width, a resize
-    // race on first load, fullscreen toggling), is stale and should fall
-    // back to freshly computed defaults for the size it's actually on now,
-    // rather than being trusted at face value forever. This is the fix for
-    // "placement looks too large/small in places" — a stale box wasn't
-    // literally wrong, it was correct for a canvas size that's no longer
-    // the one it's rendering on.
-    const isValidBox = (b: any): b is Box =>
-      b &&
-      typeof b.x === 'number' &&
-      typeof b.y === 'number' &&
-      typeof b.w === 'number' &&
-      typeof b.h === 'number' &&
-      b.w >= MIN_BOX_DIM &&
-      b.h >= MIN_BOX_DIM &&
-      b.x + b.w <= slideSize.width * 1.5 &&
-      b.y + b.h <= slideSize.height * 1.5
-    const liveChartBox = isValidBox(chart.chart_box) ? chart.chart_box : defaults.chart
-    const liveHeroBox = isValidBox(chart.hero_box) ? chart.hero_box : defaults.hero
-    const chartKey = `${index}-${layout}-${chart.type}-${chart.value_mode}-${Math.round(slideSize.width)}x${Math.round(slideSize.height)}`
-    const hasChartData = dataPointCount > 0
-    // The AI schema is grounded to the data summary's absolute units —
-    // "Indexed" is purely a display transform layered on top at render
-    // time, never a rewrite of the stored chart.data, so switching back to
-    // Absolute always returns the exact original numbers.
-    const dataKeys = getDataKeysLocal(chart.data || [])
-    const isIndexed = chart.value_mode === 'indexed'
-    const displayData = isIndexed ? toIndexedData(chart.data, dataKeys) : chart.data
-
-    const canvasCenterX = slideSize.width / 2
-    const canvasCenterY = slideSize.height / 2
-    const chartSnapX = [
-      canvasCenterX,
-      liveHeroBox.x,
-      liveHeroBox.x + liveHeroBox.w / 2,
-      liveHeroBox.x + liveHeroBox.w,
-    ]
-    const chartSnapY = [
-      canvasCenterY,
-      liveHeroBox.y,
-      liveHeroBox.y + liveHeroBox.h / 2,
-      liveHeroBox.y + liveHeroBox.h,
-    ]
-    const heroSnapX = [
-      canvasCenterX,
-      liveChartBox.x,
-      liveChartBox.x + liveChartBox.w / 2,
-      liveChartBox.x + liveChartBox.w,
-    ]
-    const heroSnapY = [
-      canvasCenterY,
-      liveChartBox.y,
-      liveChartBox.y + liveChartBox.h / 2,
-      liveChartBox.y + liveChartBox.h,
-    ]
-
+  if (loading) {
     return (
-      <div className="absolute inset-0" onPointerDown={clearSelection}>
-        {headerBlock}
-
-        {isIndexed && (
-          <div
-            className="absolute z-30 px-2 py-1 rounded-md text-[10px] font-medium"
-            style={{
-              left: liveChartBox.x,
-              top: liveChartBox.y - 22,
-              background: hexToRgba(accent, 0.18),
-              color: accent,
-            }}
-          >
-            Indexed to 100
-          </div>
-        )}
-
-        {guides?.x.map((gx) => (
-          <div
-            key={`gx-${gx}`}
-            className="absolute top-0 bottom-0 pointer-events-none"
-            style={{ left: gx, width: 1, background: accent, zIndex: 40 }}
-          />
-        ))}
-        {guides?.y.map((gy) => (
-          <div
-            key={`gy-${gy}`}
-            className="absolute left-0 right-0 pointer-events-none"
-            style={{ top: gy, height: 1, background: accent, zIndex: 40 }}
-          />
-        ))}
-
-        <DraggableBox
-          box={liveChartBox}
-          onChange={(b) =>
-            setSlides((s) =>
-              s.map((sl) =>
-                sl.type === 'chart' && sl.index === index
-                  ? { ...sl, chart: { ...sl.chart, chart_box: b } }
-                  : sl
-              )
-            )
-          }
-          onCommit={(b) => updateChart(index, { chart_box: b })}
-          selected={selectedBox === 'chart'}
-          onSelect={() => {
-            setSelectedBox('chart')
-            setSelectedIconId(null)
-          }}
-          snapX={chartSnapX}
-          snapY={chartSnapY}
-          onGuides={setGuides}
-          accentColor={accent}
-          maxW={slideSize.width - 96}
-          maxH={slideSize.height - 96 - 24}
-        >
-          {hasChartData ? (
-            <div
-              className="rounded-2xl h-full w-full"
-              style={{
-                padding: '20px 20px 8px',
-                background: T.cardBg,
-                border: `1px solid ${T.cardBorder}`,
-              }}
-            >
-              <ChartErrorBoundary dark={dark}>
-                <ChartRenderer
-                  key={chartKey}
-                  chart={{ ...chart, data: displayData }}
-                  colors={BRAND_COLORS}
-                  height={Math.max(MIN_BOX_DIM - 28, liveChartBox.h - 28)}
-                  dark={dark}
-                />
-              </ChartErrorBoundary>
-            </div>
-          ) : (
-            <div
-              className="w-full h-full flex items-center justify-center rounded-2xl text-sm"
-              style={{ border: `1px dashed ${T.divider}`, color: T.dimColor }}
-            >
-              No data for this chart
-            </div>
-          )}
-        </DraggableBox>
-
-        <DraggableBox
-          box={liveHeroBox}
-          onChange={(b) =>
-            setSlides((s) =>
-              s.map((sl) =>
-                sl.type === 'chart' && sl.index === index
-                  ? { ...sl, chart: { ...sl.chart, hero_box: b } }
-                  : sl
-              )
-            )
-          }
-          onCommit={(b) => updateChart(index, { hero_box: b })}
-          selected={selectedBox === 'hero'}
-          onSelect={() => {
-            setSelectedBox('hero')
-            setSelectedIconId(null)
-          }}
-          snapX={heroSnapX}
-          snapY={heroSnapY}
-          onGuides={setGuides}
-          accentColor={accent}
-          maxW={slideSize.width - 96}
-          maxH={slideSize.height - 96 - 24}
-        >
-          <HeroPanelContent chart={chart} chartIndex={index} />
-        </DraggableBox>
-
-        {iconLayer}
+      <div className={`min-h-screen flex items-center justify-center ${bg}`}>
+        <div className="w-6 h-6 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
 
-  // Speech-bubble stat cards — up to 3 hero stats side by side on one
-  // slide. Grouping happens in buildSlides(), not here; this just renders
-  // whatever chunk it's handed. hero_stat/takeaway still edit through the
-  // same updateChart(index, ...) path as a normal chart slide's callout,
-  // keyed off each stat's original chart index — so a grouped stat is
-  // still "the same chart" as far as saving/undo/redo is concerned, it
-  // just displays differently.
-  const renderStatGroupSlide = (slide: Extract<Slide, { type: 'statgroup' }>) => {
-    const bubbleColor = brand.secondaryColor
-    return (
-      <div className="absolute inset-0 flex items-center justify-center gap-8 px-16">
-        {slide.stats.map((s) => (
-          <div key={s.index} className="relative flex-1 max-w-xs">
-            <div
-              className="rounded-2xl px-7 pt-8 pb-9 flex flex-col items-center text-center"
-              style={{ background: bubbleColor }}
-            >
-              <EditableText
-                value={s.hero_stat || ''}
-                onCommit={(v) => updateChart(s.index, { hero_stat: v })}
-                placeholder="+0%"
-                theme="dark"
-                className="font-black leading-none text-center text-4xl mb-3"
-                style={{ color: '#ffffff' }}
-                brandColors={BRAND_COLORS}
-                accentColor={accent}
-              />
-              <EditableText
-                value={s.takeaway || ''}
-                onCommit={(v) => updateChart(s.index, { takeaway: v })}
-                placeholder="What this stat means"
-                theme="dark"
-                className="text-sm text-center leading-snug"
-                style={{ color: 'rgba(255,255,255,0.85)' }}
-                brandColors={BRAND_COLORS}
-                accentColor={accent}
-              />
-            </div>
-            {/* Speech-bubble tail — small downward-pointing triangle
-                anchored to the bottom-left of the card, matching the
-                reference deck's stat callouts. */}
-            <div
-              className="absolute"
-              style={{
-                left: 28,
-                bottom: -13,
-                width: 0,
-                height: 0,
-                borderLeft: '13px solid transparent',
-                borderRight: '13px solid transparent',
-                borderTop: `15px solid ${bubbleColor}`,
-              }}
-            />
-          </div>
-        ))}
-      </div>
-    )
-  }
-
-  const renderTableSlide = (slide: Extract<Slide, { type: 'table' }>) => {
-    const selIndex = slide.index
-    return (
-      <div className="flex flex-col h-full px-8 py-6">
-        <div className="mb-5">
-          <EditableText
-            value={slide.table?.title || ''}
-            onCommit={(v) => updateTableField(selIndex, 'title', v)}
-            placeholder="Table title"
-            theme={T.slideTheme}
-            className="text-2xl font-bold leading-tight"
-            brandColors={BRAND_COLORS}
-            accentColor={accent}
-          />
-          <EditableText
-            value={slide.table?.description || ''}
-            onCommit={(v) => updateTableField(selIndex, 'description', v)}
-            placeholder="Add a description..."
-            theme={T.slideTheme}
-            className="text-sm mt-1"
-            style={{ color: T.dimColor }}
-            brandColors={BRAND_COLORS}
-            accentColor={accent}
-          />
-        </div>
-        <div className="flex-1 overflow-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr>
-                {(slide.table?.headers || []).map((h: string, i: number) => (
-                  <th
-                    key={i}
-                    className="text-left px-3 py-2 text-[11px] font-semibold uppercase tracking-wide"
-                    style={{ color: T.dimColor, borderBottom: `1px solid ${T.divider}` }}
-                  >
-                    <EditableText
-                      value={h}
-                      onCommit={(v) => updateTableHeader(selIndex, i, v)}
-                      placeholder="Header"
-                      theme={T.slideTheme}
-                      className="text-[11px] font-semibold uppercase tracking-wide"
-                      brandColors={BRAND_COLORS}
-                      accentColor={accent}
-                    />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(slide.table?.rows || []).map((row: any[], ri: number) => (
-                <tr key={ri} style={{ borderBottom: `1px solid ${T.divider}` }}>
-                  {row.map((cell: any, ci: number) => {
-                    const cellText =
-                      typeof cell === 'object' && cell !== null ? cell.display : String(cell ?? '')
-                    return (
-                      <td
-                        key={ci}
-                        className="px-3 py-2.5"
-                        style={{ color: ci === 0 ? T.textColor : T.dimColor2 }}
-                      >
-                        <EditableText
-                          value={cellText}
-                          onCommit={(v) => updateTableCell(selIndex, ri, ci, v)}
-                          placeholder=""
-                          theme={T.slideTheme}
-                          className="text-xs"
-                          brandColors={BRAND_COLORS}
-                          accentColor={accent}
-                        />
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div
-          className="mt-4 pt-4 flex items-center gap-4"
-          style={{ borderTop: `1px solid ${T.divider}` }}
-        >
-          <div
-            className="w-1 h-10 rounded-full shrink-0"
-            style={{ background: brand.primaryColor }}
-          />
-          <EditableText
-            value={slide.takeaway || ''}
-            onCommit={(v) => updateTableSlide(selIndex, { takeaway: v })}
-            placeholder="Add a takeaway..."
-            theme={T.slideTheme}
-            multiline
-            className="text-sm font-medium leading-relaxed flex-1"
-            style={{ color: T.dimColor2 }}
-            brandColors={BRAND_COLORS}
-            accentColor={accent}
-          />
-        </div>
-        <EditableText
-          value={slide.table?.footnote || ''}
-          onCommit={(v) => updateTableField(selIndex, 'footnote', v)}
-          placeholder="Add a footnote (optional)..."
-          theme={T.slideTheme}
-          className="text-[11px] mt-2"
-          style={{ color: T.dimColor }}
-          brandColors={BRAND_COLORS}
-          accentColor={accent}
-        />
-      </div>
-    )
-  }
-
-  const renderSlide = (slide: Slide) => {
-    if (slide.type === 'title') {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-center px-16">
-          {brand.logoUrl && (
-            <img src={brand.logoUrl} alt="Logo" className="h-12 object-contain mb-8" />
-          )}
-          <div
-            className="text-xs font-semibold uppercase tracking-widest mb-4"
-            style={{ color: T.dimColor }}
-          >
-            {new Date(slide.project.created_at).toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}
-          </div>
-          <div data-no-drag="true" className="w-full max-w-3xl">
-            <EditableText
-              value={slide.project.pitch_title || slide.project.name || ''}
-              onCommit={(v) => updateProjectField('pitch_title', v)}
-              placeholder="Pitch title"
-              theme={T.slideTheme}
-              className="text-5xl font-black mb-6 leading-tight text-center"
-              style={{ color: brand.primaryColor }}
-              textStyle={project?.title_text_style || {}}
-              onStyleChange={(s) => updateProjectField('title_text_style', s)}
-              brandColors={BRAND_COLORS}
-              accentColor={accent}
-            />
-          </div>
-          <div
-            className="w-20 h-1 rounded-full"
-            style={{
-              background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-            }}
-          />
-        </div>
-      )
-    }
-
-    if (slide.type === 'insights') {
-      return (
-        <div className="flex flex-col h-full px-8 py-6">
-          <h2 className="text-2xl font-bold mb-5">Key Insights</h2>
-          <div className="grid grid-cols-3 gap-3 flex-1">
-            {slide.insights.slice(0, 6).map((insight: any, i: number) => (
-              <div
-                key={i}
-                className="p-4 rounded-2xl flex flex-col overflow-hidden"
-                style={{
-                  background: `${brand.primaryColor}15`,
-                  border: `1px solid ${brand.primaryColor}30`,
-                }}
-              >
-                <EditableText
-                  value={insight.title || ''}
-                  onCommit={(v) => updateInsight(i, { title: v })}
-                  placeholder="Metric name"
-                  theme={T.slideTheme}
-                  className="text-xs uppercase tracking-wider mb-2"
-                  style={{ color: T.dimColor }}
-                  textStyle={insight.title_text_style || {}}
-                  onStyleChange={(s) => updateInsight(i, { title_text_style: s })}
-                  brandColors={BRAND_COLORS}
-                  accentColor={accent}
-                />
-                <EditableText
-                  value={insight.value || ''}
-                  onCommit={(v) => updateInsight(i, { value: v })}
-                  placeholder="0"
-                  theme={T.slideTheme}
-                  className="text-3xl font-black mb-2"
-                  style={{ color: brand.primaryColor }}
-                  textStyle={insight.value_text_style || {}}
-                  onStyleChange={(s) => updateInsight(i, { value_text_style: s })}
-                  brandColors={BRAND_COLORS}
-                  accentColor={accent}
-                />
-                <EditableText
-                  value={insight.description || ''}
-                  onCommit={(v) => updateInsight(i, { description: v })}
-                  placeholder="Add a description..."
-                  theme={T.slideTheme}
-                  multiline
-                  className="text-xs leading-relaxed"
-                  style={{ color: T.dimColor2 }}
-                  textStyle={insight.description_text_style || {}}
-                  onStyleChange={(s) => updateInsight(i, { description_text_style: s })}
-                  brandColors={BRAND_COLORS}
-                  accentColor={accent}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (slide.type === 'chart') return renderChartSlide(slide.chart, slide.index)
-    if (slide.type === 'statgroup') return renderStatGroupSlide(slide)
-
-    if (slide.type === 'table') return renderTableSlide(slide)
-
-    if (slide.type === 'recommendations') {
-      const recs = (slide.recommendations || []).slice(0, 3)
-      return (
-        <div className="flex flex-col h-full px-10 py-8">
-          <div className="text-center mb-8" data-no-drag="true">
-            <h2 className="text-3xl font-black mb-2">
-              Key <span style={{ color: brand.primaryColor }}>Recommendations</span>
-            </h2>
-            <EditableText
-              value={slide.narrative ? slide.narrative.slice(0, 140) : ''}
-              onCommit={() => {}}
-              placeholder="Subheader summary..."
-              theme={T.slideTheme}
-              className="text-sm max-w-2xl mx-auto"
-              style={{ color: T.dimColor }}
-              textStyle={project?.narrative_text_style || {}}
-              onStyleChange={(s) => updateProjectField('narrative_text_style', s)}
-              brandColors={BRAND_COLORS}
-              accentColor={accent}
-            />
-          </div>
-          <div className="flex-1 grid grid-cols-3 gap-5">
-            {recs.map((rec: any, i: number) => (
-              <div
-                key={i}
-                className="p-5 rounded-2xl flex flex-col"
-                style={{ background: T.cardBg, border: `1px solid ${T.cardBorder}` }}
-              >
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black text-white mb-3"
-                  style={{ background: brand.primaryColor }}
-                >
-                  {rec.number || String(i + 1).padStart(2, '0')}
-                </div>
-                <EditableText
-                  value={rec.title || ''}
-                  onCommit={(v) => updateRecommendation(i, { title: v })}
-                  placeholder="Recommendation headline"
-                  theme={T.slideTheme}
-                  className="font-bold text-base leading-tight mb-2"
-                  textStyle={rec.title_text_style || {}}
-                  onStyleChange={(s) => updateRecommendation(i, { title_text_style: s })}
-                  brandColors={BRAND_COLORS}
-                  accentColor={accent}
-                />
-                <EditableText
-                  value={rec.description || ''}
-                  onCommit={(v) => updateRecommendation(i, { description: v })}
-                  placeholder="Description..."
-                  theme={T.slideTheme}
-                  multiline
-                  className="text-xs leading-relaxed flex-1"
-                  style={{ color: T.dimColor2 }}
-                  textStyle={rec.description_text_style || {}}
-                  onStyleChange={(s) => updateRecommendation(i, { description_text_style: s })}
-                  brandColors={BRAND_COLORS}
-                  accentColor={accent}
-                />
-                {(rec.stat || rec.stat_label) && (
-                  <div
-                    className="mt-4 pt-3 flex items-center gap-2"
-                    style={{ borderTop: `1px solid ${T.divider}` }}
-                  >
-                    <EditableText
-                      value={rec.stat || ''}
-                      onCommit={(v) => updateRecommendation(i, { stat: v })}
-                      placeholder="0%"
-                      theme={T.slideTheme}
-                      className="text-2xl font-black"
-                      style={{ color: brand.primaryColor }}
-                      textStyle={rec.stat_text_style || {}}
-                      onStyleChange={(s) => updateRecommendation(i, { stat_text_style: s })}
-                      brandColors={BRAND_COLORS}
-                      accentColor={accent}
-                    />
-                    <EditableText
-                      value={rec.stat_label || ''}
-                      onCommit={(v) => updateRecommendation(i, { stat_label: v })}
-                      placeholder="label"
-                      theme={T.slideTheme}
-                      className="text-xs"
-                      style={{ color: T.dimColor }}
-                      textStyle={rec.stat_label_text_style || {}}
-                      onStyleChange={(s) => updateRecommendation(i, { stat_label_text_style: s })}
-                      brandColors={BRAND_COLORS}
-                      accentColor={accent}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    return null
-  }
-
-  const logoPos = brand.logoPosition || 'bottom-right'
-  const logoCls =
-    (
-      {
-        'bottom-right': 'bottom-3 right-4',
-        'bottom-left': 'bottom-3 left-4',
-        'top-right': 'top-3 right-4',
-        'top-left': 'top-3 left-4',
-      } as any
-    )[logoPos] || 'bottom-3 right-4'
-
-  // ── Loading / error states ─────────────────────────────────────────────
-  // These render before the main deck, but brand/accent are already loaded
-  // by this point (useBrand() runs at the top of the component regardless
-  // of which return path fires), so they follow the same adjustable
-  // palette as everything else rather than a separate hardcoded blue.
-
-  if (genState === 'idle' || (genState !== 'ready' && genState !== 'no_data')) {
+  if (!project || slides.length <= 1) {
     return (
       <div
-        className="min-h-screen flex flex-col items-center justify-center px-6"
-        style={{ background: T.pageBg }}
+        className={`min-h-screen flex flex-col items-center justify-center gap-4 px-6 text-center ${bg}`}
       >
-        <div
-          className={`w-full max-w-sm p-8 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-white/[0.08]' : 'bg-white border-zinc-200'}`}
+        <p className="text-lg font-semibold">Nothing to build a story from yet</p>
+        <p className={`text-sm max-w-md ${subtle}`}>
+          Run the analysis on your project, pick the findings you want, and choose Story Mode again.
+        </p>
+        <Link
+          href={`/projects/${id}`}
+          className="px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium border border-zinc-700"
         >
-          <div
-            className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-5"
-            style={{ background: hexToRgba(accent, 0.12) }}
-          >
-            <Sparkles size={22} style={{ color: accent }} />
-          </div>
-          <h2 className={`text-lg font-bold mb-1 ${T.text}`}>Building your slides</h2>
-          <p className={`text-sm mb-6 ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
-            Grounding the deck in your confirmed analysis findings
-          </p>
-          <div className="space-y-2.5 text-left mb-6">
-            {GENERATION_STEPS.map((step, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div
-                  className="w-1.5 h-1.5 rounded-full shrink-0 transition-colors"
-                  style={{
-                    background: i <= genStep ? accent : dark ? 'rgb(63 63 70)' : 'rgb(212 212 216)',
-                  }}
-                />
-                <span
-                  className={`text-xs transition-opacity ${i <= genStep ? (dark ? 'text-white/80' : 'text-zinc-700') : dark ? 'text-white/25' : 'text-zinc-400'}`}
-                >
-                  {step}
-                </span>
-                {i === genStep && (
-                  <div
-                    className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin shrink-0"
-                    style={{ borderColor: accent, borderTopColor: 'transparent' }}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-          <p className={`text-[11px] ${dark ? 'text-white/25' : 'text-zinc-400'}`}>
-            Usually takes 20–40 seconds
-          </p>
-        </div>
+          Back to project
+        </Link>
       </div>
     )
   }
 
-  if (genState === 'no_data') {
-    return (
-      <div
-        className="min-h-screen flex flex-col items-center justify-center px-6"
-        style={{ background: T.pageBg }}
-      >
-        <div
-          className={`w-full max-w-sm p-8 rounded-2xl border text-center ${dark ? 'bg-zinc-900 border-white/[0.08]' : 'bg-white border-zinc-200'}`}
-        >
-          <h2 className={`text-lg font-bold mb-2 ${T.text}`}>Analysis required first</h2>
-          <p className={`text-sm mb-6 ${dark ? 'text-white/40' : 'text-zinc-500'}`}>
-            {genError ||
-              'Complete and confirm your analysis before building slides — the deck is grounded in what you verified.'}
-          </p>
-          <button
-            onClick={() => router.push(`/projects/${id}`)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-medium transition-colors"
-            style={{ background: accent }}
-          >
-            <ArrowLeft size={14} /> Go to Analysis
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Full deck render ───────────────────────────────────────────────────
-
-  const slide = slides[current]
-  const canUndo = historyRef.current.past.length > 0
-  const canRedo = historyRef.current.future.length > 0
+  const presentSlide = visible[presentIdx]
+  const presentW = Math.min(viewport.w, viewport.h * (16 / 9))
 
   return (
-    <div
-      ref={containerRef}
-      className={`fixed inset-0 flex flex-col overflow-hidden ${T.text}`}
-      style={{ background: T.pageBg, fontFamily: EDITOR_FONT_FAMILY }}
-    >
-      {/* Header */}
-      <div
-        className={`flex items-center justify-between px-6 py-3 border-b shrink-0 z-20 ${T.chromeBorder} ${dark ? '' : 'bg-white/30 backdrop-blur-sm'}`}
-      >
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push(`/projects/${id}`)}
-            className={`p-2 rounded-xl transition-colors ${T.btnHover}`}
+    <div className={`h-screen flex flex-col ${bg}`}>
+      {fontLink}
+
+      {/* Top bar */}
+      <div className={`h-14 shrink-0 flex items-center justify-between gap-4 px-4 border-b ${bar}`}>
+        <div className="flex items-center gap-3 min-w-0">
+          <Link
+            href={`/projects/${id}`}
+            className={`flex items-center gap-1.5 text-sm ${subtle} hover:opacity-80`}
+            title="Back to project"
           >
-            <X size={16} />
-          </button>
-          <span className={`text-sm font-medium truncate max-w-xs ${T.dimOpacity}`}>
-            {project.pitch_title || project.name}
-          </span>
-          {/* Save state indicator */}
-          <span
-            className={`flex items-center gap-1 text-[11px] ${dark ? 'text-white/30' : 'text-zinc-400'}`}
-          >
-            {saveState === 'saving' && (
-              <>
-                <Loader2 size={11} className="animate-spin" /> Saving
-              </>
-            )}
-            {saveState === 'saved' && (
-              <>
-                <Check size={11} className="text-emerald-400" /> Saved
-              </>
-            )}
-            {saveState === 'error' && <span className="text-red-400">Save failed</span>}
+            <ArrowLeft size={15} />
+            <span className="hidden sm:inline truncate max-w-[200px]">
+              {project.name || 'Project'}
+            </span>
+          </Link>
+          <span className={`h-5 w-px ${dark ? 'bg-zinc-800' : 'bg-zinc-200'}`} />
+          <span className="font-semibold text-sm">Story Mode</span>
+          <span className={`text-xs ${saveState === 'error' ? 'text-red-400' : subtle}`}>
+            {saveState === 'saving'
+              ? 'Saving'
+              : saveState === 'error'
+                ? 'Not saved. Run the 003 migration.'
+                : 'Saved'}
           </span>
         </div>
-        <div className="flex items-center gap-4">
-          {findingPickerItems.length > 0 && (
-            <button
-              onClick={openFindingPicker}
-              title="Choose which findings become slides"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${T.btnHover} border ${T.btnBorder}`}
-            >
-              <ListChecks size={13} /> Edit slides
-            </button>
-          )}
-          {/* Undo / redo */}
-          <div className="flex items-center gap-1">
-            <button
-              key={`undo-${historyTick}`}
-              onClick={undo}
-              disabled={!canUndo}
-              title="Undo (Cmd+Z)"
-              className={`p-2 rounded-xl transition-colors disabled:opacity-20 ${T.btnHover}`}
-            >
-              <Undo2 size={15} />
-            </button>
-            <button
-              key={`redo-${historyTick}`}
-              onClick={redo}
-              disabled={!canRedo}
-              title="Redo (Cmd+Shift+Z)"
-              className={`p-2 rounded-xl transition-colors disabled:opacity-20 ${T.btnHover}`}
-            >
-              <Redo2 size={15} />
-            </button>
-          </div>
-          {/* Gamma export buttons — deliberately left neutral/unbranded,
-              this is a separate third-party integration, not part of the
-              account's own deck design system. */}
-          <div className="flex items-center gap-2">
-            {gammaError && (
-              <span className="text-[11px] text-red-400 max-w-[180px] truncate">{gammaError}</span>
-            )}
-            <button
-              onClick={() => handleGammaExport('pptx')}
-              disabled={gammaLoading}
-              title="Download as PowerPoint via Gamma"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                dark
-                  ? 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'
-                  : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-              } disabled:opacity-40`}
-            >
-              {gammaLoading ? (
-                <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <FileDown size={12} />
-              )}
-              {gammaLoading ? 'Generating…' : 'PPTX'}
-            </button>
-            <button
-              onClick={() => handleGammaExport('pdf')}
-              disabled={gammaLoading}
-              title="Download as PDF via Gamma"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                dark
-                  ? 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'
-                  : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-              } disabled:opacity-40`}
-            >
-              <Download size={12} />
-              PDF
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setTimerRunning(!timerRunning)}
-              className={`p-2 rounded-xl transition-colors ${timerRunning ? T.timerActive : T.btnHover}`}
-            >
-              <Timer size={15} />
-            </button>
-            <span className="text-sm font-mono w-12">{formatTime(elapsed)}</span>
-            <button
-              onClick={() => {
-                setElapsed(0)
-                setTimerRunning(false)
-              }}
-              className={`text-xs transition-opacity ${T.dimOpacity} hover:opacity-80`}
-            >
-              Reset
-            </button>
-          </div>
-          <span className={`text-sm ${T.dimOpacity}`}>
-            {current + 1} / {slides.length}
-          </span>
-          <button
-            onClick={toggleFullscreen}
-            className={`p-2 rounded-xl transition-colors ${T.dimOpacity} hover:opacity-100 ${T.btnHover}`}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/settings/brand"
+            className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium ${ghost}`}
           >
-            {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+            <Palette size={12} />
+            Brand
+          </Link>
+          <button
+            onClick={exportPdf}
+            disabled={busy !== null}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium disabled:opacity-40 ${ghost}`}
+          >
+            {busy === 'pdf' ? (
+              <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <FileDown size={12} />
+            )}
+            Export PDF
+          </button>
+          <button
+            onClick={startPresent}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#5DCAA5] text-[#080C14] text-xs font-semibold hover:opacity-90"
+          >
+            <Play size={12} />
+            Present
           </button>
         </div>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 flex min-h-0">
-        {/* Thumbnail rail */}
+      <div className="flex-1 min-h-0 flex">
+        {/* Filmstrip */}
         <div
-          className={`w-40 shrink-0 border-r overflow-y-auto px-2.5 py-3 space-y-3 ${T.chromeBorder} ${T.railBg} ${dark ? '' : 'backdrop-blur-sm'}`}
+          className={`hidden md:block w-[200px] shrink-0 overflow-y-auto border-r p-3 space-y-3 ${panel}`}
         >
           {slides.map((s, i) => {
-            const isMovable = s.type === 'chart' || s.type === 'table'
+            const on = s.id === selectedId
             return (
-              <div key={i} className="relative group/thumb">
-                <button
-                  title={`${i + 1}. ${slideCaption(s)}`}
-                  onClick={() => goTo(i)}
-                  draggable={isMovable}
-                  onDragStart={() => isMovable && setDraggedSlideIdx(i)}
-                  onDragOver={(e) => {
-                    if (isMovable) e.preventDefault()
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    if (draggedSlideIdx === null || draggedSlideIdx === i) return
-                    const fromSlide = slides[draggedSlideIdx]
-                    const toSlide = slides[i]
-                    if (
-                      (fromSlide.type === 'chart' || fromSlide.type === 'table') &&
-                      (toSlide.type === 'chart' || toSlide.type === 'table')
-                    ) {
-                      moveContentSlide((fromSlide as any).index, (toSlide as any).index)
-                    }
-                    setDraggedSlideIdx(null)
-                  }}
-                  className="w-full text-left block"
+              <button
+                key={s.id}
+                onClick={() => setSelectedId(s.id)}
+                className={`block w-full text-left rounded-lg p-1 transition-colors ${
+                  on ? 'ring-2 ring-[#5DCAA5]' : dark ? 'hover:bg-zinc-800/60' : 'hover:bg-zinc-100'
+                } ${hidden.has(s.id) ? 'opacity-40' : ''}`}
+              >
+                <div className="rounded overflow-hidden border border-black/10">
+                  <Thumb slide={s} kit={kit} T={T} />
+                </div>
+                <div
+                  className={`mt-1 px-0.5 flex items-center justify-between text-[11px] ${subtle}`}
                 >
-                  <div
-                    className="rounded-lg"
-                    style={{
-                      outline:
-                        i === current
-                          ? `2px solid ${brand.primaryColor}`
-                          : `1px solid ${dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.1)'}`,
-                      outlineOffset: i === current ? '1px' : '0px',
-                    }}
-                  >
-                    <SlideThumbnailPreview slide={s} brand={brand} brandColors={BRAND_COLORS} />
-                  </div>
-                  <div
-                    className={`mt-1 text-[10px] truncate transition-opacity ${i === current ? 'opacity-90' : `${T.dimOpacity} group-hover/thumb:opacity-70`}`}
-                  >
-                    {i + 1} · {slideCaption(s)}
-                  </div>
-                </button>
-                {isMovable && (
-                  <div className="absolute top-1 right-1 hidden group-hover/thumb:flex items-center gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        duplicateContentSlide((s as any).index)
-                      }}
-                      title="Duplicate slide"
-                      className="p-1 rounded-md bg-black/60 text-white hover:bg-black/80"
-                    >
-                      <Copy size={10} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteContentSlide((s as any).index)
-                      }}
-                      title="Delete slide"
-                      className="p-1 rounded-md bg-black/60 text-white hover:bg-red-500"
-                    >
-                      <Trash2 size={10} />
-                    </button>
-                  </div>
-                )}
-              </div>
+                  <span>
+                    {i + 1}. {KIND_LABEL[s.kind]}
+                  </span>
+                  {hidden.has(s.id) && <EyeOff size={11} />}
+                </div>
+              </button>
             )
           })}
-          <button
-            onClick={addBlankSlide}
-            className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed text-[11px] font-medium transition-colors ${dark ? 'border-white/15 text-white/40 hover:text-white/70 hover:border-white/30' : 'border-zinc-300 text-zinc-400 hover:text-zinc-700 hover:border-zinc-400'}`}
-          >
-            <Plus size={12} /> Add slide
-          </button>
         </div>
 
-        {/* Slide + footer */}
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex-1 flex items-center justify-center p-6 min-h-0">
-            <div
-              ref={slideAreaRef}
-              className="relative w-full h-full max-w-6xl rounded-2xl overflow-hidden shadow-2xl"
-              style={{ background: T.slideBg, border: `1px solid ${T.slideBorder}` }}
-            >
+        {/* Stage */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center p-6">
+            {slide && (
               <div
-                className="absolute top-0 left-0 right-0 h-0.5 z-10"
-                style={{
-                  background: `linear-gradient(90deg, ${brand.primaryColor}, ${brand.secondaryColor})`,
-                }}
-              />
-              <div
-                className="absolute inset-0 transition-all duration-300"
-                style={{
-                  opacity: visible ? 1 : 0,
-                  transform: visible
-                    ? 'translateX(0)'
-                    : direction === 'right'
-                      ? 'translateX(-30px)'
-                      : 'translateX(30px)',
-                }}
+                className="shadow-2xl rounded-md overflow-hidden"
+                style={{ opacity: hidden.has(slide.id) ? 0.45 : 1 }}
               >
-                {renderSlide(slide)}
+                <Scaled width={stageW}>
+                  <StorySlideView slide={slide} kit={kit} T={T} />
+                </Scaled>
               </div>
-              {brand.logoUrl && slide.type !== 'title' && (
-                <img
-                  src={brand.logoUrl}
-                  alt="Logo"
-                  className={`absolute w-12 h-5 object-contain z-[100] opacity-95 pointer-events-none drop-shadow-lg ${logoCls}`}
-                />
-              )}
-            </div>
+            )}
           </div>
+
           <div
-            className={`flex items-center justify-end px-6 py-3 border-t shrink-0 ${T.chromeBorder} ${dark ? '' : 'bg-white/30 backdrop-blur-sm'}`}
+            className={`shrink-0 border-t px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${bar}`}
           >
             <div className="flex items-center gap-2">
               <button
-                onClick={() => go('prev')}
-                disabled={current === 0}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl border transition-colors disabled:opacity-20 text-sm ${T.btnBorder} ${T.btnHover}`}
+                onClick={() => slides[index - 1] && setSelectedId(slides[index - 1].id)}
+                disabled={index === 0}
+                className={`p-2 rounded-xl border disabled:opacity-30 ${ghost}`}
+                aria-label="Previous slide"
               >
-                <ChevronLeft size={15} /> Prev
+                <ChevronLeft size={15} />
+              </button>
+              <span className={`text-xs font-mono w-14 text-center ${subtle}`}>
+                {index + 1} / {slides.length}
+              </span>
+              <button
+                onClick={() => slides[index + 1] && setSelectedId(slides[index + 1].id)}
+                disabled={index >= slides.length - 1}
+                className={`p-2 rounded-xl border disabled:opacity-30 ${ghost}`}
+                aria-label="Next slide"
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={copyImage}
+                disabled={busy !== null}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#080C14] text-white text-xs font-semibold border border-zinc-700 hover:bg-[#0F1420] disabled:opacity-40"
+              >
+                {busy === 'image' ? (
+                  <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <ImageIcon size={13} />
+                )}
+                Copy as image
               </button>
               <button
-                onClick={() => go('next')}
-                disabled={current === slides.length - 1}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-20"
-                style={{ background: brand.primaryColor }}
+                onClick={copyText}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium ${ghost}`}
               >
-                Next <ChevronRight size={15} />
+                <Copy size={12} />
+                Copy text
+              </button>
+              <button
+                onClick={downloadData}
+                disabled={!csv}
+                title={
+                  csv
+                    ? 'Download the numbers behind this slide'
+                    : 'This slide has no data of its own'
+                }
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium disabled:opacity-30 ${ghost}`}
+              >
+                <Table2 size={12} />
+                Data CSV
               </button>
             </div>
           </div>
         </div>
 
-        {/* Editing panel — persistent, contextual to what's selected on the
-            current chart slide. Replaces the floating toolbar that used to
-            hover above whatever box was selected; this panel is deliberately
-            always in the same place, and shows only the sections relevant to
-            the current selection rather than everything at once. */}
-        {slide.type === 'chart' &&
-          (() => {
-            const chart = slide.chart
-            const chartIndex = slide.index
-            const icons: any[] = Array.isArray(chart.icons) ? chart.icons : []
-            const selectedIcon = icons.find((ic) => ic.id === selectedIconId) || null
-            const dataPointCount = Array.isArray(chart?.data) ? chart.data.length : 0
-            const isStatOnly = chart.type === 'stat' || dataPointCount <= 1
-            const canToggleStat = dataPointCount >= 2
-            const layout: LayoutPreset = chart.layout || 'split-right'
-            const dataKeys = getDataKeysLocal(chart.data || [])
-            const canUsePie = dataKeys.length <= 1
-            const chartTypeForSwitcher = isStatOnly
-              ? chart.pre_stat_type || 'bar'
-              : chart.type || 'bar'
-            const panelLabel = (text: string) => (
-              <div
-                className="text-[10px] uppercase tracking-wide font-semibold mb-2"
-                style={{ color: T.dimColor }}
-              >
-                {text}
-              </div>
-            )
-            const panelBtnCls = `flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs transition-colors ${T.btnBorder} hover:border-white/30`
-
-            return (
-              <div
-                className={`w-72 shrink-0 border-l overflow-y-auto px-4 py-4 space-y-5 ${T.chromeBorder} ${T.railBg} ${dark ? '' : 'backdrop-blur-sm'}`}
-              >
-                {!isStatOnly && selectedBox === null && selectedIconId === null && (
-                  <div
-                    className="text-xs text-center pt-3 leading-relaxed"
-                    style={{ color: T.dimColor }}
-                  >
-                    Select the chart or callout on the slide to edit its layout, size, and type.
-                  </div>
-                )}
-
-                {!isStatOnly && selectedBox === 'chart' && (
-                  <>
-                    <div>
-                      {panelLabel('Layout')}
-                      <div className="grid grid-cols-3 gap-2">
-                        {LAYOUT_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.key}
-                            onClick={() => applyLayout(chartIndex, opt.key, chart.chart_scale)}
-                            title={opt.label}
-                            className={`aspect-[4/3] rounded-lg border flex items-center justify-center transition-colors ${
-                              layout === opt.key ? '' : `${T.btnBorder} hover:border-white/30`
-                            }`}
-                            style={
-                              layout === opt.key
-                                ? { borderColor: accent, background: hexToRgba(accent, 0.15) }
-                                : undefined
-                            }
-                          >
-                            <LayoutIcon
-                              layout={opt.key}
-                              active={layout === opt.key}
-                              accentColor={accent}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      {panelLabel('Chart size')}
-                      <div className="flex items-center gap-2 mb-2">
-                        <button
-                          onClick={() => nudgeChartScale(chart, chartIndex, -1)}
-                          disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) <= MIN_CHART_SCALE}
-                          className={`p-1.5 rounded-lg border ${T.btnBorder} disabled:opacity-30`}
-                        >
-                          <Minus size={12} />
-                        </button>
-                        <span
-                          className="text-xs font-mono flex-1 text-center select-none"
-                          style={{ color: T.dimColor }}
-                        >
-                          {Math.round((chart.chart_scale ?? DEFAULT_CHART_SCALE) * 100)}%
-                        </span>
-                        <button
-                          onClick={() => nudgeChartScale(chart, chartIndex, 1)}
-                          disabled={(chart.chart_scale ?? DEFAULT_CHART_SCALE) >= MAX_CHART_SCALE}
-                          className={`p-1.5 rounded-lg border ${T.btnBorder} disabled:opacity-30`}
-                        >
-                          <Plus size={12} />
-                        </button>
-                      </div>
-                      <button
-                        onClick={() => resetBoxes(chart, chartIndex)}
-                        className={`w-full ${panelBtnCls}`}
-                      >
-                        <RotateCcw size={11} /> Reset position
-                      </button>
-                    </div>
-
-                    <div>
-                      {panelLabel('Chart type')}
-                      <div className="grid grid-cols-4 gap-2">
-                        {CHART_TYPE_OPTIONS.filter((o) => o.key !== 'pie' || canUsePie).map(
-                          (opt) => {
-                            const ChartIcon = opt.icon
-                            const active = chartTypeForSwitcher === opt.key
-                            return (
-                              <button
-                                key={opt.key}
-                                title={opt.label}
-                                onClick={() => setChartType(chartIndex, opt.key)}
-                                className={`aspect-square rounded-lg border flex items-center justify-center transition-colors ${
-                                  active ? '' : `${T.btnBorder} hover:border-white/30`
-                                }`}
-                                style={
-                                  active
-                                    ? {
-                                        borderColor: accent,
-                                        background: hexToRgba(accent, 0.15),
-                                        color: accent,
-                                      }
-                                    : { color: T.dimColor }
-                                }
-                              >
-                                <ChartIcon size={15} />
-                              </button>
-                            )
-                          }
-                        )}
-                      </div>
-                      {!canUsePie && (
-                        <div
-                          className="text-[10.5px] leading-snug mt-1.5"
-                          style={{ color: T.dimColor }}
-                        >
-                          Pie isn&apos;t available — this chart has more than one value per point.
-                        </div>
-                      )}
-                    </div>
-
-                    {chartTypeForSwitcher !== 'pie' && dataPointCount >= 2 && (
-                      <div>
-                        {panelLabel('Values')}
-                        <div className="grid grid-cols-2 gap-2 mb-2">
-                          <button
-                            onClick={() => setValueMode(chartIndex, 'absolute')}
-                            className="py-1.5 rounded-lg border text-xs transition-colors"
-                            style={
-                              !chart.value_mode || chart.value_mode === 'absolute'
-                                ? {
-                                    borderColor: accent,
-                                    background: hexToRgba(accent, 0.15),
-                                    color: accent,
-                                  }
-                                : { color: T.dimColor, borderColor: 'transparent' }
-                            }
-                          >
-                            Absolute
-                          </button>
-                          <button
-                            onClick={() => setValueMode(chartIndex, 'indexed')}
-                            className="py-1.5 rounded-lg border text-xs transition-colors"
-                            style={
-                              chart.value_mode === 'indexed'
-                                ? {
-                                    borderColor: accent,
-                                    background: hexToRgba(accent, 0.15),
-                                    color: accent,
-                                  }
-                                : { color: T.dimColor, borderColor: 'transparent' }
-                            }
-                          >
-                            Indexed
-                          </button>
-                        </div>
-                        <div className="text-[10.5px] leading-snug" style={{ color: T.dimColor }}>
-                          Indexed rescales each series to 100 at its first point, useful for
-                          comparing trends on different scales. The underlying numbers never change.
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {(isStatOnly || selectedBox === 'hero') && canToggleStat && (
-                  <div>
-                    {panelLabel('Slide type')}
-                    <button
-                      onClick={() => toggleStatMode(chart, chartIndex)}
-                      className={`w-full ${panelBtnCls}`}
-                    >
-                      <LayoutGrid size={12} /> {isStatOnly ? 'Show as chart' : 'Show as stat card'}
-                    </button>
-                    {isStatOnly && (
-                      <div
-                        className="text-[10.5px] leading-snug mt-1.5"
-                        style={{ color: T.dimColor }}
-                      >
-                        This has enough data points for a full chart if you'd rather show it that
-                        way.
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="pt-1 border-t" style={{ borderColor: T.divider }}>
-                  <div className="pt-4">{panelLabel('Icons')}</div>
-
-                  {selectedIcon && (
-                    <div
-                      className="space-y-3 p-2.5 rounded-lg border mb-2.5"
-                      style={{ borderColor: T.divider, background: T.cardBg }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px]" style={{ color: T.dimColor }}>
-                          Size
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() =>
-                              commitIcon(chart, chartIndex, selectedIcon.id, {
-                                size: Math.max(MIN_ICON_SIZE, selectedIcon.size - 8),
-                              })
-                            }
-                            className={`p-1 rounded border ${T.btnBorder}`}
-                          >
-                            <Minus size={10} />
-                          </button>
-                          <span className="text-[10px] font-mono w-6 text-center">
-                            {selectedIcon.size}
-                          </span>
-                          <button
-                            onClick={() =>
-                              commitIcon(chart, chartIndex, selectedIcon.id, {
-                                size: Math.min(MAX_ICON_SIZE, selectedIcon.size + 8),
-                              })
-                            }
-                            className={`p-1 rounded border ${T.btnBorder}`}
-                          >
-                            <Plus size={10} />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {BRAND_COLORS.map((c) => (
-                          <button
-                            key={c}
-                            onClick={() =>
-                              commitIcon(chart, chartIndex, selectedIcon.id, { color: c })
-                            }
-                            className="w-5 h-5 rounded-full border-2"
-                            style={{
-                              background: c,
-                              borderColor: selectedIcon.color === c ? '#fff' : 'transparent',
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <button
-                        onClick={() => deleteIcon(chart, chartIndex, selectedIcon.id)}
-                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs text-red-400 border-red-400/30 hover:bg-red-400/10"
-                      >
-                        <Trash2 size={11} /> Delete icon
-                      </button>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={() => setShowIconPicker((v) => !v)}
-                    className={`w-full ${panelBtnCls}`}
-                    style={
-                      showIconPicker
-                        ? {
-                            borderColor: accent,
-                            background: hexToRgba(accent, 0.15),
-                            color: accent,
-                          }
-                        : undefined
-                    }
-                  >
-                    <Plus size={12} /> Insert icon
-                  </button>
-                  {showIconPicker && (
-                    <div
-                      className="grid grid-cols-5 gap-1.5 p-2 rounded-lg border mt-2"
-                      style={{ borderColor: T.divider }}
-                    >
-                      {ICON_LIBRARY.map((entry) => {
-                        const Ico = entry.Icon
-                        return (
-                          <button
-                            key={entry.name}
-                            title={entry.label}
-                            onClick={() => addIcon(chart, chartIndex, entry.name)}
-                            className="aspect-square rounded-md flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
-                            style={{ color: T.dimColor }}
-                          >
-                            <Ico size={15} />
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })()}
-      </div>
-
-      {/* Finding picker — forced open on first visit (see the useEffect
-          above), reopenable anytime via the "Edit slides" header button.
-          Confirming persists pitch_included_findings, which buildSlides()
-          filters by and groups stat-only findings within. */}
-      {findingPickerOpen && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center p-6"
-          style={{ background: 'rgba(0,0,0,0.6)' }}
-        >
-          <div
-            className={`w-full max-w-lg max-h-[80vh] flex flex-col rounded-2xl border shadow-2xl ${dark ? 'bg-zinc-900 border-white/10' : 'bg-white border-black/10'}`}
-          >
-            <div className="px-6 pt-6 pb-4 border-b" style={{ borderColor: T.divider }}>
-              <h2 className="text-lg font-bold">Choose what goes in this deck</h2>
-              <p className="text-xs mt-1" style={{ color: T.dimColor }}>
-                Pick which findings become slides. Everything's checked to start — uncheck what you
-                don't need. Hero stats are grouped up to 3 per slide automatically.
+        {/* Editor */}
+        {slide && (
+          <div className={`hidden lg:flex w-[320px] shrink-0 flex-col border-l ${panel}`}>
+            <div className="p-4 border-b border-inherit">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#5DCAA5]">
+                {KIND_LABEL[slide.kind]} slide
+              </p>
+              <p className={`text-xs mt-1 ${subtle}`}>
+                {slide.chart
+                  ? `Drawn as a ${{ line: 'line chart', bar: 'sorted bar chart', ranked: 'ranked bar chart', grouped: 'grouped bar chart', stacked: 'stacked bar chart', donut: 'donut chart', scatter: 'scatter plot' }[slide.chart.kind]} because of the shape of your data.`
+                  : 'Edit any text. The layout stays fixed so the slide always looks finished.'}
               </p>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-3 space-y-1">
-              {findingPickerItems.map((item) => {
-                const checked = findingPickerChecked.has(item.index)
-                return (
-                  <button
-                    key={item.index}
-                    onClick={() =>
-                      setFindingPickerChecked((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(item.index)) next.delete(item.index)
-                        else next.add(item.index)
-                        return next
-                      })
-                    }
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${dark ? 'hover:bg-white/5' : 'hover:bg-black/[0.03]'}`}
-                  >
-                    <div
-                      className="w-4 h-4 rounded flex items-center justify-center shrink-0 border"
-                      style={
-                        checked
-                          ? { background: accent, borderColor: accent }
-                          : { borderColor: T.divider }
-                      }
-                    >
-                      {checked && <Check size={11} color="#fff" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate">{item.label}</div>
-                    </div>
-                    <div
-                      className="text-[10px] uppercase tracking-wide font-semibold shrink-0"
-                      style={{ color: T.dimColor }}
-                    >
-                      {item.sub}
-                    </div>
-                  </button>
-                )
-              })}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {slide.spec.map((f) => (
+                <div key={f.key}>
+                  <label className={`block text-[11px] font-semibold mb-1 ${subtle}`}>
+                    {f.label}
+                  </label>
+                  {f.long ? (
+                    <textarea
+                      value={slide.fields[f.key] || ''}
+                      onChange={(e) => setField(slide.id, f.key, e.target.value)}
+                      rows={3}
+                      className={`w-full px-3 py-2 rounded-lg border text-xs leading-relaxed outline-none resize-none ${input}`}
+                    />
+                  ) : (
+                    <input
+                      value={slide.fields[f.key] || ''}
+                      onChange={(e) => setField(slide.id, f.key, e.target.value)}
+                      className={`w-full px-3 py-2 rounded-lg border text-xs outline-none ${input}`}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
-            <div
-              className="px-6 py-4 border-t flex items-center justify-between"
-              style={{ borderColor: T.divider }}
-            >
-              <div className="flex items-center gap-3 text-xs" style={{ color: T.dimColor }}>
-                <button
-                  onClick={() =>
-                    setFindingPickerChecked(new Set(findingPickerItems.map((f) => f.index)))
-                  }
-                  className="underline"
-                >
-                  Select all
-                </button>
-                <button onClick={() => setFindingPickerChecked(new Set())} className="underline">
-                  Select none
-                </button>
-              </div>
+            <div className="p-4 border-t border-inherit grid grid-cols-2 gap-2">
               <button
-                onClick={confirmFindingPicker}
-                disabled={findingPickerChecked.size === 0}
-                className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-opacity"
-                style={{ background: accent }}
+                onClick={() => toggleHidden(slide.id)}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium ${ghost}`}
               >
-                Build deck ({findingPickerChecked.size} selected)
+                {hidden.has(slide.id) ? <Eye size={12} /> : <EyeOff size={12} />}
+                {hidden.has(slide.id) ? 'Show slide' : 'Hide slide'}
+              </button>
+              <button
+                onClick={() => resetSlide(slide.id)}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium ${ghost}`}
+              >
+                <RotateCcw size={12} />
+                Reset text
+              </button>
+              <button
+                onClick={() => move(slide.id, -1)}
+                disabled={index <= 1}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium disabled:opacity-30 ${ghost}`}
+              >
+                <ChevronUp size={12} />
+                Move earlier
+              </button>
+              <button
+                onClick={() => move(slide.id, 1)}
+                disabled={index === 0 || index >= slides.length - 1}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium disabled:opacity-30 ${ghost}`}
+              >
+                <ChevronDown size={12} />
+                Move later
               </button>
             </div>
           </div>
+        )}
+      </div>
+
+      {toast && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-xs font-medium border border-zinc-700 shadow-xl">
+          {toast}
+        </div>
+      )}
+
+      {/* Present */}
+      {presenting && presentSlide && (
+        <div
+          ref={presentRef}
+          className="fixed inset-0 z-50 bg-black flex items-center justify-center"
+          style={{ cursor: 'none' }}
+          onClick={() => setPresentIdx((i) => Math.min(i + 1, visible.length - 1))}
+        >
+          <Scaled width={presentW}>
+            <StorySlideView slide={presentSlide} kit={kit} T={T} />
+          </Scaled>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setPresenting(false)
+            }}
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white/70 hover:bg-white/20 opacity-0 hover:opacity-100 transition-opacity"
+            style={{ cursor: 'pointer' }}
+            aria-label="Exit presentation"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
     </div>
