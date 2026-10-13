@@ -49,10 +49,7 @@ const STACK = [
   },
   {
     group: 'Output',
-    items: [
-      { name: 'Gamma', role: 'Builds the branded presentation you export' },
-      { name: 'Vercel', role: 'Hosts ampli itself, end to end' },
-    ],
+    items: [{ name: 'Vercel', role: 'Hosts ampli itself, end to end' }],
   },
   {
     group: 'Billing',
@@ -102,13 +99,13 @@ const FEATURES = [
     icon: FileText,
     title: 'Your brand, every export',
     description:
-      'Your colors and logo applied automatically, or pick from a full theme library. Every deck looks like your own.',
+      'Your colors, logo and typeface applied automatically. Every story looks like your own.',
   },
   {
     icon: Presentation,
-    title: 'Pitch mode or export',
+    title: 'Story Mode or export',
     description:
-      'Present full screen for a call, or export to PPTX and PDF with full history saved and re-downloadable anytime.',
+      'Present full screen for a call, copy any chart into your own deck, or export to PDF with full history saved and re-downloadable anytime.',
   },
 ]
 
@@ -133,7 +130,7 @@ const STEPS = [
   {
     number: '04',
     title: 'Present or export',
-    description: 'Pitch Mode for a live call, or export to PPTX and PDF with history saved.',
+    description: 'Story Mode for a live call, or export to PDF with history saved.',
   },
 ]
 

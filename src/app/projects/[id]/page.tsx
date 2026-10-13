@@ -355,8 +355,11 @@ export default function ProjectViewPage() {
     setExportError(null)
   }, [])
 
-  const handleExport = useCallback(
-    async (format: 'pptx' | 'pdf', selections: SelectedFinding[]) => {
+  // Saves the picked findings as the handoff Story Mode builds from, then
+  // opens it. The saved inclusion list is cleared because it indexes into the
+  // previous set of picks, so Story Mode asks again with the right list.
+  const handleOpenStoryMode = useCallback(
+    async (selections: SelectedFinding[]) => {
       if (!analysisOutput || !project) return
       setIsExporting(true)
       setExportError(null)
@@ -368,26 +371,19 @@ export default function ProjectViewPage() {
           confirmedAnalysis: analysisOutput,
           selectedFindings: selections,
         }
-        await supabase.from('projects').update({ analysis_handoff: handoff }).eq('id', id)
+        const { error } = await supabase
+          .from('projects')
+          .update({ analysis_handoff: handoff, pitch_included_findings: null })
+          .eq('id', id)
+        if (error) throw new Error(error.message)
 
-        const res = await fetch('/api/gamma', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: project.id, exportFormat: format }),
-        })
-        const data = await res.json()
-        if (!res.ok || !data.downloadUrl) throw new Error(data.error || 'Export failed')
-
-        window.location.href = data.downloadUrl
-
-        setShowSlideSelector(false)
+        router.push(`/projects/${id}/pitch`)
       } catch (err: any) {
-        setExportError(err.message || 'Export failed — please try again')
-      } finally {
+        setExportError(err.message || 'Could not open Story Mode. Please try again.')
         setIsExporting(false)
       }
     },
-    [analysisOutput, project, conversationHistory, id]
+    [analysisOutput, project, conversationHistory, id, router]
   )
 
   const handleTagsChange = async (newTags: string[]) => {
@@ -410,8 +406,7 @@ export default function ProjectViewPage() {
   // downloadable here at all anymore, since the user already has that on
   // their own machine (they uploaded it). Charts are computed/derived data,
   // which is the thing actually worth a backup copy of. One workbook, one
-  // sheet per chart, so a user who doesn't like Gamma's auto-generated
-  // visuals can rebuild every one of them manually.
+  // sheet per chart, so a user who wants to rebuild a visual elsewhere can rebuild every one of them manually.
   const handleDownloadChartsExcel = () => {
     const charts = project?.charts || []
     if (charts.length === 0) return
@@ -573,20 +568,17 @@ export default function ProjectViewPage() {
               </button>
             ))}
           </div>
-          {/* Pitch Mode — the standalone slide editor at /projects/[id]/pitch.
-              Previously reachable from this row, then lost when the tabs
-              were rebuilt with no link back to it. It's safe to link to
-              directly at any time: that page already reuses project.charts
-              if they exist, and only falls back to a fresh generation when
-              nothing's been built yet. */}
+          {/* Story Mode entry. Opens the finding picker first, which saves
+              the handoff Story Mode builds from, then goes to
+              /projects/[id]/pitch (route name unchanged). */}
           {analysisOutput && (
-            <Link
-              href={`/projects/${id}/pitch`}
+            <button
+              onClick={handleRequestSlides}
               className={`flex items-center gap-1.5 ${tabBase} border ${dark ? 'border-white/[0.08] text-white/70 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
             >
               <Presentation size={14} />
-              Pitch Mode
-            </Link>
+              Story Mode
+            </button>
           )}
         </div>
 
@@ -598,7 +590,7 @@ export default function ProjectViewPage() {
             dark={dark}
             isExporting={isExporting}
             exportError={exportError}
-            onExport={handleExport}
+            onExport={handleOpenStoryMode}
             onCancel={() => setShowSlideSelector(false)}
             conversationEntries={conversationEntries}
             chartColors={BRAND_COLORS}
@@ -665,7 +657,6 @@ export default function ProjectViewPage() {
                 analysis={analysisOutput}
                 dark={dark}
                 onFollowUp={handleFollowUp}
-                onBuildSlides={handleRequestSlides}
                 isLoading={analysisLoading}
                 conversationEntries={conversationEntries}
                 charts={project.charts || []}

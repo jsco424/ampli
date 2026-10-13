@@ -105,10 +105,10 @@ const STEPS = [
     title: 'Present or export',
     subtitle: 'Step 4',
     description:
-      'Hit Pitch Mode for a full-screen presentation built for screen sharing — branded with your colors and logo. Or export selected slides as a PDF to leave behind after the meeting.',
+      'Open Story Mode for a branded story built from your findings, with takeaways and next steps, ready for screen sharing. Copy any chart into your own deck, or export selected slides as a PDF to leave behind after the meeting.',
     tips: [
-      'Pitch Mode hides all ampli UI — clients see only your story',
-      'Edit hero stats and takeaways directly in pitch mode',
+      'Story Mode hides all ampli UI, so clients see only your story',
+      'Edit hero stats and takeaways directly in Story Mode',
       'Set your brand colors and logo in Brand Settings first',
     ],
   },

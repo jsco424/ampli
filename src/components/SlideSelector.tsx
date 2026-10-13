@@ -1,16 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import {
-  CheckCircle2,
-  Circle,
-  Table2,
-  Sparkles,
-  BarChart3,
-  FileDown,
-  Download,
-  Info,
-} from 'lucide-react'
+import { CheckCircle2, Circle, Table2, Sparkles, BarChart3, Presentation, Info } from 'lucide-react'
 import ChartRenderer from '@/components/ChartRenderer'
 import { INDEXABLE_CHART_TYPES, indexToFirstValue } from '@/lib/chartMath'
 import type { AnalysisOutput, KeyFinding, InsightTable } from '@/lib/analysisTypes'
@@ -177,7 +168,7 @@ interface SlideSelectorProps {
   dark?: boolean
   isExporting?: boolean
   exportError?: string | null
-  onExport: (format: 'pptx' | 'pdf', selections: SelectedFinding[]) => void
+  onExport: (selections: SelectedFinding[]) => void
   onCancel: () => void
   // Follow-up "Dig deeper" turns — each has its own findings/tables that
   // previously had no way to reach the selector at all. Optional so this
@@ -469,7 +460,7 @@ export default function SlideSelector({
             >
               Chart Type
               <span
-                title="This is a suggestion sent to Gamma, not a guarantee — Gamma picks the visual it judges best for each card and may choose something different."
+                title="Story Mode uses this chart type when it builds the slide. You can still change it there."
                 className="cursor-help"
               >
                 <Info size={10} />
@@ -525,7 +516,7 @@ export default function SlideSelector({
           <div>
             <h2 className="font-bold text-base mb-1 flex items-center gap-2">
               <Sparkles size={15} className="text-[#5DCAA5]" />
-              Select What to Export
+              Choose What Goes in Your Story
             </h2>
             <p className={`text-xs leading-relaxed ${subtle}`}>
               Pick up to {MAX_SLIDES} findings, tables, or visuals — mix and match freely, switch
@@ -1047,7 +1038,7 @@ export default function SlideSelector({
         ))}
       </div>
 
-      {/* Sticky footer CTA — direct export, no intermediate slide build.
+      {/* Sticky footer CTA. Saves the picks and opens Story Mode.
           Reflects the TOTAL selected count across both sections, regardless
           of which one is currently visible. */}
       {selectedCount > 0 && (
@@ -1071,28 +1062,16 @@ export default function SlideSelector({
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => onExport('pptx', buildExportSelections())}
-              disabled={isExporting}
-              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors disabled:opacity-40 ${dark ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
-            >
-              {isExporting ? (
-                <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <FileDown size={14} />
-              )}
-              PPTX
-            </button>
-            <button
-              onClick={() => onExport('pdf', buildExportSelections())}
+              onClick={() => onExport(buildExportSelections())}
               disabled={isExporting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors shrink-0 disabled:opacity-40"
             >
               {isExporting ? (
                 <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
               ) : (
-                <Download size={14} />
+                <Presentation size={14} />
               )}
-              {isExporting ? 'Exporting…' : 'PDF'}
+              {isExporting ? 'Opening…' : 'Open in Story Mode'}
             </button>
           </div>
         </div>

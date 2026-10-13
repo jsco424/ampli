@@ -14,7 +14,6 @@ import {
   ChevronDown,
   Sparkles,
   MessageSquare,
-  PresentationIcon,
   RefreshCw,
   BarChart2,
   BarChart3,
@@ -357,13 +356,12 @@ interface AnalysisViewProps {
   analysis: AnalysisOutput
   dark?: boolean
   onFollowUp: (question: string) => void
-  onBuildSlides: () => void
   isLoading?: boolean
   conversationEntries?: ConversationEntry[]
   // Visuals — merged in from what used to be a separate "Visuals" tab on
   // the project page. Rendered as its own section below, between Anomalies
   // and the Follow-up Thread, so the read order is: findings -> tables ->
-  // anomalies -> visuals -> recommendations -> follow-ups -> build slides,
+  // anomalies -> visuals -> recommendations -> follow-ups,
   // all in one scroll instead of a tab switch partway through reviewing
   // the analysis.
   charts?: (AnalysisChart | null | undefined)[]
@@ -391,7 +389,6 @@ export default function AnalysisView({
   analysis,
   dark = true,
   onFollowUp,
-  onBuildSlides,
   isLoading = false,
   conversationEntries = [],
   charts: rawCharts = [],
@@ -856,32 +853,6 @@ export default function AnalysisView({
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Sticky at the bottom of the viewport, same pattern as SlideSelector's
-          own export footer — visible and clickable no matter how far down
-          the page someone has scrolled, instead of only reachable by
-          scrolling all the way to the end of the analysis. Needs a solid
-          background (not the original transparent dashed-border look) plus
-          a shadow, since content now scrolls underneath it. */}
-      <div
-        className={`sticky bottom-4 p-5 rounded-2xl border-2 border-dashed flex items-center justify-between gap-4 shadow-xl ${dark ? 'bg-zinc-900/95 border-zinc-700' : 'bg-white/95 border-zinc-300'}`}
-        style={{ backdropFilter: 'blur(12px)' }}
-      >
-        <div>
-          <p className="font-semibold text-sm">Ready to build slides?</p>
-          <p className={`text-xs mt-0.5 ${subtle}`}>
-            The deck is grounded in this analysis — not a cold re-read of the file.
-          </p>
-        </div>
-        <button
-          onClick={onBuildSlides}
-          disabled={isLoading}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors shrink-0 disabled:opacity-40"
-        >
-          <PresentationIcon size={14} />
-          Build Slides
-        </button>
       </div>
     </div>
   )
