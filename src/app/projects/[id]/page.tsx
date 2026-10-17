@@ -356,8 +356,7 @@ export default function ProjectViewPage() {
   }, [])
 
   // Saves the picked findings as the handoff Story Mode builds from, then
-  // opens it. The saved inclusion list is cleared because it indexes into the
-  // previous set of picks, so Story Mode asks again with the right list.
+  // opens it.
   const handleOpenStoryMode = useCallback(
     async (selections: SelectedFinding[]) => {
       if (!analysisOutput || !project) return
@@ -373,7 +372,7 @@ export default function ProjectViewPage() {
         }
         const { error } = await supabase
           .from('projects')
-          .update({ analysis_handoff: handoff, pitch_included_findings: null })
+          .update({ analysis_handoff: handoff })
           .eq('id', id)
         if (error) throw new Error(error.message)
 
