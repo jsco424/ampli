@@ -1,7 +1,16 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { CheckCircle2, Circle, Table2, Sparkles, BarChart3, Presentation, Info } from 'lucide-react'
+import {
+  CheckCircle2,
+  Circle,
+  Table2,
+  Sparkles,
+  BarChart3,
+  FileDown,
+  Download,
+  Info,
+} from 'lucide-react'
 import ChartRenderer from '@/components/ChartRenderer'
 import { INDEXABLE_CHART_TYPES, indexToFirstValue } from '@/lib/chartMath'
 import type { AnalysisOutput, KeyFinding, InsightTable } from '@/lib/analysisTypes'
@@ -59,6 +68,9 @@ export interface SelectedFinding {
   heroStat: string
   takeaway: string
   chartType: ResolvedChartType
+  // Story Mode chart style chosen here. Empty means let Story Mode decide
+  // from the shape of the data.
+  storyKind?: 'bar' | 'ranked' | 'line' | 'grouped' | 'stacked' | 'donut' | 'scatter'
   chartData?: Record<string, any>[]
   // Whether chartData holds indexed-to-100 values rather than absolute
   // ones — set at export time based on the Visuals card's current
@@ -168,7 +180,7 @@ interface SlideSelectorProps {
   dark?: boolean
   isExporting?: boolean
   exportError?: string | null
-  onExport: (selections: SelectedFinding[]) => void
+  onExport: (format: 'pptx' | 'pdf', selections: SelectedFinding[]) => void
   onCancel: () => void
   // Follow-up "Dig deeper" turns — each has its own findings/tables that
   // previously had no way to reach the selector at all. Optional so this
@@ -459,37 +471,37 @@ export default function SlideSelector({
               className={`text-[10px] font-semibold uppercase tracking-wide mb-1 flex items-center gap-1 ${subtle}`}
             >
               Chart Type
-              <span
-                title="Story Mode uses this chart type when it builds the slide. You can still change it there."
-                className="cursor-help"
-              >
-                <Info size={10} />
-              </span>
             </label>
             <select
-              value={sel.chartType}
-              onChange={(e) =>
-                updateSelected(id, { chartType: e.target.value as ResolvedChartType })
+              value={
+                sel.chartType === 'hero_stat_only' ? 'hero_stat_only' : sel.storyKind || 'auto'
               }
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === 'hero_stat_only')
+                  updateSelected(id, { chartType: 'hero_stat_only', storyKind: undefined })
+                else {
+                  const restore =
+                    sel.chartType === 'hero_stat_only'
+                      ? { chartType: 'bar' as ResolvedChartType }
+                      : {}
+                  updateSelected(id, {
+                    ...restore,
+                    storyKind: v === 'auto' ? undefined : (v as any),
+                  })
+                }
+              }}
               className={`w-full text-xs px-3 py-2 rounded-lg border outline-none ${inputCls}`}
             >
-              {(
-                [
-                  'hero_stat_only',
-                  'bar',
-                  'grouped_bar',
-                  'line',
-                  'area',
-                  'pie',
-                  'treemap',
-                  'scatter',
-                  'composed',
-                ] as ResolvedChartType[]
-              ).map((t) => (
-                <option key={t} value={t}>
-                  {chartTypeLabel(t)}
-                </option>
-              ))}
+              <option value="auto">Auto (best fit for the data)</option>
+              <option value="bar">Sorted bars</option>
+              <option value="ranked">Ranked bars</option>
+              <option value="line">Line (time data)</option>
+              <option value="grouped">Grouped bars</option>
+              <option value="stacked">Stacked bars</option>
+              <option value="donut">Donut</option>
+              <option value="scatter">Scatter</option>
+              <option value="hero_stat_only">Hero number only (no chart)</option>
             </select>
           </div>
         )}
@@ -516,7 +528,7 @@ export default function SlideSelector({
           <div>
             <h2 className="font-bold text-base mb-1 flex items-center gap-2">
               <Sparkles size={15} className="text-[#5DCAA5]" />
-              Choose What Goes in Your Story
+              Select What to Export
             </h2>
             <p className={`text-xs leading-relaxed ${subtle}`}>
               Pick up to {MAX_SLIDES} findings, tables, or visuals — mix and match freely, switch
@@ -1038,7 +1050,7 @@ export default function SlideSelector({
         ))}
       </div>
 
-      {/* Sticky footer CTA. Saves the picks and opens Story Mode.
+      {/* Sticky footer CTA — direct export, no intermediate slide build.
           Reflects the TOTAL selected count across both sections, regardless
           of which one is currently visible. */}
       {selectedCount > 0 && (
@@ -1062,16 +1074,28 @@ export default function SlideSelector({
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => onExport(buildExportSelections())}
+              onClick={() => onExport('pptx', buildExportSelections())}
+              disabled={isExporting}
+              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors disabled:opacity-40 ${dark ? 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+            >
+              {isExporting ? (
+                <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <FileDown size={14} />
+              )}
+              PPTX
+            </button>
+            <button
+              onClick={() => onExport('pdf', buildExportSelections())}
               disabled={isExporting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors shrink-0 disabled:opacity-40"
             >
               {isExporting ? (
                 <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
               ) : (
-                <Presentation size={14} />
+                <Download size={14} />
               )}
-              {isExporting ? 'Opening…' : 'Open in Story Mode'}
+              {isExporting ? 'Exporting…' : 'PDF'}
             </button>
           </div>
         </div>

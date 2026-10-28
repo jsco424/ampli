@@ -13,8 +13,11 @@ import { FONT_PAIRINGS, type BrandKit, type FontPairingKey, type KitTokens } fro
 import {
   applyEdits,
   buildStory,
+  compatibleKinds,
+  CHART_KIND_LABEL,
   slideToCsv,
   slideToText,
+  type ChartKind,
   type StoryEdits,
   type StorySlide,
 } from '@/lib/storyModel'
@@ -238,7 +241,14 @@ export default function StoryModePage() {
       })
   }, [id])
 
-  const baseSlides = useMemo(() => buildStory(project), [project])
+  const summaryOn = !!edits.summary
+  const baseSlides = useMemo(
+    () => buildStory(project, { summary: summaryOn }),
+    [project, summaryOn]
+  )
+  const hasSummaryText = !!(
+    project?.analysis_handoff?.confirmedAnalysis?.executiveSummary || project?.narrative
+  )
   const slides = useMemo(() => applyEdits(baseSlides, edits), [baseSlides, edits])
   const hidden = useMemo(() => new Set(edits.hidden || []), [edits.hidden])
   const visible = useMemo(() => slides.filter((s) => !hidden.has(s.id)), [slides, hidden])
@@ -306,6 +316,16 @@ export default function StoryModePage() {
       delete fields[slideId]
       return { ...e, fields }
     })
+
+  const setKind = (slideId: string, kind: ChartKind | '') =>
+    commit((e) => {
+      const kinds = { ...(e.kinds || {}) }
+      if (kind) kinds[slideId] = kind
+      else delete kinds[slideId]
+      return { ...e, kinds }
+    })
+
+  const toggleSummary = () => commit((e) => ({ ...e, summary: !e.summary }))
 
   const toggleHidden = (slideId: string) =>
     commit((e) => {
@@ -572,6 +592,14 @@ export default function StoryModePage() {
               </button>
             )
           })}
+          {hasSummaryText && (
+            <button
+              onClick={toggleSummary}
+              className={`w-full px-3 py-2 rounded-lg border text-[11px] font-medium ${ghost}`}
+            >
+              {summaryOn ? 'Remove summary slide' : 'Add summary slide'}
+            </button>
+          )}
         </div>
 
         {/* Stage */}
@@ -659,11 +687,31 @@ export default function StoryModePage() {
               </p>
               <p className={`text-xs mt-1 ${subtle}`}>
                 {slide.chart
-                  ? `Drawn as a ${{ line: 'line chart', bar: 'sorted bar chart', ranked: 'ranked bar chart', grouped: 'grouped bar chart', stacked: 'stacked bar chart', donut: 'donut chart', scatter: 'scatter plot' }[slide.chart.kind]} because of the shape of your data.`
+                  ? 'Pick how this data is drawn. Only types that suit the data are listed.'
                   : 'Edit any text. The layout stays fixed so the slide always looks finished.'}
               </p>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {slide.chart?.raw && (
+                <div>
+                  <label className={`block text-[11px] font-semibold mb-1 ${subtle}`}>
+                    Chart type
+                  </label>
+                  <select
+                    value={slide.chart.kind}
+                    onChange={(e) => setKind(slide.id, e.target.value as ChartKind)}
+                    className={`w-full px-3 py-2 rounded-lg border text-xs outline-none ${input}`}
+                  >
+                    {Array.from(
+                      new Set([slide.chart.kind, ...compatibleKinds(slide.chart.raw)])
+                    ).map((k) => (
+                      <option key={k} value={k}>
+                        {CHART_KIND_LABEL[k]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {slide.spec.map((f) => (
                 <div key={f.key}>
                   <label className={`block text-[11px] font-semibold mb-1 ${subtle}`}>

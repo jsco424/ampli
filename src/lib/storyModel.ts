@@ -19,6 +19,8 @@ export interface ChartAnnotation {
 
 export interface StoryChart {
   kind: ChartKind
+  // the unshaped rows, so the chart can be redrawn as another kind
+  raw?: Record<string, any>[]
   // numeric series keys in the order they should be drawn
   keys: string[]
   data: Record<string, any>[]
@@ -54,6 +56,10 @@ export interface StoryEdits {
   fields?: Record<string, Record<string, string>>
   hidden?: string[]
   order?: string[]
+  // chart kind chosen by the user per slide id
+  kinds?: Record<string, ChartKind>
+  // the summary slide is off unless this is true
+  summary?: boolean
 }
 
 // ── number formatting ───────────────────────────────────────────────────────
@@ -104,27 +110,51 @@ function isTimeLike(data: Record<string, any>[]): boolean {
 export function pickChartKind(chart: any): ChartKind | 'stat' {
   const data: Record<string, any>[] = Array.isArray(chart?.data) ? chart.data.filter(Boolean) : []
   const type = String(chart?.type || 'bar')
-  if (type === 'stat' || data.length <= 1) return 'stat'
+  if (type === 'stat' || type === 'hero_stat_only' || data.length <= 1) return 'stat'
   const keys = numericKeys(data)
   const n = data.length
+  // A line only makes sense when the x axis is time. The generator labels
+  // many categorical charts as "line", so the shape of the data decides.
+  const timeLike = isTimeLike(data)
 
   if (type === 'scatter') {
     const hasXY = keys.includes('x') && keys.includes('y')
     if (hasXY || keys.length >= 2) return 'scatter'
   }
-  if (type === 'pie') {
+  if (type === 'pie' || type === 'treemap') {
     return n <= 5 ? 'donut' : 'ranked'
   }
   if (keys.length > 1) {
-    if (isTimeLike(data) && n >= 5) return 'line'
+    if (timeLike && n >= 5) return 'line'
     if (chart?.stacked) return 'stacked'
     return n > 8 ? 'ranked' : 'grouped'
   }
-  if (type === 'line' || type === 'area' || (isTimeLike(data) && n >= 5)) {
-    return n >= 3 ? 'line' : 'bar'
-  }
+  if (timeLike && n >= 5) return 'line'
   if (n > 6) return 'ranked'
   return 'bar'
+}
+
+// Kinds that can honestly draw this data, for the chart type pickers.
+export function compatibleKinds(data: Record<string, any>[]): ChartKind[] {
+  const rows = (Array.isArray(data) ? data : []).filter(Boolean)
+  const keys = numericKeys(rows)
+  const n = rows.length
+  const out: ChartKind[] = ['bar', 'ranked']
+  if (n >= 3) out.push('line')
+  if (keys.length > 1) out.push('grouped', 'stacked')
+  if (n >= 2 && n <= 8) out.push('donut')
+  if (keys.length > 1) out.push('scatter')
+  return out
+}
+
+export const CHART_KIND_LABEL: Record<ChartKind, string> = {
+  bar: 'Sorted bars',
+  ranked: 'Ranked bars',
+  line: 'Line',
+  grouped: 'Grouped bars',
+  stacked: 'Stacked bars',
+  donut: 'Donut',
+  scatter: 'Scatter',
 }
 
 const KIND_TAG: Record<ChartKind, string> = {
@@ -161,6 +191,18 @@ function sortForKind(kind: ChartKind, data: Record<string, any>[], keys: string[
   }
   if (kind === 'grouped') return data.slice(0, 8)
   return data
+}
+
+export function shapeChart(kind: ChartKind, raw: Record<string, any>[]) {
+  const data = raw.filter(Boolean)
+  const all = numericKeys(data)
+  const keys =
+    kind === 'scatter'
+      ? all.slice(0, 2)
+      : kind === 'donut' || kind === 'bar' || kind === 'ranked'
+        ? all.slice(0, 1)
+        : all.slice(0, 4)
+  return { keys, data: sortForKind(kind, data, keys) }
 }
 
 function sourceLine(project: any, sampleSize?: number): string {
@@ -256,7 +298,14 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
     const heroStat = clean(sel?.heroStat || chart?.hero_stat || sel?.finding?.value)
     const takeaway = clean(sel?.takeaway || chart?.takeaway)
     const description = clean(chart?.description || sel?.finding?.interpretation)
-    const kind = pickChartKind(merged)
+    const picked = pickChartKind(merged)
+    const chosen = sel?.storyKind as ChartKind | undefined
+    const kind: ChartKind | 'stat' =
+      sel?.chartType === 'hero_stat_only'
+        ? 'stat'
+        : picked !== 'stat' && chosen && compatibleKinds(merged.data).includes(chosen)
+          ? chosen
+          : picked
 
     if (kind === 'stat') {
       statCards.push({
@@ -269,8 +318,7 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
     }
 
     const data = merged.data.filter(Boolean)
-    const keys = kind === 'scatter' ? numericKeys(data).slice(0, 2) : numericKeys(data).slice(0, 4)
-    const shown = sortForKind(kind, data, keys)
+    const { keys, data: shown } = shapeChart(kind, data)
     // The label above the big number. Never the slide title again, so it is
     // only set when the generator or the finding supplies a distinct one.
     const statLabel =
@@ -305,6 +353,7 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
         kind,
         keys,
         data: shown,
+        raw: data,
         annotations: Array.isArray(chart?.annotations) ? chart.annotations : undefined,
         reference:
           chart?.reference_line && typeof chart.reference_line.value === 'number'
@@ -336,7 +385,7 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
 
   // ── summary
   const exec = clean(handoff?.confirmedAnalysis?.executiveSummary) || clean(project.narrative)
-  if (exec) {
+  if (exec && edits?.summary) {
     const sentences = exec
       .replace(/\s+/g, ' ')
       .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
@@ -445,7 +494,24 @@ export function applyEdits(slides: StorySlide[], edits?: StoryEdits): StorySlide
   if (!edits) return slides
   let out = slides.map((s) => {
     const o = edits.fields?.[s.id]
-    return o ? { ...s, fields: { ...s.fields, ...o } } : s
+    let next = s
+    const k = edits.kinds?.[s.id]
+    if (
+      k &&
+      s.chart &&
+      s.chart.raw &&
+      k !== s.chart.kind &&
+      compatibleKinds(s.chart.raw).includes(k)
+    ) {
+      const shaped = shapeChart(k, s.chart.raw)
+      const tagWasDefault = s.fields.tag === KIND_TAG[s.chart.kind]
+      next = {
+        ...s,
+        fields: tagWasDefault ? { ...s.fields, tag: KIND_TAG[k] } : s.fields,
+        chart: { ...s.chart, kind: k, keys: shaped.keys, data: shaped.data },
+      }
+    }
+    return o ? { ...next, fields: { ...next.fields, ...o } } : next
   })
   if (edits.order && edits.order.length > 0) {
     const pos = new Map(edits.order.map((id, i) => [id, i]))
