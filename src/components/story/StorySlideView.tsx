@@ -315,59 +315,100 @@ function Frame({ slide, T, children }: { slide: StorySlide; T: KitTokens; childr
   )
 }
 
+// Hero stats: no title, no chart. One, two or three centered boxes on the
+// surface color, each a big number over a short label.
 function StatsSlide({ slide, T }: { slide: StorySlide; T: KitTokens }) {
   const f = slide.fields
-  const tones: ('deep' | 'brand' | 'white')[] = ['deep', 'brand', 'white']
-  const n = slide.count || 0
+  const n = Math.min(slide.count || 0, 3)
+  const w = n === 1 ? 372 : 264
+  const h = n === 1 ? 280 : 200
+  const base = n === 1 ? 120 : 68
+  const fit = (v: string) =>
+    v.length > 11 ? 0.42 : v.length > 8 ? 0.55 : v.length > 6 ? 0.7 : v.length > 4 ? 0.85 : 1
   return (
-    <Frame slide={slide} T={T}>
-      <div style={{ display: 'flex', gap: 24, marginTop: 36 }}>
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        boxSizing: 'border-box',
+        background: T.surface,
+        color: T.deep,
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 40,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 44,
+        }}
+      >
         {Array.from({ length: n }).map((_, i) => {
-          const tone = tones[i]
-          const label = f[`card${i}.label`] || ''
           const value = f[`card${i}.value`] || ''
-          const text = f[`card${i}.text`] || ''
-          const muted =
-            tone === 'deep' ? T.mutedOnDeep : tone === 'brand' ? T.textOnBrand : T.mutedOnSurface
-          const num = tone === 'deep' ? T.highlight : tone === 'brand' ? T.textOnBrand : T.deep
+          const label = f[`card${i}.label`] || ''
           return (
-            <Card key={i} T={T} tone={tone} height={290}>
+            <div
+              key={i}
+              style={{
+                width: w,
+                height: h,
+                boxSizing: 'border-box',
+                background: '#FFFFFF',
+                border: `1.5px solid ${T.deep}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '0 18px',
+                textAlign: 'center',
+              }}
+            >
               <div
                 style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: '0.12em',
-                  color: muted,
-                  opacity: tone === 'brand' ? 0.85 : 1,
-                }}
-              >
-                {label}
-              </div>
-              <div
-                style={{
-                  marginTop: 10,
-                  fontSize: value.length > 7 ? 48 : 62,
+                  fontSize: Math.round(base * fit(value)),
                   lineHeight: 1,
                   fontWeight: 800,
-                  color: num,
+                  color: T.deep,
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {value}
               </div>
               <div
                 style={{
-                  marginTop: 'auto',
-                  fontSize: text.length > 110 ? 13 : 14,
-                  lineHeight: 1.5,
+                  marginTop: n === 1 ? 18 : 12,
+                  fontSize: n === 1 ? 18 : 15,
+                  lineHeight: 1.3,
+                  color: T.mutedOnSurface,
+                  maxHeight: n === 1 ? 48 : 40,
+                  overflow: 'hidden',
                 }}
               >
-                {text}
+                {label}
               </div>
-            </Card>
+            </div>
           )
         })}
       </div>
-    </Frame>
+      <div
+        style={{
+          position: 'absolute',
+          left: 48,
+          bottom: 22,
+          fontSize: 11,
+          color: T.mutedOnSurface,
+          maxWidth: 640,
+        }}
+      >
+        {f.source}
+      </div>
+    </div>
   )
 }
 

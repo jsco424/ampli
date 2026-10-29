@@ -462,6 +462,10 @@ export default function SlideSelector({
               className={`text-[10px] font-semibold uppercase tracking-wide mb-1 flex items-center gap-1 ${subtle}`}
             >
               Chart Type
+              <span className="ml-auto normal-case font-normal">
+                {Object.values(selected).filter((x) => x.chartType === 'hero_stat_only').length} of
+                3 hero stats
+              </span>
             </label>
             <select
               value={
@@ -492,7 +496,16 @@ export default function SlideSelector({
               <option value="stacked">Stacked bars</option>
               <option value="donut">Donut</option>
               <option value="scatter">Scatter</option>
-              <option value="hero_stat_only">Hero number only (no chart)</option>
+              <option
+                value="hero_stat_only"
+                disabled={
+                  sel.chartType !== 'hero_stat_only' &&
+                  Object.values(selected).filter((x) => x.chartType === 'hero_stat_only').length >=
+                    3
+                }
+              >
+                Hero number only (no chart, max 3)
+              </option>
             </select>
           </div>
         )}

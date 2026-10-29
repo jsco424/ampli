@@ -8,6 +8,8 @@
 // Pure functions only, so the same model drives the editor, the present view,
 // copy as image, PDF export and CSV download.
 
+export const HERO_MAX = 3
+
 export type StoryKind = 'title' | 'summary' | 'stats' | 'chart' | 'table' | 'recs'
 
 export type ChartKind = 'line' | 'bar' | 'ranked' | 'grouped' | 'stacked' | 'donut' | 'scatter'
@@ -308,10 +310,13 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
           : picked
 
     if (kind === 'stat') {
+      const first = Object.values(merged.data?.[0] || {}).find((v) => typeof v === 'number') as
+        | number
+        | undefined
       statCards.push({
         index: it.index,
-        label: title.toUpperCase(),
-        value: heroStat,
+        label: title,
+        value: heroStat || (first !== undefined ? fmt(first) : ''),
         text: takeaway || description,
       })
       continue
@@ -428,33 +433,27 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
     })
   }
 
-  // ── hero stats, three to a slide
-  for (let i = 0; i < statCards.length; i += 3) {
-    const group = statCards.slice(i, i + 3)
-    const fields: Record<string, string> = {
-      tag: 'AT A GLANCE',
-      title:
-        group.length === 1
-          ? group[0].label.charAt(0) + group[0].label.slice(1).toLowerCase()
-          : 'The numbers that matter',
-      source: sourceLine(project),
-    }
-    const spec: FieldSpec[] = [
-      { key: 'tag', label: 'Tag' },
-      { key: 'title', label: 'Title', long: true },
-    ]
-    group.forEach((g, j) => {
-      fields[`card${j}.label`] = g.label
+  // ── hero stats: one slide, never more than three, no chart
+  const heroes = statCards.slice(0, HERO_MAX)
+  if (heroes.length > 0) {
+    const fields: Record<string, string> = { source: sourceLine(project) }
+    const spec: FieldSpec[] = []
+    heroes.forEach((g, j) => {
       fields[`card${j}.value`] = g.value
-      fields[`card${j}.text`] = g.text
+      fields[`card${j}.label`] = g.label
       spec.push(
-        { key: `card${j}.label`, label: `Card ${j + 1} label` },
-        { key: `card${j}.value`, label: `Card ${j + 1} number` },
-        { key: `card${j}.text`, label: `Card ${j + 1} text`, long: true }
+        { key: `card${j}.value`, label: `Stat ${j + 1} number` },
+        { key: `card${j}.label`, label: `Stat ${j + 1} label` }
       )
     })
     spec.push({ key: 'source', label: 'Source line' })
-    slides.push({ id: `stats-${group[0].index}`, kind: 'stats', count: group.length, fields, spec })
+    slides.push({
+      id: `stats-${heroes[0].index}`,
+      kind: 'stats',
+      count: heroes.length,
+      fields,
+      spec,
+    })
   }
 
   slides.push(...evidence)
@@ -553,13 +552,9 @@ export function slideToCsv(slide: StorySlide): string | null {
   }
   if (slide.table) return csvRows([slide.table.headers, ...slide.table.rows])
   if (slide.kind === 'stats') {
-    const rows: string[][] = [['metric', 'value', 'note']]
+    const rows: string[][] = [['metric', 'value']]
     for (let i = 0; i < (slide.count || 0); i++)
-      rows.push([
-        slide.fields[`card${i}.label`],
-        slide.fields[`card${i}.value`],
-        slide.fields[`card${i}.text`],
-      ])
+      rows.push([slide.fields[`card${i}.label`], slide.fields[`card${i}.value`]])
     return csvRows(rows)
   }
   return null
@@ -571,9 +566,8 @@ export function slideToText(slide: StorySlide): string {
   const lines: string[] = []
   const push = (s?: string) => s && s.trim() && lines.push(s.trim())
   if (slide.kind === 'stats') {
-    push(f.title)
     for (let i = 0; i < (slide.count || 0); i++)
-      push(`${f[`card${i}.value`]}  ${f[`card${i}.label`]}\n${f[`card${i}.text`]}`)
+      push(`${f[`card${i}.value`]}  ${f[`card${i}.label`]}`)
   } else if (slide.kind === 'recs') {
     push(f.title)
     for (let i = 0; i < (slide.count || 0); i++)
