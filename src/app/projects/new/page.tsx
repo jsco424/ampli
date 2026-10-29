@@ -26,7 +26,20 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { scanForPII, type PIIScanResult } from '@/lib/piiScanner'
-import { buildDataSummaryWithRows, INDUSTRY_OPTIONS, type DataSummary } from '@/lib/dataSummary'
+import {
+  applyFieldMapping,
+  buildDataSummaryWithRows,
+  INDUSTRY_OPTIONS,
+  type DataSummary,
+} from '@/lib/dataSummary'
+import {
+  matchColumns,
+  needsAiLook,
+  normalizeName,
+  type ColumnInput,
+  type ColumnMatch,
+} from '@/lib/canonicalFields'
+import ColumnMappingCard from '@/components/ColumnMappingCard'
 import PrivacyModal from '@/components/PrivacyModal'
 import PIIMeter from '@/components/PIIMeter'
 import Link from 'next/link'
@@ -109,6 +122,11 @@ export default function NewProjectPage() {
   // Industry confirmation, shown once the file is parsed. Either the user
   // confirms the industries found in the data, or (nothing recognized, or they
   // say it is wrong) picks one themselves.
+  // Column matching: each uploaded column mapped to a canonical field.
+  const [mapInputs, setMapInputs] = useState<ColumnInput[]>([])
+  const [matches, setMatches] = useState<ColumnMatch[]>([])
+  const [mapQuestions, setMapQuestions] = useState<Record<string, string>>({})
+  const [mapChecking, setMapChecking] = useState(false)
   const [industryConfirmed, setIndustryConfirmed] = useState(false)
   const [industryManualMode, setIndustryManualMode] = useState(false)
   const [manualIndustry, setManualIndustry] = useState('')
@@ -131,6 +149,149 @@ export default function NewProjectPage() {
     setClientDataAck(false)
   }, [dataSourceType])
 
+  // ── column matching ───────────────────────────────────────────────────────
+  const loadRemembered = async (): Promise<Record<string, string>> => {
+    if (!user) return {}
+    try {
+      const { data } = await supabase
+        .from('column_mappings')
+        .select('column_key, canonical')
+        .eq('user_id', user.id)
+      return Object.fromEntries((data || []).map((r: any) => [r.column_key, r.canonical]))
+    } catch {
+      return {}
+    }
+  }
+
+  const runColumnMatching = async (summary: DataSummary, rows: Record<string, any>[]) => {
+    const inputs: ColumnInput[] = summary.columns.map((c) => ({
+      name: c.name,
+      role: c.role,
+      values: rows
+        .map((r) => r[c.name])
+        .filter((v) => v !== null && v !== undefined && v !== '')
+        .slice(0, 50),
+    }))
+    setMapInputs(inputs)
+    const remembered = await loadRemembered()
+    const local = matchColumns(inputs, remembered)
+    setMatches(local)
+
+    // Ask the AI layer only about columns the local rules could not settle.
+    // Only column names and a few numeric values leave the browser.
+    const toAsk = local
+      .filter((m, i) => m.layer !== 'remembered' && needsAiLook(m, inputs[i]))
+      .slice(0, 12)
+    if (toAsk.length === 0) return
+    setMapChecking(true)
+    try {
+      const res = await fetch('/api/map-columns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          allColumns: inputs.map((i) => i.name),
+          columns: toAsk.map((m) => {
+            const input = inputs.find((i) => i.name === m.column)!
+            return {
+              name: m.column,
+              role: input.role,
+              values:
+                input.role === 'metric'
+                  ? input.values.filter((v) => typeof v === 'number').slice(0, 5)
+                  : [],
+              candidates: m.candidates,
+            }
+          }),
+        }),
+      })
+      if (!res.ok) return
+      const json = await res.json()
+      const results: {
+        column: string
+        field: string | null
+        confidence: number
+        candidates: string[]
+        question: string
+      }[] = json.results || []
+      if (results.length === 0) return
+      const qs: Record<string, string> = {}
+      setMatches((prev) =>
+        prev.map((m) => {
+          const r = results.find((x) => x.column === m.column)
+          if (!r || m.layer === 'user') return m
+          if (r.field && r.confidence >= 0.85) {
+            return {
+              ...m,
+              field: r.field,
+              confidence: r.confidence,
+              status: 'review',
+              layer: 'ai',
+              candidates: r.candidates,
+            }
+          }
+          if (r.field || r.candidates.length > 0) {
+            if (r.question) qs[m.column] = r.question
+            const merged = Array.from(new Set([...(r.candidates || []), ...m.candidates]))
+            return {
+              ...m,
+              field: null,
+              status: 'question',
+              layer: 'ai',
+              confidence: r.confidence,
+              candidates: merged.slice(0, 4),
+            }
+          }
+          return m
+        })
+      )
+      setMapQuestions((prev) => ({ ...prev, ...qs }))
+    } catch (e) {
+      console.error('map-columns request failed:', e)
+    } finally {
+      setMapChecking(false)
+    }
+  }
+
+  const answerColumn = (column: string, field: string) => {
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.column === column
+          ? {
+              ...m,
+              field: field === 'custom' ? null : field,
+              status: field === 'custom' ? 'custom' : 'auto',
+              layer: 'user',
+              confidence: 1,
+              candidates: field === 'custom' ? [] : [field],
+              note: undefined,
+            }
+          : m
+      )
+    )
+    // Remember the answer for this account so the same layout never asks twice.
+    if (user) {
+      Promise.resolve(
+        supabase
+          .from('column_mappings')
+          .upsert(
+            {
+              user_id: user.id,
+              column_key: normalizeName(column),
+              canonical: field,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id,column_key' }
+          )
+      ).catch(() => {})
+    }
+  }
+
+  const fieldMappingFromMatches = (): Record<string, string> => {
+    const out: Record<string, string> = {}
+    for (const m of matches) if (m.field) out[m.column] = m.field
+    return out
+  }
+
   const processFile = async (f: File) => {
     setFile(f)
     setPiiResult(null)
@@ -140,6 +301,9 @@ export default function NewProjectPage() {
     setIndustryConfirmed(false)
     setIndustryManualMode(false)
     setManualIndustry('')
+    setMapInputs([])
+    setMatches([])
+    setMapQuestions({})
 
     const text = await f.text()
     const result = scanForPII(text)
@@ -153,6 +317,9 @@ export default function NewProjectPage() {
       const { summary, sampledRows: rows } = await buildDataSummaryWithRows(f)
       setDataSummary(summary)
       setSampledRows(rows)
+      // Matching never blocks the upload: if anything in it fails the file
+      // still goes through, just without the calculated metrics.
+      runColumnMatching(summary, rows).catch((e) => console.error('Column matching failed:', e))
     } catch (err) {
       console.error(err)
       setSummaryError(
@@ -212,7 +379,12 @@ export default function NewProjectPage() {
     if (industryBlocksSubmit) return
     setLoading(true)
     try {
-      const finalSummary = resolvedSummary()
+      const baseSummary = resolvedSummary()
+      // Calculated metrics (ROAS, CTR, CPA ...) from the confirmed field mapping.
+      const finalSummary =
+        baseSummary && matches.length > 0
+          ? applyFieldMapping(baseSummary, fieldMappingFromMatches())
+          : baseSummary
       const summaryPayload = finalSummary ? JSON.stringify(finalSummary) : null
       const confirmedIndustries = resolvedIndustries()
       const dominantIndustry =
@@ -405,6 +577,9 @@ export default function NewProjectPage() {
                     setDataSummary(null)
                     setSampledRows([])
                     setSummaryError(null)
+                    setMapInputs([])
+                    setMatches([])
+                    setMapQuestions({})
                   }}
                   className={`${muted} hover:text-red-400 transition-colors`}
                 >
@@ -527,6 +702,18 @@ export default function NewProjectPage() {
               </div>
             )}
           </div>
+        )}
+
+        {dataSummary && !summarizing && matches.length > 0 && (
+          <ColumnMappingCard
+            dark={dark}
+            matches={matches}
+            inputs={mapInputs}
+            questions={mapQuestions}
+            checking={mapChecking}
+            existingMetrics={Object.keys(dataSummary.metrics)}
+            onAnswer={answerColumn}
+          />
         )}
 
         {dataSummary && !summarizing && (

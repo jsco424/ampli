@@ -1,5 +1,6 @@
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
+import { METRIC_DISPLAY_NAME, metricAvailability, type FieldMapping } from '@/lib/canonicalFields'
 
 type ColumnRole = 'date' | 'metric' | 'dimension' | 'unknown'
 
@@ -91,6 +92,11 @@ export interface DataSummary {
   // confirmedIndustry carries the choice into /api/crowd.
   confirmedIndustry?: string | null
   industryConfirmedBy?: 'column' | 'user' | null
+  // Set after the column confirmation step. fieldMapping maps each uploaded
+  // column to a canonical field. derivedMetrics lists the metrics ampli
+  // calculated from those fields (ROAS from Revenue and Spend, and so on).
+  fieldMapping?: Record<string, string>
+  derivedMetrics?: { name: string; formula: string; value: number; sources: string }[]
   scatterPairs: ScatterPairSummary[] | null
   // Pre-computed group comparisons from ALL rows — verified server-side.
   // Claude uses these directly instead of computing from the sample.
@@ -1029,4 +1035,79 @@ export async function buildDataSummary(file: File): Promise<DataSummary> {
 export async function buildDataSummaryWithRows(file: File): Promise<DataSummaryWithRows> {
   const { summary, rows } = await buildCore(file)
   return { summary, sampledRows: evenlySample(rows, 200) }
+}
+
+// Adds metrics calculated from base fields (ROAS, CTR, CPA and so on) to a
+// finished summary. Works from the totals and monthly sums already in the
+// summary, so no raw rows are needed. A derived metric is a ratio of totals,
+// never an average of row level ratios, so it matches how the number is
+// worked out by hand. Metrics the file already has as a column are left alone.
+export function applyFieldMapping(summary: DataSummary, mapping: FieldMapping): DataSummary {
+  const avail = metricAvailability(mapping, Object.keys(summary.metrics))
+  const metrics: Record<string, MetricSummary> = { ...summary.metrics }
+  const columns: ColumnProfile[] = [...summary.columns]
+  const derived: NonNullable<DataSummary['derivedMetrics']> = []
+  const warnings = [...summary.warnings]
+
+  for (const a of avail) {
+    if (a.missing.length > 0) continue
+    const slots = a.metric.slots.map((s) => s.name)
+    const sourceCols = slots.map((s) => a.sources[s] || [])
+    if (sourceCols.some((cols) => cols.length === 0 || cols.some((c) => !summary.metrics[c])))
+      continue
+
+    const slotTotal = (i: number) =>
+      sourceCols[i].reduce((sum, c) => sum + summary.metrics[c].total, 0)
+    const totals = (slot: string) => {
+      const i = slots.indexOf(slot)
+      return i === -1 ? undefined : slotTotal(i)
+    }
+    const overall = a.metric.calc(totals)
+    if (overall === null || !Number.isFinite(overall)) continue
+
+    // Period by period: add up each slot's monthly sums, then divide.
+    const periodOrder = summary.metrics[sourceCols[0][0]].monthly.map((m) => m.period)
+    const perSlot: Map<string, number>[] = sourceCols.map((cols) => {
+      const m = new Map<string, number>()
+      for (const c of cols)
+        for (const p of summary.metrics[c].monthly)
+          m.set(p.period, (m.get(p.period) || 0) + p.value)
+      return m
+    })
+    const monthly: { period: string; value: number }[] = []
+    for (const period of periodOrder) {
+      if (!perSlot.every((m) => m.has(period))) continue
+      const v = a.metric.calc((slot) => {
+        const i = slots.indexOf(slot)
+        return i === -1 ? undefined : perSlot[i].get(period)
+      })
+      if (v !== null && Number.isFinite(v)) monthly.push({ period, value: v })
+    }
+    let changeFirstToLastPct: number | null = null
+    if (monthly.length >= 2 && monthly[0].value !== 0) {
+      changeFirstToLastPct =
+        ((monthly[monthly.length - 1].value - monthly[0].value) / Math.abs(monthly[0].value)) * 100
+    }
+    const trend: MetricSummary['trend'] =
+      changeFirstToLastPct === null
+        ? 'neutral'
+        : changeFirstToLastPct > 2
+          ? 'up'
+          : changeFirstToLastPct < -2
+            ? 'down'
+            : 'neutral'
+
+    const name = METRIC_DISPLAY_NAME[a.metric.key] || a.metric.label
+    metrics[name] = { total: overall, average: overall, monthly, changeFirstToLastPct, trend }
+    columns.push({ name, role: 'metric' })
+    const sources = slots
+      .map((s, i) => `${s} from ${sourceCols[i].map((c) => `"${c}"`).join(' + ')}`)
+      .join(', ')
+    derived.push({ name, formula: a.metric.formula, value: overall, sources })
+    warnings.push(
+      `${name} was calculated by ampli as ${a.metric.formula}, using ${sources}. It is a ratio of totals across all rows, not an average of row level values.`
+    )
+  }
+
+  return { ...summary, metrics, columns, warnings, fieldMapping: mapping, derivedMetrics: derived }
 }
