@@ -286,6 +286,17 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
       continue
     }
 
+    // A picked key finding is a hero stat: its value over its label, no chart.
+    if (sel?.type === 'finding') {
+      statCards.push({
+        index: it.index,
+        label: clean(sel.finding?.label),
+        value: clean(sel.heroStat || sel.finding?.value),
+        text: clean(sel.takeaway),
+      })
+      continue
+    }
+
     const merged: any = {
       ...(chart || {}),
       data:

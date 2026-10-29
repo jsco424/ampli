@@ -229,6 +229,12 @@ export default function SlideSelector({
   // follow-up turn — this is what keeps IDs unique across all of them
   // (e.g. "finding-2" from the original vs. "finding-t0-2" from the first
   // follow-up), since both start counting from 0 independently.
+  // Key findings are hero stats, and so is any visual set to Hero number
+  // only. Story Mode puts them on one slide, so the limit is 3 in total.
+  const heroCount = () =>
+    Object.values(selected).filter((x) => x.type === 'finding' || x.chartType === 'hero_stat_only')
+      .length
+
   const toggleFinding = (finding: KeyFinding, idx: number, turnIndex?: number) => {
     const id = turnIndex === undefined ? `finding-${idx}` : `finding-t${turnIndex}-${idx}`
     if (selected[id]) {
@@ -236,7 +242,7 @@ export default function SlideSelector({
       delete next[id]
       setSelected(next)
     } else {
-      if (atLimit) return
+      if (atLimit || heroCount() >= 3) return
       const chartType = resolveChartType(finding)
       setSelected({
         ...selected,
@@ -456,16 +462,13 @@ export default function SlideSelector({
             placeholder="One punchy sentence..."
           />
         </div>
-        {showHeroStat && (
+        {showHeroStat && sel.type === 'visual' && (
           <div>
             <label
               className={`text-[10px] font-semibold uppercase tracking-wide mb-1 flex items-center gap-1 ${subtle}`}
             >
               Chart Type
-              <span className="ml-auto normal-case font-normal">
-                {Object.values(selected).filter((x) => x.chartType === 'hero_stat_only').length} of
-                3 hero stats
-              </span>
+              <span className="ml-auto normal-case font-normal">{heroCount()} of 3 hero stats</span>
             </label>
             <select
               value={
@@ -498,11 +501,7 @@ export default function SlideSelector({
               <option value="scatter">Scatter</option>
               <option
                 value="hero_stat_only"
-                disabled={
-                  sel.chartType !== 'hero_stat_only' &&
-                  Object.values(selected).filter((x) => x.chartType === 'hero_stat_only').length >=
-                    3
-                }
+                disabled={sel.chartType !== 'hero_stat_only' && heroCount() >= 3}
               >
                 Hero number only (no chart, max 3)
               </option>
@@ -696,12 +695,15 @@ export default function SlideSelector({
           <div>
             <p className={`text-xs font-semibold uppercase tracking-wide mb-3 ${subtle}`}>
               Key Findings
+              <span className="ml-2 normal-case font-normal">
+                Shown as hero stats, no chart. {heroCount()} of 3 chosen.
+              </span>
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {analysis.keyFindings.map((finding, idx) => {
                 const id = `finding-${idx}`
                 const isSelected = !!selected[id]
-                const disabled = !isSelected && atLimit
+                const disabled = !isSelected && (atLimit || heroCount() >= 3)
                 const isExpanded = isSelected && manuallyExpanded.has(id)
                 return (
                   <div
@@ -955,7 +957,7 @@ export default function SlideSelector({
                   {entry.analysis.keyFindings.map((finding, idx) => {
                     const id = `finding-t${turnIndex}-${idx}`
                     const isSelected = !!selected[id]
-                    const disabled = !isSelected && atLimit
+                    const disabled = !isSelected && (atLimit || heroCount() >= 3)
                     const isExpanded = isSelected && manuallyExpanded.has(id)
                     return (
                       <div
