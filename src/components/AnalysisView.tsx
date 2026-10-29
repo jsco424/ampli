@@ -20,6 +20,8 @@ import {
   Lightbulb,
 } from 'lucide-react'
 import ChartRenderer from '@/components/ChartRenderer'
+import { useBrand } from '@/hooks/useBrand'
+import type { KitTokens } from '@/lib/brandKit'
 import { INDEXABLE_CHART_TYPES, indexToFirstValue } from '@/lib/chartMath'
 import type {
   AnalysisOutput,
@@ -113,13 +115,17 @@ function formatInputValue(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
-function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) {
+function FindingCard({ finding, dark, T }: { finding: KeyFinding; dark: boolean; T: KitTokens }) {
   const [expanded, setExpanded] = useState(false)
   const [showMath, setShowMath] = useState(false)
   const subtle = dark ? 'text-zinc-500' : 'text-zinc-400'
   const divider = dark ? 'border-zinc-800' : 'border-zinc-100'
-  const collapsedBg = dark ? 'bg-zinc-800/60' : 'bg-[#EAEFF1]'
-  const expandedBg = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
+  // Same look as the Story Mode hero stat boxes: a flat box with a thin brand
+  // border, the number in the deep brand color and a muted label. Dark mode
+  // swaps to the highlight color so the card still reads on a dark page.
+  const boxBorder = dark ? T.highlight : T.deep
+  const numColor = dark ? T.highlight : T.deep
+  const labelColor = dark ? '#D4D4D8' : T.mutedOnSurface
   const bm = finding.benchmarkContext
   const hasFormula =
     finding.formulaType &&
@@ -130,18 +136,21 @@ function FindingCard({ finding, dark }: { finding: KeyFinding; dark: boolean }) 
   return (
     <button
       onClick={() => setExpanded(!expanded)}
-      className={`w-full text-left rounded-2xl border transition-all overflow-hidden ${
-        expanded ? expandedBg : `${collapsedBg} border-transparent hover:border-[#5DCAA5]/30`
-      }`}
+      className="w-full text-left rounded-md transition-shadow overflow-hidden hover:shadow-md"
+      style={{
+        background: dark ? 'rgba(255,255,255,0.03)' : '#FFFFFF',
+        border: `1.5px solid ${boxBorder}`,
+      }}
     >
-      {/* Collapsed — number + short label only */}
+      {/* Collapsed: number and short label only */}
       <div className="px-5 py-7 flex flex-col items-center text-center">
         <p
-          className={`text-3xl sm:text-4xl font-black leading-none mb-2 ${directionColor(finding.direction, dark)}`}
+          className="text-3xl sm:text-4xl font-extrabold leading-none mb-2"
+          style={{ color: numColor }}
         >
           {finding.value}
         </p>
-        <p className={`text-sm font-medium ${dark ? 'text-zinc-200' : 'text-zinc-700'}`}>
+        <p className="text-sm font-medium" style={{ color: labelColor }}>
           {finding.label}
         </p>
       </div>
@@ -291,6 +300,7 @@ function ConversationTurn({
   dark: boolean
   turnIndex: number
 }) {
+  const { tokens: brandTokens } = useBrand()
   const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
   const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
   const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
@@ -318,7 +328,7 @@ function ConversationTurn({
         {analysis.keyFindings.length > 0 && (
           <div className="grid grid-cols-2 gap-2">
             {analysis.keyFindings.slice(0, 4).map((f, i) => (
-              <FindingCard key={i} finding={f} dark={dark} />
+              <FindingCard key={i} finding={f} dark={dark} T={brandTokens} />
             ))}
           </div>
         )}
@@ -401,6 +411,7 @@ export default function AnalysisView({
   onBuildRecommendations,
   recommendationsError = null,
 }: AnalysisViewProps) {
+  const { tokens: brandTokens } = useBrand()
   // A stray null/undefined entry in project.charts — however it got
   // there, a data integrity issue this filter doesn't diagnose, just
   // protects against — crashes the whole page the instant .map() below
@@ -490,7 +501,7 @@ export default function AnalysisView({
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {analysis.keyFindings.map((f, i) => (
-              <FindingCard key={i} finding={f} dark={dark} />
+              <FindingCard key={i} finding={f} dark={dark} T={brandTokens} />
             ))}
           </div>
         </div>
