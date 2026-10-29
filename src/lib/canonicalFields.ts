@@ -1,867 +1,1490 @@
-'use client'
+// Canonical fields: one shared vocabulary for the columns people upload.
+//
+// Nobody uploads a column called ROAS. They upload Spend and Revenue, and the
+// metric is calculated from those. This file holds:
+//
+//   1. CANONICAL_FIELDS   the base fields (dimensions and measures) with the
+//                         names people actually use for them
+//   2. DERIVED_METRICS    metrics calculated from base fields (ROAS, CTR, CPA ...)
+//   3. matchColumns()     maps an uploaded column to a canonical field, with a
+//                         confidence score and, when unsure, the likely candidates
+//   4. missingForMetrics()  tells the user which field is missing for a metric
+//
+// Everything here is pure and runs in the browser, so matching is instant and
+// no column names leave the page unless a column genuinely cannot be placed
+// (see /api/map-columns).
 
-import { useState } from 'react'
-import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  AlertTriangle,
-  Info,
-  AlertCircle,
-  CheckCircle2,
-  HelpCircle,
-  XCircle,
-  ChevronDown,
-  Sparkles,
-  MessageSquare,
-  RefreshCw,
-  BarChart2,
-  BarChart3,
-  Lightbulb,
-} from 'lucide-react'
-import ChartRenderer from '@/components/ChartRenderer'
-import { useBrand } from '@/hooks/useBrand'
-import type { KitTokens } from '@/lib/brandKit'
-import { INDEXABLE_CHART_TYPES, indexToFirstValue } from '@/lib/chartMath'
-import type {
-  AnalysisOutput,
-  KeyFinding,
-  Anomaly,
-  VerificationStatus,
-  FindingDirection,
-} from '@/lib/analysisTypes'
+export type FieldKind = 'dimension' | 'measure'
+export type FieldUnit = 'currency' | 'count' | 'percent' | 'multiple' | 'text' | 'date' | 'number'
 
-function VerificationBadge({ status }: { status?: VerificationStatus }) {
-  if (!status || status === 'pending' || status === 'not_applicable') return null
-  const config: Record<string, { icon: React.ReactNode; label: string; className: string } | null> =
-    {
-      verified: {
-        icon: <CheckCircle2 size={10} />,
-        label: 'Verified',
-        className: 'text-emerald-500',
-      },
-      mismatch: { icon: <XCircle size={10} />, label: 'Review', className: 'text-amber-500' },
-      unverified: {
-        icon: <HelpCircle size={10} />,
-        label: 'AI-computed',
-        className: 'text-zinc-400',
-      },
-      not_applicable: null,
-      pending: null,
-    }
-  const c = config[status]
-  if (!c) return null
-  return (
-    <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${c.className}`}>
-      {c.icon} {c.label}
-    </span>
-  )
+export interface CanonicalField {
+  key: string
+  label: string
+  kind: FieldKind
+  group: string
+  unit: FieldUnit
+  synonyms: string[]
+  // A ratio the user already has as a column (for example "Cost per click").
+  derived?: boolean
 }
 
-function directionColor(direction: FindingDirection, dark: boolean): string {
-  return {
-    positive: 'text-emerald-500',
-    negative: 'text-red-400',
-    neutral: dark ? 'text-zinc-200' : 'text-zinc-700',
-    warning: 'text-amber-400',
-  }[direction]
+const f = (
+  key: string,
+  label: string,
+  kind: FieldKind,
+  group: string,
+  unit: FieldUnit,
+  synonyms: string[],
+  derived = false
+): CanonicalField => ({ key, label, kind, group, unit, synonyms, derived })
+
+export const CANONICAL_FIELDS: CanonicalField[] = [
+  // ── time
+  f('date', 'Date', 'dimension', 'Time', 'date', [
+    'date',
+    'day',
+    'order date',
+    'transaction date',
+    'report date',
+    'reporting date',
+    'created at',
+    'created date',
+    'timestamp',
+    'week',
+    'week of',
+    'week start',
+    'month',
+    'month of',
+    'quarter',
+    'period',
+    'year',
+    'fiscal period',
+    'fiscal quarter',
+  ]),
+
+  // ── marketing dimensions
+  f('channel', 'Channel', 'dimension', 'Marketing', 'text', [
+    'channel',
+    'marketing channel',
+    'media channel',
+    'traffic source',
+    'source',
+    'source medium',
+    'medium',
+    'utm source',
+    'utm medium',
+    'acquisition channel',
+  ]),
+  f('campaign', 'Campaign', 'dimension', 'Marketing', 'text', [
+    'campaign',
+    'campaign name',
+    'campaign id',
+    'ad campaign',
+    'initiative',
+  ]),
+  f('ad_group', 'Ad group', 'dimension', 'Marketing', 'text', [
+    'ad group',
+    'ad set',
+    'adset',
+    'ad set name',
+    'ad group name',
+  ]),
+  f('ad_creative', 'Ad or creative', 'dimension', 'Marketing', 'text', [
+    'ad',
+    'ad name',
+    'creative',
+    'creative name',
+    'ad creative',
+    'asset name',
+  ]),
+  f('keyword', 'Keyword', 'dimension', 'Marketing', 'text', [
+    'keyword',
+    'search term',
+    'query',
+    'search query',
+  ]),
+  f('placement', 'Placement', 'dimension', 'Marketing', 'text', [
+    'placement',
+    'ad placement',
+    'publisher',
+    'site',
+    'network',
+  ]),
+  f('device', 'Device', 'dimension', 'Marketing', 'text', [
+    'device',
+    'device type',
+    'device category',
+    'platform type',
+  ]),
+  f('platform', 'Platform', 'dimension', 'Marketing', 'text', [
+    'platform',
+    'ad platform',
+    'social platform',
+    'publisher platform',
+  ]),
+  f('audience', 'Audience or segment', 'dimension', 'Marketing', 'text', [
+    'audience',
+    'segment',
+    'customer segment',
+    'audience name',
+    'targeting',
+  ]),
+  f('offer', 'Offer or promo code', 'dimension', 'Marketing', 'text', [
+    'offer',
+    'promo',
+    'promo code',
+    'coupon',
+    'coupon code',
+    'discount code',
+    'promotion',
+  ]),
+
+  // ── customer dimensions
+  f('customer_id', 'Customer ID', 'dimension', 'Customer', 'text', [
+    'customer id',
+    'user id',
+    'userid',
+    'account id',
+    'member id',
+    'client id',
+    'cust id',
+    'shopper id',
+  ]),
+  f('customer_type', 'New vs returning', 'dimension', 'Customer', 'text', [
+    'new vs returning',
+    'customer type',
+    'new or returning',
+    'user type',
+    'visitor type',
+    'new returning',
+    'cohort type',
+  ]),
+  f('cohort', 'Cohort', 'dimension', 'Customer', 'text', [
+    'cohort',
+    'signup month',
+    'signup cohort',
+    'acquisition month',
+    'join month',
+  ]),
+  f('plan', 'Plan or tier', 'dimension', 'Customer', 'text', [
+    'plan',
+    'tier',
+    'subscription plan',
+    'plan type',
+    'pricing tier',
+    'membership level',
+    'loyalty tier',
+  ]),
+  f('age_group', 'Age band', 'dimension', 'Customer', 'text', [
+    'age',
+    'age group',
+    'age band',
+    'age range',
+    'age bracket',
+  ]),
+  f('gender', 'Gender', 'dimension', 'Customer', 'text', ['gender', 'sex']),
+
+  // ── geography
+  f('country', 'Country', 'dimension', 'Geography', 'text', ['country', 'country code', 'nation']),
+  f('state', 'State or region', 'dimension', 'Geography', 'text', [
+    'state',
+    'state code',
+    'region',
+    'province',
+    'territory',
+  ]),
+  f('dma', 'DMA', 'dimension', 'Geography', 'text', [
+    'dma',
+    'dma name',
+    'market',
+    'metro',
+    'metro area',
+  ]),
+  f('city', 'City', 'dimension', 'Geography', 'text', ['city', 'town']),
+  f('store', 'Store or location', 'dimension', 'Geography', 'text', [
+    'store',
+    'store name',
+    'store id',
+    'location',
+    'branch',
+    'outlet',
+  ]),
+
+  // ── product dimensions
+  f('product', 'Product', 'dimension', 'Product', 'text', [
+    'product',
+    'product name',
+    'item',
+    'item name',
+    'sku',
+    'sku name',
+    'product id',
+  ]),
+  f('category', 'Category', 'dimension', 'Product', 'text', [
+    'category',
+    'product category',
+    'department',
+    'product type',
+    'vertical',
+  ]),
+  f('brand', 'Brand', 'dimension', 'Product', 'text', ['brand', 'brand name', 'manufacturer']),
+
+  // ── experiment
+  f('test_group', 'Treatment vs control', 'dimension', 'Experiment', 'text', [
+    'treatment vs control',
+    'test group',
+    'control group',
+    'treatment',
+    'control',
+    'variant',
+    'test vs control',
+    'ab group',
+    'experiment group',
+    'holdout',
+    'exposed',
+    'test cell',
+    'cell',
+  ]),
+
+  // ── sales and ops dimensions
+  f('rep', 'Rep or owner', 'dimension', 'Sales', 'text', [
+    'rep',
+    'sales rep',
+    'owner',
+    'account owner',
+    'account manager',
+    'agent',
+  ]),
+  f('team', 'Team', 'dimension', 'Sales', 'text', ['team', 'sales team', 'squad', 'business unit']),
+  f('stage', 'Pipeline stage', 'dimension', 'Sales', 'text', [
+    'stage',
+    'pipeline stage',
+    'deal stage',
+    'funnel stage',
+  ]),
+
+  // ── cost measures
+  f('spend', 'Spend', 'measure', 'Cost', 'currency', [
+    'spend',
+    'ad spend',
+    'media spend',
+    'marketing spend',
+    'amount spent',
+    'spent',
+    'media cost',
+    'ad cost',
+    'total spend',
+    'cost usd',
+    'investment',
+    'media investment',
+    'paid spend',
+  ]),
+  f('budget', 'Budget', 'measure', 'Cost', 'currency', [
+    'budget',
+    'planned spend',
+    'daily budget',
+    'campaign budget',
+    'allocated budget',
+  ]),
+  f('cogs', 'Cost of goods', 'measure', 'Cost', 'currency', [
+    'cogs',
+    'cost of goods',
+    'cost of goods sold',
+    'product cost',
+    'unit cost',
+    'cost of sales',
+  ]),
+  f('discount', 'Discount amount', 'measure', 'Cost', 'currency', [
+    'discount',
+    'discount amount',
+    'promo amount',
+    'markdown',
+    'coupon amount',
+  ]),
+  f('shipping_cost', 'Shipping cost', 'measure', 'Cost', 'currency', [
+    'shipping cost',
+    'freight',
+    'shipping',
+    'delivery cost',
+    'fulfillment cost',
+  ]),
+  f('fees', 'Fees', 'measure', 'Cost', 'currency', [
+    'fees',
+    'fee',
+    'processing fee',
+    'transaction fee',
+    'platform fee',
+  ]),
+
+  // ── reach measures
+  f('impressions', 'Impressions', 'measure', 'Reach', 'count', [
+    'impressions',
+    'imps',
+    'impr',
+    'views',
+    'ad impressions',
+    'ad views',
+  ]),
+  f('reach', 'Reach', 'measure', 'Reach', 'count', [
+    'reach',
+    'unique reach',
+    'people reached',
+    'unique viewers',
+  ]),
+  f('sessions', 'Sessions', 'measure', 'Reach', 'count', [
+    'sessions',
+    'visits',
+    'site visits',
+    'website sessions',
+    'traffic',
+  ]),
+  f('users', 'Users', 'measure', 'Reach', 'count', [
+    'users',
+    'unique users',
+    'visitors',
+    'unique visitors',
+    'active users',
+    'mau',
+    'dau',
+  ]),
+  f('page_views', 'Page views', 'measure', 'Reach', 'count', [
+    'page views',
+    'pageviews',
+    'screen views',
+    'pv',
+  ]),
+  f('video_views', 'Video views', 'measure', 'Reach', 'count', [
+    'video views',
+    'video plays',
+    'views 3s',
+    'thruplays',
+  ]),
+
+  // ── engagement measures
+  f('clicks', 'Clicks', 'measure', 'Engagement', 'count', [
+    'clicks',
+    'link clicks',
+    'ad clicks',
+    'all clicks',
+    'click',
+    'outbound clicks',
+  ]),
+  f('likes', 'Likes', 'measure', 'Engagement', 'count', ['likes', 'reactions']),
+  f('shares', 'Shares', 'measure', 'Engagement', 'count', ['shares', 'reposts', 'retweets']),
+  f('comments', 'Comments', 'measure', 'Engagement', 'count', ['comments', 'replies']),
+  f('saves', 'Saves', 'measure', 'Engagement', 'count', ['saves', 'bookmarks']),
+  f('time_on_site', 'Time on site', 'measure', 'Engagement', 'number', [
+    'time on site',
+    'avg session duration',
+    'session duration',
+    'time spent',
+    'dwell time',
+  ]),
+  f('bounces', 'Bounces', 'measure', 'Engagement', 'count', ['bounces', 'bounced sessions']),
+
+  // ── conversion event measures
+  f('conversions', 'Conversions', 'measure', 'Conversions', 'count', [
+    'conversions',
+    'conv',
+    'conversion',
+    'results',
+    'actions',
+    'goal completions',
+    'total conversions',
+  ]),
+  f('leads', 'Leads', 'measure', 'Conversions', 'count', [
+    'leads',
+    'lead',
+    'form fills',
+    'form submissions',
+    'mqls',
+    'sqls',
+    'inquiries',
+    'enquiries',
+  ]),
+  f('signups', 'Signups', 'measure', 'Conversions', 'count', [
+    'signups',
+    'sign ups',
+    'sign up',
+    'registrations',
+    'new signups',
+    'accounts created',
+    'new accounts',
+  ]),
+  f('trials', 'Trials started', 'measure', 'Conversions', 'count', [
+    'trials',
+    'trial starts',
+    'trials started',
+    'free trials',
+  ]),
+  f('add_to_carts', 'Add to carts', 'measure', 'Conversions', 'count', [
+    'add to cart',
+    'add to carts',
+    'carts',
+    'carts created',
+    'adds to cart',
+    'atc',
+  ]),
+  f('checkouts', 'Checkouts started', 'measure', 'Conversions', 'count', [
+    'checkouts',
+    'checkouts started',
+    'initiated checkout',
+    'begin checkout',
+  ]),
+  f('orders', 'Orders', 'measure', 'Conversions', 'count', [
+    'orders',
+    'order',
+    'order count',
+    'purchases',
+    'purchase',
+    'transactions',
+    'transaction',
+    'number of orders',
+    'checkouts completed',
+  ]),
+  f('installs', 'Installs', 'measure', 'Conversions', 'count', [
+    'installs',
+    'app installs',
+    'downloads',
+    'app downloads',
+  ]),
+  f('applications', 'Applications', 'measure', 'Conversions', 'count', [
+    'applications',
+    'apps submitted',
+    'applicants',
+  ]),
+  f('receipts', 'Receipts submitted', 'measure', 'Conversions', 'count', [
+    'receipts',
+    'receipts submitted',
+    'receipts scanned',
+    'receipts analyzed',
+  ]),
+  f('subscriptions', 'Subscriptions', 'measure', 'Conversions', 'count', [
+    'subscriptions',
+    'new subscriptions',
+    'subscribers added',
+    'subscribes',
+  ]),
+  f('cancellations', 'Cancellations', 'measure', 'Conversions', 'count', [
+    'cancellations',
+    'cancels',
+    'cancelled',
+    'canceled',
+  ]),
+  f('units_sold', 'Units sold', 'measure', 'Conversions', 'count', [
+    'units',
+    'units sold',
+    'quantity',
+    'qty',
+    'items sold',
+  ]),
+
+  // ── money in
+  f('revenue', 'Revenue', 'measure', 'Revenue', 'currency', [
+    'revenue',
+    'net revenue',
+    'gross revenue',
+    'total revenue',
+    'sales revenue',
+    'revenue usd',
+    'conversion value',
+    'purchase value',
+    'purchase revenue',
+    'attributed revenue',
+    'turnover',
+    'sales amount',
+  ]),
+  f('order_value', 'Order value', 'measure', 'Revenue', 'currency', [
+    'order value',
+    'order total',
+    'order amount',
+    'basket value',
+    'cart value',
+    'transaction value',
+  ]),
+  f('signup_fee', 'Signup fee', 'measure', 'Revenue', 'currency', [
+    'signup fee',
+    'sign up fee',
+    'enrollment fee',
+    'registration fee',
+    'activation fee',
+    'onboarding fee',
+  ]),
+  f('subscription_fee', 'Subscription fee', 'measure', 'Revenue', 'currency', [
+    'subscription fee',
+    'monthly fee',
+    'membership fee',
+    'subscription revenue',
+    'mrr',
+    'arr',
+    'recurring revenue',
+  ]),
+  f('gross_profit', 'Gross profit', 'measure', 'Revenue', 'currency', [
+    'gross profit',
+    'profit',
+    'net profit',
+    'contribution margin',
+    'gross margin amount',
+  ]),
+  f('refunds', 'Refunds', 'measure', 'Revenue', 'currency', [
+    'refunds',
+    'refund amount',
+    'returns amount',
+    'chargebacks',
+    'refunded',
+  ]),
+  f('returns', 'Returns', 'measure', 'Revenue', 'count', [
+    'returns',
+    'returned orders',
+    'return count',
+    'items returned',
+  ]),
+
+  // ── customer counts
+  f('new_customers', 'New customers', 'measure', 'Customers', 'count', [
+    'new customers',
+    'new users',
+    'new buyers',
+    'first time customers',
+    'customers acquired',
+    'acquisitions',
+    'new accounts won',
+  ]),
+  f('customers', 'Customers', 'measure', 'Customers', 'count', [
+    'customers',
+    'buyers',
+    'active customers',
+    'subscribers',
+    'members',
+    'accounts',
+    'customer count',
+  ]),
+  f('customers_start', 'Customers at start', 'measure', 'Customers', 'count', [
+    'customers at start',
+    'starting customers',
+    'beginning customers',
+    'opening customers',
+    'customers start of period',
+  ]),
+  f('customers_end', 'Customers at end', 'measure', 'Customers', 'count', [
+    'customers at end',
+    'ending customers',
+    'closing customers',
+    'customers end of period',
+  ]),
+  f('churned', 'Churned customers', 'measure', 'Customers', 'count', [
+    'churned',
+    'churned customers',
+    'lost customers',
+    'customers lost',
+    'cancelled customers',
+    'attrition count',
+  ]),
+
+  // ── sales pipeline
+  f('opportunities', 'Opportunities', 'measure', 'Sales', 'count', [
+    'opportunities',
+    'opps',
+    'deals created',
+    'pipeline deals',
+  ]),
+  f('pipeline_value', 'Pipeline value', 'measure', 'Sales', 'currency', [
+    'pipeline value',
+    'pipeline',
+    'pipeline amount',
+    'weighted pipeline',
+  ]),
+  f('closed_won', 'Closed won', 'measure', 'Sales', 'count', [
+    'closed won',
+    'won',
+    'deals won',
+    'wins',
+    'won deals',
+  ]),
+  f('quota', 'Quota', 'measure', 'Sales', 'currency', ['quota', 'target', 'goal', 'sales target']),
+
+  // ── quality
+  f('rating', 'Rating', 'measure', 'Quality', 'number', [
+    'rating',
+    'star rating',
+    'review score',
+    'avg rating',
+    'average rating',
+    'stars',
+  ]),
+  f('nps', 'NPS score', 'measure', 'Quality', 'number', ['nps', 'net promoter score', 'nps score']),
+  f('responses', 'Survey responses', 'measure', 'Quality', 'count', [
+    'responses',
+    'survey responses',
+    'respondents',
+    'replies received',
+  ]),
+  f('tickets', 'Support tickets', 'measure', 'Quality', 'count', [
+    'tickets',
+    'support tickets',
+    'cases',
+    'help requests',
+  ]),
+
+  // ── ratios people often already have as a column
+  f(
+    'roas',
+    'ROAS',
+    'measure',
+    'Efficiency',
+    'multiple',
+    ['roas', 'return on ad spend', 'return on advertising spend', 'ad return'],
+    true
+  ),
+  f('roi', 'ROI', 'measure', 'Efficiency', 'percent', ['roi', 'return on investment'], true),
+  f(
+    'ctr',
+    'Click through rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['ctr', 'click through rate', 'clickthrough rate', 'click rate', 'click thru rate'],
+    true
+  ),
+  f(
+    'cpc',
+    'Cost per click',
+    'measure',
+    'Efficiency',
+    'currency',
+    ['cpc', 'cost per click', 'avg cpc', 'average cpc'],
+    true
+  ),
+  f(
+    'cpm',
+    'Cost per thousand',
+    'measure',
+    'Efficiency',
+    'currency',
+    ['cpm', 'cost per mille', 'cost per thousand', 'cost per 1000 impressions'],
+    true
+  ),
+  f(
+    'cpa',
+    'Cost per acquisition',
+    'measure',
+    'Efficiency',
+    'currency',
+    [
+      'cpa',
+      'cost per acquisition',
+      'cost per action',
+      'cost per conversion',
+      'cost per result',
+      'cost per order',
+      'cost per purchase',
+      'cost per signup',
+      'cost per install',
+    ],
+    true
+  ),
+  f('cpl', 'Cost per lead', 'measure', 'Efficiency', 'currency', ['cpl', 'cost per lead'], true),
+  f(
+    'cac',
+    'Customer acquisition cost',
+    'measure',
+    'Efficiency',
+    'currency',
+    ['cac', 'customer acquisition cost', 'cost per customer', 'cost per new customer'],
+    true
+  ),
+  f(
+    'conversion_rate',
+    'Conversion rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    [
+      'conversion rate',
+      'cvr',
+      'conv rate',
+      'cr',
+      'purchase rate',
+      'signup rate',
+      'lead conversion rate',
+    ],
+    true
+  ),
+  f(
+    'aov',
+    'Average order value',
+    'measure',
+    'Efficiency',
+    'currency',
+    [
+      'aov',
+      'average order value',
+      'avg order value',
+      'basket size',
+      'avg basket',
+      'average basket',
+    ],
+    true
+  ),
+  f(
+    'arpu',
+    'Revenue per user',
+    'measure',
+    'Efficiency',
+    'currency',
+    ['arpu', 'revenue per user', 'average revenue per user', 'arpa', 'revenue per customer'],
+    true
+  ),
+  f(
+    'ltv',
+    'Lifetime value',
+    'measure',
+    'Efficiency',
+    'currency',
+    ['ltv', 'clv', 'lifetime value', 'customer lifetime value'],
+    true
+  ),
+  f(
+    'cart_abandonment_rate',
+    'Cart abandonment rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['cart abandonment', 'cart abandonment rate', 'abandonment rate', 'abandoned cart rate'],
+    true
+  ),
+  f(
+    'churn_rate',
+    'Churn rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['churn', 'churn rate', 'attrition rate', 'attrition'],
+    true
+  ),
+  f(
+    'retention_rate',
+    'Retention rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['retention', 'retention rate', 'repeat rate', 'repeat purchase rate'],
+    true
+  ),
+  f(
+    'gross_margin',
+    'Gross margin',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['margin', 'gross margin', 'margin pct', 'margin percent', 'profit margin'],
+    true
+  ),
+  f(
+    'engagement_rate',
+    'Engagement rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['engagement rate', 'engagement', 'interaction rate'],
+    true
+  ),
+  f(
+    'frequency',
+    'Frequency',
+    'measure',
+    'Efficiency',
+    'number',
+    ['frequency', 'avg frequency', 'average frequency'],
+    true
+  ),
+  f(
+    'win_rate',
+    'Win rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['win rate', 'close rate', 'closing rate'],
+    true
+  ),
+  f(
+    'refund_rate',
+    'Refund rate',
+    'measure',
+    'Efficiency',
+    'percent',
+    ['refund rate', 'return rate'],
+    true
+  ),
+]
+
+export const FIELD_BY_KEY: Record<string, CanonicalField> = Object.fromEntries(
+  CANONICAL_FIELDS.map((c) => [c.key, c])
+)
+
+// ── derived metrics ─────────────────────────────────────────────────────────
+// A derived metric is calculated from base fields. Each slot lists the fields
+// that can fill it, in order of preference: Cost per acquisition can divide by
+// conversions, orders or signups, whichever the file has.
+
+export interface DerivedMetric {
+  key: string
+  label: string
+  formula: string
+  slots: { name: string; options: string[] }[]
+  unit: FieldUnit
+  // t(name) returns the summed value of the field chosen for that slot.
+  calc: (t: (slot: string) => number | undefined) => number | null
 }
 
-function confidenceColor(level: string): string {
-  return (
-    { high: 'bg-emerald-500', medium: 'bg-amber-400', low: 'bg-red-400' }[level] || 'bg-zinc-500'
-  )
-}
+const safeDiv = (a?: number, b?: number): number | null =>
+  a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b) || b === 0
+    ? null
+    : a / b
 
-function DirectionIcon({ direction }: { direction: FindingDirection }) {
-  return (
-    <>
+export const DERIVED_METRICS: DerivedMetric[] = [
+  {
+    key: 'roas',
+    label: 'ROAS',
+    formula: 'Revenue ÷ Spend',
+    unit: 'multiple',
+    slots: [
+      { name: 'revenue', options: ['revenue', 'order_value', 'subscription_fee', 'signup_fee'] },
+      { name: 'spend', options: ['spend'] },
+    ],
+    calc: (t) => safeDiv(t('revenue'), t('spend')),
+  },
+  {
+    key: 'roi',
+    label: 'ROI',
+    formula: '(Revenue − Spend) ÷ Spend',
+    unit: 'percent',
+    slots: [
+      { name: 'revenue', options: ['revenue', 'order_value', 'subscription_fee', 'signup_fee'] },
+      { name: 'spend', options: ['spend'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv((t('revenue') ?? NaN) - (t('spend') ?? NaN), t('spend'))
+      return r === null ? null : r * 100
+    },
+  },
+  {
+    key: 'ctr',
+    label: 'Click through rate',
+    formula: 'Clicks ÷ Impressions',
+    unit: 'percent',
+    slots: [
+      { name: 'clicks', options: ['clicks'] },
+      { name: 'impressions', options: ['impressions'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('clicks'), t('impressions'))
+      return r === null ? null : r * 100
+    },
+  },
+  {
+    key: 'cpc',
+    label: 'Cost per click',
+    formula: 'Spend ÷ Clicks',
+    unit: 'currency',
+    slots: [
+      { name: 'spend', options: ['spend'] },
+      { name: 'clicks', options: ['clicks'] },
+    ],
+    calc: (t) => safeDiv(t('spend'), t('clicks')),
+  },
+  {
+    key: 'cpm',
+    label: 'Cost per thousand',
+    formula: 'Spend ÷ Impressions × 1,000',
+    unit: 'currency',
+    slots: [
+      { name: 'spend', options: ['spend'] },
+      { name: 'impressions', options: ['impressions'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('spend'), t('impressions'))
+      return r === null ? null : r * 1000
+    },
+  },
+  {
+    key: 'cpa',
+    label: 'Cost per acquisition',
+    formula: 'Spend ÷ Conversions',
+    unit: 'currency',
+    slots: [
+      { name: 'spend', options: ['spend'] },
       {
-        {
-          positive: <TrendingUp size={12} className="text-emerald-500" />,
-          negative: <TrendingDown size={12} className="text-red-400" />,
-          neutral: <Minus size={12} className="text-zinc-400" />,
-          warning: <AlertTriangle size={12} className="text-amber-400" />,
-        }[direction]
+        name: 'conversions',
+        options: ['conversions', 'orders', 'signups', 'installs', 'applications', 'subscriptions'],
+      },
+    ],
+    calc: (t) => safeDiv(t('spend'), t('conversions')),
+  },
+  {
+    key: 'cpl',
+    label: 'Cost per lead',
+    formula: 'Spend ÷ Leads',
+    unit: 'currency',
+    slots: [
+      { name: 'spend', options: ['spend'] },
+      { name: 'leads', options: ['leads'] },
+    ],
+    calc: (t) => safeDiv(t('spend'), t('leads')),
+  },
+  {
+    key: 'cac',
+    label: 'Customer acquisition cost',
+    formula: 'Spend ÷ New customers',
+    unit: 'currency',
+    slots: [
+      { name: 'spend', options: ['spend'] },
+      { name: 'new_customers', options: ['new_customers'] },
+    ],
+    calc: (t) => safeDiv(t('spend'), t('new_customers')),
+  },
+  {
+    key: 'conversion_rate',
+    label: 'Conversion rate',
+    formula: 'Conversions ÷ Clicks',
+    unit: 'percent',
+    slots: [
+      { name: 'conversions', options: ['conversions', 'orders', 'signups', 'leads'] },
+      { name: 'clicks', options: ['clicks', 'sessions'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('conversions'), t('clicks'))
+      return r === null ? null : r * 100
+    },
+  },
+  {
+    key: 'aov',
+    label: 'Average order value',
+    formula: 'Revenue ÷ Orders',
+    unit: 'currency',
+    slots: [
+      { name: 'revenue', options: ['revenue', 'order_value'] },
+      { name: 'orders', options: ['orders'] },
+    ],
+    calc: (t) => safeDiv(t('revenue'), t('orders')),
+  },
+  {
+    key: 'arpu',
+    label: 'Revenue per user',
+    formula: 'Revenue ÷ Customers',
+    unit: 'currency',
+    slots: [
+      { name: 'revenue', options: ['revenue', 'subscription_fee'] },
+      { name: 'customers', options: ['customers', 'users'] },
+    ],
+    calc: (t) => safeDiv(t('revenue'), t('customers')),
+  },
+  {
+    key: 'cart_abandonment_rate',
+    label: 'Cart abandonment rate',
+    formula: '1 − Orders ÷ Carts',
+    unit: 'percent',
+    slots: [
+      { name: 'orders', options: ['orders'] },
+      { name: 'carts', options: ['add_to_carts', 'checkouts'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('orders'), t('carts'))
+      return r === null ? null : (1 - r) * 100
+    },
+  },
+  {
+    key: 'churn_rate',
+    label: 'Churn rate',
+    formula: 'Churned ÷ Customers at start',
+    unit: 'percent',
+    slots: [
+      { name: 'churned', options: ['churned', 'cancellations'] },
+      { name: 'start', options: ['customers_start', 'customers'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('churned'), t('start'))
+      return r === null ? null : r * 100
+    },
+  },
+  {
+    key: 'gross_margin',
+    label: 'Gross margin',
+    formula: '(Revenue − Cost of goods) ÷ Revenue',
+    unit: 'percent',
+    slots: [
+      { name: 'revenue', options: ['revenue'] },
+      { name: 'cogs', options: ['cogs'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv((t('revenue') ?? NaN) - (t('cogs') ?? NaN), t('revenue'))
+      return r === null ? null : r * 100
+    },
+  },
+  {
+    key: 'frequency',
+    label: 'Frequency',
+    formula: 'Impressions ÷ Reach',
+    unit: 'number',
+    slots: [
+      { name: 'impressions', options: ['impressions'] },
+      { name: 'reach', options: ['reach'] },
+    ],
+    calc: (t) => safeDiv(t('impressions'), t('reach')),
+  },
+  {
+    key: 'win_rate',
+    label: 'Win rate',
+    formula: 'Closed won ÷ Opportunities',
+    unit: 'percent',
+    slots: [
+      { name: 'won', options: ['closed_won'] },
+      { name: 'opps', options: ['opportunities'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('won'), t('opps'))
+      return r === null ? null : r * 100
+    },
+  },
+  {
+    key: 'refund_rate',
+    label: 'Refund rate',
+    formula: 'Refunds ÷ Revenue',
+    unit: 'percent',
+    slots: [
+      { name: 'refunds', options: ['refunds'] },
+      { name: 'revenue', options: ['revenue'] },
+    ],
+    calc: (t) => {
+      const r = safeDiv(t('refunds'), t('revenue'))
+      return r === null ? null : r * 100
+    },
+  },
+]
+
+// ── name normalization ──────────────────────────────────────────────────────
+
+const NOISE = new Set([
+  'total',
+  'sum',
+  'amount',
+  'amt',
+  'number',
+  'num',
+  'no',
+  'of',
+  'the',
+  'usd',
+  'count',
+  'all',
+])
+
+export function normalizeName(raw: string): string {
+  return String(raw || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[\(\[][^\)\]]*[\)\]]/g, ' ')
+    .toLowerCase()
+    .replace(/[_\-./\\:]+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function coreTokens(norm: string): string[] {
+  const toks = norm.split(' ').filter(Boolean)
+  const core = toks.filter((t) => !NOISE.has(t))
+  return core.length > 0 ? core : toks
+}
+
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0
+  if (Math.abs(a.length - b.length) > 2) return 3
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)])
+  for (let j = 1; j <= b.length; j++) dp[0][j] = j
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      )
+  return dp[a.length][b.length]
+}
+
+// Names that could honestly mean more than one thing. These never map
+// silently: the user is asked, with these as the first options.
+const AMBIGUOUS: Record<string, { candidates: string[]; note: string }> = {
+  cost: {
+    candidates: ['spend', 'cogs', 'shipping_cost'],
+    note: 'Cost can be ad spend, cost of goods or shipping.',
+  },
+  costs: {
+    candidates: ['spend', 'cogs', 'shipping_cost'],
+    note: 'Costs can be ad spend, cost of goods or shipping.',
+  },
+  'cash flow': {
+    candidates: ['revenue', 'gross_profit', 'order_value'],
+    note: 'Cash flow can be revenue, profit or revenue per order.',
+  },
+  cashflow: {
+    candidates: ['revenue', 'gross_profit', 'order_value'],
+    note: 'Cash flow can be revenue, profit or revenue per order.',
+  },
+  amount: {
+    candidates: ['revenue', 'spend', 'order_value'],
+    note: 'Amount can be money in or money out.',
+  },
+  value: {
+    candidates: ['revenue', 'order_value', 'pipeline_value'],
+    note: 'Value can mean several kinds of money.',
+  },
+  total: { candidates: ['revenue', 'orders', 'spend'], note: 'Total can mean money or a count.' },
+  income: { candidates: ['revenue', 'gross_profit'], note: 'Income can be revenue or profit.' },
+  earnings: { candidates: ['revenue', 'gross_profit'], note: 'Earnings can be revenue or profit.' },
+  payments: {
+    candidates: ['revenue', 'order_value', 'fees'],
+    note: 'Payments can be money in or fees.',
+  },
+  sales: {
+    candidates: ['revenue', 'orders', 'units_sold'],
+    note: 'Sales can be dollars, orders or units.',
+  },
+  results: {
+    candidates: ['conversions', 'orders', 'leads'],
+    note: 'Results can be purchases, signups or leads.',
+  },
+  users: {
+    candidates: ['users', 'customers', 'sessions'],
+    note: 'Users can be visitors or paying customers.',
+  },
+  visits: {
+    candidates: ['sessions', 'users', 'page_views'],
+    note: 'Visits can be sessions or unique visitors.',
+  },
+  views: {
+    candidates: ['impressions', 'page_views', 'video_views'],
+    note: 'Views can be ad impressions, page views or video views.',
+  },
+  engagement: {
+    candidates: ['engagement_rate', 'clicks', 'likes'],
+    note: 'Engagement can be a rate or a count.',
+  },
+  growth: {
+    candidates: ['revenue', 'customers', 'sessions'],
+    note: 'Growth needs a base measure to compare against.',
+  },
+  performance: {
+    candidates: ['revenue', 'conversions', 'roas'],
+    note: 'Performance is not one measure.',
+  },
+  budget: { candidates: ['budget', 'spend'], note: 'Budget is the plan, not what was spent.' },
+}
+
+// ── matching ────────────────────────────────────────────────────────────────
+
+export type MatchStatus = 'auto' | 'review' | 'question' | 'custom'
+export type MatchLayer = 'exact' | 'fuzzy' | 'values' | 'ai' | 'remembered' | 'user' | 'none'
+
+export interface ColumnInput {
+  name: string
+  role?: 'date' | 'metric' | 'dimension' | 'unknown'
+  // up to 50 non empty sample values
+  values: any[]
+}
+
+export interface ColumnMatch {
+  column: string
+  field: string | null
+  confidence: number
+  status: MatchStatus
+  layer: MatchLayer
+  candidates: string[]
+  note?: string
+}
+
+export const AUTO_THRESHOLD = 0.85
+export const REVIEW_THRESHOLD = 0.55
+
+interface SynIndex {
+  exact: Map<string, string>
+  list: { syn: string; key: string; tokens: string[] }[]
+}
+
+let _index: SynIndex | null = null
+function synIndex(): SynIndex {
+  if (_index) return _index
+  const exact = new Map<string, string>()
+  const list: SynIndex['list'] = []
+  for (const c of CANONICAL_FIELDS) {
+    for (const s of [c.label, ...c.synonyms]) {
+      const n = normalizeName(s)
+      if (!n) continue
+      if (!exact.has(n)) exact.set(n, c.key)
+      list.push({ syn: n, key: c.key, tokens: n.split(' ') })
+    }
+  }
+  // longest synonyms first so "cost per click" wins over "cost"
+  list.sort((a, b) => b.syn.length - a.syn.length)
+  _index = { exact, list }
+  return _index
+}
+
+const RATIO_WORDS = new Set(['per', 'rate', 'ratio', 'pct', 'percent', 'avg', 'average', 'share'])
+
+function valueStats(values: any[]) {
+  const nums = values
+    .map((v) => (typeof v === 'number' ? v : NaN))
+    .filter((v) => Number.isFinite(v))
+  if (nums.length === 0) return null
+  const min = Math.min(...nums)
+  const max = Math.max(...nums)
+  const intShare = nums.filter((n) => Number.isInteger(n)).length / nums.length
+  return { min, max, intShare, n: nums.length }
+}
+
+function nameMatch(raw: string): {
+  field: string | null
+  confidence: number
+  candidates: string[]
+  layer: MatchLayer
+  note?: string
+} {
+  const norm = normalizeName(raw)
+  if (!norm) return { field: null, confidence: 0, candidates: [], layer: 'none' }
+  const idx = synIndex()
+  const toks = norm.split(' ')
+  const core = coreTokens(norm)
+  const coreStr = core.join(' ')
+
+  const amb = AMBIGUOUS[norm] || AMBIGUOUS[coreStr]
+  if (amb)
+    return {
+      field: null,
+      confidence: 0.45,
+      candidates: amb.candidates,
+      layer: 'exact',
+      note: amb.note,
+    }
+
+  const hit = idx.exact.get(norm) || idx.exact.get(coreStr)
+  if (hit) return { field: hit, confidence: 0.95, candidates: [hit], layer: 'exact' }
+
+  // multiword synonym fully contained in the column name
+  const hasRatioWord = toks.some((t) => RATIO_WORDS.has(t))
+  for (const e of idx.list) {
+    if (e.tokens.length >= 2 && e.tokens.every((t) => toks.includes(t))) {
+      return { field: e.key, confidence: 0.72, candidates: [e.key], layer: 'fuzzy' }
+    }
+  }
+  // single word synonym inside the name, only when the name is not a ratio phrase
+  if (!hasRatioWord) {
+    for (const e of idx.list) {
+      if (e.tokens.length === 1 && e.syn.length >= 4 && core.includes(e.syn)) {
+        const amb2 = AMBIGUOUS[e.syn]
+        if (amb2)
+          return {
+            field: null,
+            confidence: 0.45,
+            candidates: amb2.candidates,
+            layer: 'fuzzy',
+            note: amb2.note,
+          }
+        return { field: e.key, confidence: 0.62, candidates: [e.key], layer: 'fuzzy' }
       }
-    </>
-  )
+    }
+  }
+  // typos: close to a single word or short phrase synonym
+  if (coreStr.length >= 5) {
+    let best: { key: string; d: number } | null = null
+    for (const e of idx.list) {
+      if (e.syn.length < 5) continue
+      const d = editDistance(coreStr, e.syn)
+      const limit = e.syn.length >= 9 ? 2 : 1
+      if (d <= limit && (!best || d < best.d)) best = { key: e.key, d }
+    }
+    if (best) return { field: best.key, confidence: 0.76, candidates: [best.key], layer: 'fuzzy' }
+  }
+  return { field: null, confidence: 0, candidates: [], layer: 'none' }
 }
 
-// Collapsed state is now deliberately minimal — just the hero number and a
-// short label underneath, centered, no chevron, no confidence dots, no
-// benchmark hint. Everything that used to live in the collapsed view
-// (interpretation, confidence, verification, sample size, benchmark detail)
-// now only appears after a click, in the expanded section below.
-// Generic, human-readable formula per type — paired with the finding's
-// actual `inputs` values in the "Show the math" toggle, so someone sees
-// both the general shape of the calculation and the specific numbers
-// that produced this exact hero number.
-const FORMULA_LABELS: Record<string, string> = {
-  average: 'sum ÷ count',
-  lift_pct: '(treatment_avg − control_avg) ÷ |control_avg| × 100',
-  share_pct: 'category_value ÷ total_value × 100',
-  incremental_value: '(treatment_avg − control_avg) × treatment_count',
-  roi: 'incremental_value ÷ cost_awarded',
-  weighted_average: 'weighted_sum ÷ total_weight',
-  period_over_period: '(current_value − prior_value) ÷ |prior_value| × 100',
-  sum: 'sum of inputs',
-  count: 'count of inputs',
-  ratio: 'numerator ÷ denominator',
-}
+// One column to a match. Layer 3 looks at the values: a field that should be a
+// dollar amount but holds numbers between 0 and 1 is probably a rate, and a
+// count that holds decimals is probably not a count. Those get downgraded so
+// the user is asked instead of trusting the name.
+export function matchColumn(col: ColumnInput): ColumnMatch {
+  const nm = nameMatch(col.name)
+  const stats = valueStats(col.values)
+  let { confidence } = nm
+  let note = nm.note
+  let layer = nm.layer
 
-function formatInputValue(n: number): string {
-  if (Number.isInteger(n)) return n.toLocaleString()
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
-}
-
-function FindingCard({ finding, dark, T }: { finding: KeyFinding; dark: boolean; T: KitTokens }) {
-  const [expanded, setExpanded] = useState(false)
-  const [showMath, setShowMath] = useState(false)
-  const subtle = dark ? 'text-zinc-500' : 'text-zinc-400'
-  const divider = dark ? 'border-zinc-800' : 'border-zinc-100'
-  // Same look as the Story Mode hero stat boxes: a flat box with a thin brand
-  // border, the number in the deep brand color and a muted label. Dark mode
-  // swaps to the highlight color so the card still reads on a dark page.
-  const boxBorder = dark ? T.highlight : T.deep
-  const numColor = dark ? T.highlight : T.deep
-  const labelColor = dark ? '#D4D4D8' : T.mutedOnSurface
-  const bm = finding.benchmarkContext
-  const hasFormula =
-    finding.formulaType &&
-    finding.formulaType !== 'raw' &&
-    finding.inputs &&
-    Object.keys(finding.inputs).length > 0
-
-  return (
-    <button
-      onClick={() => setExpanded(!expanded)}
-      className="w-full text-left rounded-md transition-shadow overflow-hidden hover:shadow-md"
-      style={{
-        background: dark ? 'rgba(255,255,255,0.03)' : '#FFFFFF',
-        border: `1.5px solid ${boxBorder}`,
-      }}
-    >
-      {/* Collapsed: number and short label only */}
-      <div className="px-5 py-7 flex flex-col items-center text-center">
-        <p className="text-3xl sm:text-4xl font-extrabold leading-none mb-2" style={{ color: numColor }}>
-          {finding.value}
-        </p>
-        <p className="text-sm font-medium" style={{ color: labelColor }}>
-          {finding.label}
-        </p>
-      </div>
-
-      {/* Expanded — interpretation, confidence, verification, benchmark detail */}
-      {expanded && (
-        <div className={`px-5 pb-5 pt-4 border-t text-left ${divider}`}>
-          <p className={`text-xs leading-relaxed mb-3 ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}>
-            {finding.interpretation}
-          </p>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="flex items-center gap-1.5">
-              <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${confidenceColor(finding.confidence)}`}
-              />
-              <span className={`text-[10px] ${subtle}`}>
-                {finding.confidence} confidence
-                {finding.sampleSize ? ` · n=${finding.sampleSize.toLocaleString()}` : ''}
-              </span>
-            </span>
-            <DirectionIcon direction={finding.direction} />
-            <VerificationBadge status={finding.verificationStatus} />
-          </div>
-
-          {/* Secondary expand — the actual calculation behind the hero
-              number. Only rendered when the finding has a real formula
-              and inputs to show (not for formulaType 'raw', which has
-              nothing computed to explain). Nested inside a span with its
-              own stopPropagation so clicking it doesn't collapse the
-              whole card. */}
-          {hasFormula && (
-            <div className="mt-2">
-              <span
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowMath(!showMath)
-                }}
-                className="inline-flex items-center gap-1 text-[10px] font-medium cursor-pointer text-[#5DCAA5] hover:opacity-80"
-              >
-                {showMath ? 'Hide' : 'Show'} the math
-                <ChevronDown
-                  size={10}
-                  className={`transition-transform ${showMath ? 'rotate-180' : ''}`}
-                />
-              </span>
-              {showMath && (
-                <div
-                  className={`mt-2 p-3 rounded-xl text-[11px] ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-[#EAEFF1] border border-zinc-200'}`}
-                >
-                  <p className={`font-mono mb-2 ${dark ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                    {FORMULA_LABELS[finding.formulaType as string] || finding.formulaType}
-                  </p>
-                  <div className="space-y-0.5">
-                    {Object.entries(finding.inputs || {}).map(([key, value]) => (
-                      <p key={key} className={subtle}>
-                        <span className="font-mono">{key}</span> = {formatInputValue(value)}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {bm && (
-            <div
-              className={`mt-3 p-3 rounded-xl ${dark ? 'bg-zinc-800 border border-zinc-700' : 'bg-[#EAEFF1] border border-zinc-200'}`}
-            >
-              <p className={`text-[10px] font-semibold uppercase tracking-wide mb-1 ${subtle}`}>
-                Industry Benchmark · {bm.metricLabel}
-              </p>
-              <p className={`text-xs ${dark ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                Industry avg: <span className="font-semibold">{bm.industryAvgDisplay}</span> · Your
-                result is{' '}
-                <span
-                  className={
-                    bm.vsIndustry === 'above'
-                      ? 'text-emerald-500 font-semibold'
-                      : bm.vsIndustry === 'below'
-                        ? 'text-red-400 font-semibold'
-                        : 'font-semibold'
-                  }
-                >
-                  {bm.vsIndustryDisplay}
-                </span>
-              </p>
-              <p className={`text-[10px] mt-1 ${subtle}`}>
-                Based on {bm.contributionCount} contributions
-                {bm.sampleRowCount > 0 ? ` · ${bm.sampleRowCount.toLocaleString()} rows` : ''}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-    </button>
-  )
-}
-
-function AnomalyItem({ anomaly, dark }: { anomaly: Anomaly; dark: boolean }) {
-  const config = {
-    info: {
-      icon: <Info size={13} />,
-      color: dark ? 'text-[#5DCAA5]' : 'text-[#080C14]',
-      bg: dark ? 'bg-[#5DCAA5]/[0.06]' : 'bg-[#5DCAA5]/10',
-      border: dark ? 'border-[#5DCAA5]/20' : 'border-[#5DCAA5]/30',
-    },
-    warning: {
-      icon: <AlertTriangle size={13} />,
-      color: 'text-amber-400',
-      bg: dark ? 'bg-amber-500/8' : 'bg-amber-50',
-      border: dark ? 'border-amber-500/20' : 'border-amber-200',
-    },
-    critical: {
-      icon: <AlertCircle size={13} />,
-      color: 'text-red-400',
-      bg: dark ? 'bg-red-500/8' : 'bg-red-50',
-      border: dark ? 'border-red-500/20' : 'border-red-200',
-    },
-  }[anomaly.severity]
-
-  return (
-    <div className={`flex items-start gap-3 p-3 rounded-xl border ${config.bg} ${config.border}`}>
-      <span className={`${config.color} mt-0.5 shrink-0`}>{config.icon}</span>
-      <div className="flex-1 min-w-0">
-        <p className={`text-xs ${dark ? 'text-zinc-200' : 'text-zinc-800'}`}>
-          {anomaly.description}
-        </p>
-        {anomaly.suggestedAction && (
-          <p className={`text-[11px] mt-1 ${dark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-            → {anomaly.suggestedAction}
-          </p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ConversationTurn({
-  question,
-  analysis,
-  dark,
-  turnIndex,
-}: {
-  question: string
-  analysis: AnalysisOutput
-  dark: boolean
-  turnIndex: number
-}) {
-  const { tokens: brandTokens } = useBrand()
-  const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
-  const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <div
-          className={`max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm ${dark ? 'bg-[#5DCAA5]/20 text-[#5DCAA5]' : 'bg-[#5DCAA5]/10 text-[#080C14]'}`}
-        >
-          {question}
-        </div>
-      </div>
-
-      <div className={`rounded-2xl border p-4 ${card}`}>
-        <div className="flex items-center gap-2 mb-3">
-          <Sparkles size={12} className="text-[#5DCAA5]" />
-          <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtler}`}>
-            Follow-up Analysis · Turn {turnIndex + 1}
-          </p>
-        </div>
-        <p className={`text-sm leading-relaxed mb-4 ${dark ? 'text-zinc-200' : 'text-zinc-700'}`}>
-          {analysis.executiveSummary}
-        </p>
-        {analysis.keyFindings.length > 0 && (
-          <div className="grid grid-cols-2 gap-2">
-            {analysis.keyFindings.slice(0, 4).map((f, i) => (
-              <FindingCard key={i} finding={f} dark={dark} T={brandTokens} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-interface ConversationEntry {
-  question: string
-  analysis: AnalysisOutput
-}
-
-// Loosely typed to match project.charts as stored — same shape ChartRenderer
-// and the old Visuals tab already expected (title, description, type, data,
-// plus whatever chart-specific fields like hero_stat/takeaway/layout).
-interface AnalysisChart {
-  title: string
-  description?: string
-  type: string
-  data: Record<string, any>[]
-  [key: string]: any
-}
-
-// Matches project.recommendations as saved by /api/generate-recommendations.
-interface Recommendation {
-  number?: string
-  title: string
-  description: string
-  stat?: string
-  stat_label?: string
-}
-
-interface AnalysisViewProps {
-  analysis: AnalysisOutput
-  dark?: boolean
-  onFollowUp: (question: string) => void
-  isLoading?: boolean
-  conversationEntries?: ConversationEntry[]
-  // Visuals — merged in from what used to be a separate "Visuals" tab on
-  // the project page. Rendered as its own section below, between Anomalies
-  // and the Follow-up Thread, so the read order is: findings -> tables ->
-  // anomalies -> visuals -> recommendations -> follow-ups,
-  // all in one scroll instead of a tab switch partway through reviewing
-  // the analysis.
-  charts?: (AnalysisChart | null | undefined)[]
-  chartsGenerating?: boolean
-  chartColors?: string[]
-  // Visuals and Recommendations both used to fire automatically — Visuals
-  // the instant analysis finished, Recommendations silently in the
-  // background after Visuals. Both are now explicit button clicks instead:
-  // no more silent "is it done yet?" state, and no Anthropic spend on
-  // either until the user actually asks for it.
-  onBuildVisuals: () => void
-  // The real error message from generation_error, surfaced directly instead
-  // of the old generic "try refreshing" empty state — this column exists
-  // specifically so failures are diagnosable without guessing.
-  generationError?: string | null
-  recommendations?: Recommendation[]
-  recommendationsGenerating?: boolean
-  onBuildRecommendations: () => void
-  recommendationsError?: string | null
-}
-
-const DEFAULT_CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6']
-
-export default function AnalysisView({
-  analysis,
-  dark = true,
-  onFollowUp,
-  isLoading = false,
-  conversationEntries = [],
-  charts: rawCharts = [],
-  chartsGenerating = false,
-  chartColors = DEFAULT_CHART_COLORS,
-  onBuildVisuals,
-  generationError = null,
-  recommendations = [],
-  recommendationsGenerating = false,
-  onBuildRecommendations,
-  recommendationsError = null,
-}: AnalysisViewProps) {
-  const { tokens: brandTokens } = useBrand()
-  // A stray null/undefined entry in project.charts — however it got
-  // there, a data integrity issue this filter doesn't diagnose, just
-  // protects against — crashes the whole page the instant .map() below
-  // reads a property off it. Filtering here means malformed data for ONE
-  // project can never take this view down again, regardless of how a null
-  // ended up in the array in the first place.
-  const charts: AnalysisChart[] = (rawCharts || []).filter(
-    (c): c is AnalysisChart => !!c && typeof c === 'object'
-  )
-
-  const [followUpInput, setFollowUpInput] = useState('')
-  // Which Visuals cards (by index) are currently showing indexed-to-100
-  // values instead of absolute ones. Per-card, not global — some charts
-  // read better as absolute (e.g. plain counts), others as indexed (e.g.
-  // two series on very different scales, like spend vs. ROAS, where the
-  // smaller one becomes invisible next to the larger one in absolute terms).
-  const [indexedCharts, setIndexedCharts] = useState<Set<number>>(new Set())
-  const [showAnomalies, setShowAnomalies] = useState(false)
-
-  const subtle = dark ? 'text-zinc-400' : 'text-zinc-500'
-  const subtler = dark ? 'text-zinc-500' : 'text-zinc-400'
-  const card = dark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
-  const divider = dark ? 'border-zinc-800' : 'border-zinc-100'
-
-  const handleFollowUp = () => {
-    const q = followUpInput.trim()
-    if (!q) return
-    setFollowUpInput('')
-    onFollowUp(q)
+  if (nm.field && stats) {
+    const fld = FIELD_BY_KEY[nm.field]
+    if (
+      fld.kind === 'measure' &&
+      fld.unit === 'currency' &&
+      stats.max <= 1 &&
+      stats.intShare < 0.5
+    ) {
+      confidence = Math.min(confidence, 0.5)
+      note = `The values run between ${stats.min} and ${stats.max}, which looks more like a rate than money.`
+      layer = 'values'
+    } else if (fld.kind === 'measure' && fld.unit === 'count' && stats.intShare < 0.6) {
+      confidence = Math.min(confidence, 0.5)
+      note = 'The values have decimals, which is unusual for a count.'
+      layer = 'values'
+    }
+    if (fld.kind === 'dimension' && col.role === 'metric' && fld.unit === 'text') {
+      confidence = Math.min(confidence, 0.5)
+      note = 'This column holds numbers, which is unusual for a label.'
+      layer = 'values'
+    }
   }
 
-  const allStatuses = [
-    ...analysis.insightTables.flatMap((t) => (t.verificationGrid || []).flat()),
-    ...analysis.keyFindings.map((f) => f.verificationStatus),
-  ].filter(Boolean) as VerificationStatus[]
-  const hasMismatch = allStatuses.some((s) => s === 'mismatch')
-  const verifiedCount = allStatuses.filter((s) => s === 'verified').length
-  const totalCheckable = allStatuses.filter((s) => s !== 'not_applicable' && s !== 'pending').length
-  const hasBenchmarks = analysis.keyFindings.some((f) => f.benchmarkContext)
+  const status: MatchStatus =
+    !nm.field && nm.candidates.length === 0
+      ? 'custom'
+      : confidence >= AUTO_THRESHOLD
+        ? 'auto'
+        : confidence >= REVIEW_THRESHOLD
+          ? 'review'
+          : 'question'
 
-  return (
-    <div className="space-y-8">
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Sparkles size={13} className="text-[#5DCAA5]" />
-          <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtler}`}>
-            Analysis
-            {analysis.detectedDataType && analysis.detectedDataType !== 'unknown' && (
-              <span
-                className={`ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-[#EAEFF1] text-zinc-500'}`}
-              >
-                {analysis.detectedDataType.replace('_', ' ')}
-              </span>
-            )}
-          </p>
-          {analysis.verificationComplete && (
-            <span
-              className={`ml-auto text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 ${hasMismatch ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-500'}`}
-            >
-              {hasMismatch ? <AlertTriangle size={9} /> : <CheckCircle2 size={9} />}
-              {hasMismatch
-                ? 'Some values need review'
-                : `${verifiedCount}/${totalCheckable} verified`}
-            </span>
-          )}
-        </div>
-        <p
-          className={`text-base leading-relaxed font-medium ${dark ? 'text-zinc-100' : 'text-zinc-800'}`}
-        >
-          {analysis.executiveSummary}
-        </p>
-        <div className="flex items-center gap-3 mt-2 flex-wrap">
-          <p className={`text-[11px] ${subtler}`}>AI-generated · verify before sharing</p>
-          {hasBenchmarks && (
-            <p className={`text-[11px] flex items-center gap-1 ${subtler}`}>
-              <BarChart2 size={10} />
-              Industry benchmarks from crowd pool
-            </p>
-          )}
-        </div>
-      </div>
+  return {
+    column: col.name,
+    field: status === 'question' || status === 'custom' ? null : nm.field,
+    confidence,
+    status,
+    layer,
+    candidates:
+      nm.field && !nm.candidates.includes(nm.field)
+        ? [nm.field, ...nm.candidates]
+        : nm.candidates.length
+          ? nm.candidates
+          : nm.field
+            ? [nm.field]
+            : [],
+    note,
+  }
+}
 
-      {analysis.keyFindings.length > 0 && (
-        <div>
-          <p className={`text-[11px] font-semibold uppercase tracking-wide mb-3 ${subtler}`}>
-            Key Findings
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {analysis.keyFindings.map((f, i) => (
-              <FindingCard key={i} finding={f} dark={dark} T={brandTokens} />
-            ))}
-          </div>
-        </div>
-      )}
+export function matchColumns(
+  cols: ColumnInput[],
+  remembered: Record<string, string> = {}
+): ColumnMatch[] {
+  const out = cols.map((c) => {
+    const rem = remembered[normalizeName(c.name)]
+    if (rem && (FIELD_BY_KEY[rem] || rem === 'custom')) {
+      return {
+        column: c.name,
+        field: rem === 'custom' ? null : rem,
+        confidence: 1,
+        status: (rem === 'custom' ? 'custom' : 'auto') as MatchStatus,
+        layer: 'remembered' as MatchLayer,
+        candidates: rem === 'custom' ? [] : [rem],
+      }
+    }
+    return matchColumn(c)
+  })
+  // Two columns on the same date or ID style field are fine. Two on the same
+  // measure (Spend and Budget both mapped to spend) are summed later, so flag
+  // the weaker one for review rather than guessing which is right.
+  const seen = new Map<string, ColumnMatch>()
+  for (const m of out) {
+    if (!m.field || m.status === 'custom') continue
+    const fld = FIELD_BY_KEY[m.field]
+    if (!fld || fld.kind !== 'measure') continue
+    const prev = seen.get(m.field)
+    if (prev && prev.layer !== 'remembered' && m.layer !== 'remembered') {
+      const weaker = prev.confidence >= m.confidence ? m : prev
+      if (weaker.status === 'auto') weaker.status = 'review'
+      weaker.note = `${prev.column} and ${m.column} both look like ${fld.label}. They will be added together.`
+    } else if (!prev) seen.set(m.field, m)
+  }
+  return out
+}
 
-      {analysis.insightTables.length > 0 && (
-        <div>
-          <p className={`text-[11px] font-semibold uppercase tracking-wide mb-3 ${subtler}`}>
-            Computed Tables
-          </p>
-          <div className="space-y-3">
-            {analysis.insightTables.map((table, i) => {
-              const [open, setOpen] = useState(false)
-              return (
-                <div key={i} className={`rounded-2xl border overflow-hidden ${card}`}>
-                  <button
-                    onClick={() => setOpen(!open)}
-                    className="w-full text-left px-4 py-3 flex items-center justify-between gap-3"
-                  >
-                    <div>
-                      <p className="font-semibold text-sm">{table.title}</p>
-                      <p className={`text-xs mt-0.5 ${subtle}`}>{table.description}</p>
-                    </div>
-                    <ChevronDown
-                      size={14}
-                      className={`shrink-0 transition-transform ${subtle} ${open ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-                  {open && (
-                    <div className={`border-t overflow-x-auto ${divider}`}>
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className={dark ? 'bg-zinc-800/60' : 'bg-[#EAEFF1]'}>
-                            {table.headers.map((h, hi) => (
-                              <th
-                                key={hi}
-                                className={`px-3 py-2 text-left font-semibold tracking-wide uppercase text-[10px] ${subtle}`}
-                              >
-                                {h}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {table.rows.map((row, ri) => (
-                            <tr
-                              key={ri}
-                              className={`border-t ${divider} ${dark ? 'hover:bg-zinc-800/40' : 'hover:bg-[#EAEFF1]'}`}
-                            >
-                              {row.map((cell, ci) => (
-                                <td
-                                  key={ci}
-                                  className={`px-3 py-2.5 ${dark ? 'text-zinc-200' : 'text-zinc-800'}`}
-                                >
-                                  {typeof cell === 'object' && cell !== null
-                                    ? cell.display
-                                    : String(cell ?? '')}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {table.footnote && (
-                        <div
-                          className={`px-4 py-2 border-t text-[11px] flex items-start gap-1.5 ${divider} ${subtle}`}
-                        >
-                          <Info size={10} className="mt-0.5 shrink-0" />
-                          {table.footnote}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
+// ── what can be calculated ──────────────────────────────────────────────────
 
-      {analysis.anomalies.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowAnomalies(!showAnomalies)}
-            className={`flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide mb-3 ${subtler} hover:opacity-80 transition-opacity`}
-          >
-            <AlertTriangle size={11} className="text-amber-400" />
-            Flags & Anomalies
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${dark ? 'bg-zinc-800 text-zinc-400' : 'bg-[#EAEFF1] text-zinc-500'}`}
-            >
-              {analysis.anomalies.length}
-            </span>
-            <ChevronDown
-              size={12}
-              className={`transition-transform ${showAnomalies ? 'rotate-180' : ''}`}
-            />
-          </button>
-          {showAnomalies && (
-            <div className="space-y-2">
-              {analysis.anomalies.map((a, i) => (
-                <AnomalyItem key={i} anomaly={a} dark={dark} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+export type FieldMapping = Record<string, string> // column name -> canonical key
 
-      {/* Visuals — merged in from the old standalone Visuals tab. Now
-          button-triggered instead of firing automatically the instant
-          analysis finishes: no more silent "is it building or did it fail?"
-          ambiguity, and no Anthropic spend until the user actually wants
-          visuals. Still always renders SOMETHING regardless of state (grid,
-          spinner, or a real call-to-action) so the section is never
-          silently empty with no explanation. */}
-      <div>
-        <p
-          className={`text-[11px] font-semibold uppercase tracking-wide mb-3 flex items-center gap-1.5 ${subtler}`}
-        >
-          <BarChart3 size={11} />
-          Visuals
-        </p>
-        {chartsGenerating ? (
-          <div className={`p-6 rounded-2xl border text-center ${card}`}>
-            <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            <p className={`text-xs ${subtle}`}>AI is building your visuals...</p>
-          </div>
-        ) : charts.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {charts.map((chart, i) => {
-              const canIndex =
-                INDEXABLE_CHART_TYPES.has(chart.type) && (chart.data?.length || 0) >= 2
-              const isIndexed = canIndex && indexedCharts.has(i)
-              const displayData = isIndexed ? indexToFirstValue(chart.data) : chart.data
-              return (
-                <div key={i} className={`p-4 rounded-2xl border ${card}`}>
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <h3 className="font-semibold text-sm">{chart.title}</h3>
-                    {canIndex && (
-                      <div
-                        className={`flex items-center rounded-lg border p-0.5 text-[10px] shrink-0 ${dark ? 'border-zinc-700 bg-zinc-800' : 'border-zinc-200 bg-[#EAEFF1]'}`}
-                      >
-                        <button
-                          onClick={() =>
-                            setIndexedCharts((prev) => {
-                              const next = new Set(prev)
-                              next.delete(i)
-                              return next
-                            })
-                          }
-                          className={`px-2 py-1 rounded-md transition-colors ${!isIndexed ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                        >
-                          Absolute
-                        </button>
-                        <button
-                          onClick={() =>
-                            setIndexedCharts((prev) => {
-                              const next = new Set(prev)
-                              next.add(i)
-                              return next
-                            })
-                          }
-                          className={`px-2 py-1 rounded-md transition-colors ${isIndexed ? (dark ? 'bg-zinc-700 text-white' : 'bg-white text-zinc-900 shadow-sm') : dark ? 'text-zinc-500' : 'text-zinc-400'}`}
-                        >
-                          Indexed
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {chart.description && (
-                    <p className={`text-xs mb-3 ${subtle}`}>{chart.description}</p>
-                  )}
-                  {isIndexed && (
-                    <p className={`text-[10px] mb-2 ${subtle}`}>
-                      Each line indexed to its own first value = 100, so both trends are comparable
-                      on one scale regardless of their actual units.
-                    </p>
-                  )}
-                  <ChartRenderer
-                    chart={{ ...chart, data: displayData || [] }}
-                    colors={chartColors}
-                    height={180}
-                    dark={dark}
-                  />
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className={`p-6 rounded-2xl border text-center ${card}`}>
-            {generationError && (
-              <p className="text-xs text-red-400 mb-3">Last attempt failed: {generationError}</p>
-            )}
-            <p className={`text-xs mb-3 ${subtle}`}>
-              Turn this analysis into charts — grounded in the findings above, not a cold re-read of
-              the file.
-            </p>
-            <button
-              onClick={onBuildVisuals}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#080C14] text-white text-xs font-medium hover:bg-[#0F1420] transition-colors"
-            >
-              <BarChart3 size={13} />
-              Build Visuals
-            </button>
-            <p className={`text-[11px] mt-3 ${subtle}`}>
-              This also adds a new data point to your Company Benchmarks.
-            </p>
-          </div>
-        )}
-      </div>
+export interface MetricAvailability {
+  metric: DerivedMetric
+  // column names filling each slot, when available
+  sources: Record<string, string[]>
+  fields: Record<string, string>
+  missing: string[] // slot names with no mapped field
+  haveAny: boolean
+}
 
-      {/* Recommendations — previously a silent background call fired right
-          after Visuals, with no visible state at all. Now its own explicit
-          button, same reasoning as Visuals above. Depends on Visuals having
-          already run (narrative/insights only exist after that), so the
-          button is disabled with an explanatory note until charts exist. */}
-      <div>
-        <p
-          className={`text-[11px] font-semibold uppercase tracking-wide mb-3 flex items-center gap-1.5 ${subtler}`}
-        >
-          <Lightbulb size={11} />
-          Recommendations
-        </p>
-        {recommendationsGenerating ? (
-          <div className={`p-6 rounded-2xl border text-center ${card}`}>
-            <div className="w-4 h-4 border-2 border-[#5DCAA5] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            <p className={`text-xs ${subtle}`}>AI is building your recommendations...</p>
-          </div>
-        ) : recommendations.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {recommendations.map((rec, i) => (
-              <div key={i} className={`p-4 rounded-2xl border ${card}`}>
-                <p className={`text-[11px] font-medium mb-1 ${subtle}`}>
-                  {rec.number ? `${rec.number} · ` : ''}
-                  {rec.title}
-                </p>
-                {rec.stat && (
-                  <p className="text-xl font-black leading-none text-[#5DCAA5] mb-2">
-                    {rec.stat}
-                    {rec.stat_label && (
-                      <span className={`text-xs font-medium ml-1.5 ${subtle}`}>
-                        {rec.stat_label}
-                      </span>
-                    )}
-                  </p>
-                )}
-                <p
-                  className={`text-xs leading-relaxed ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
-                >
-                  {rec.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className={`p-6 rounded-2xl border text-center ${card}`}>
-            {recommendationsError && (
-              <p className="text-xs text-red-400 mb-3">
-                Last attempt failed: {recommendationsError}
-              </p>
-            )}
-            <p className={`text-xs mb-3 ${subtle}`}>
-              {charts.length === 0
-                ? 'Build Visuals first — recommendations are grounded in the narrative and insights it produces.'
-                : 'Actionable next steps, grounded in the findings above.'}
-            </p>
-            <button
-              onClick={onBuildRecommendations}
-              disabled={charts.length === 0}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#080C14] text-white text-xs font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Lightbulb size={13} />
-              Build Recommendations
-            </button>
-          </div>
-        )}
-      </div>
+export function metricAvailability(
+  mapping: FieldMapping,
+  existingColumns: string[] = []
+): MetricAvailability[] {
+  const byField = new Map<string, string[]>()
+  for (const [col, key] of Object.entries(mapping)) {
+    if (!key || key === 'custom') continue
+    byField.set(key, [...(byField.get(key) || []), col])
+  }
+  const existing = new Set(existingColumns.map(normalizeName))
+  return DERIVED_METRICS.filter(
+    (m) => !byField.has(m.key) && !existing.has(normalizeName(m.label))
+  ).map((metric) => {
+    const sources: Record<string, string[]> = {}
+    const fields: Record<string, string> = {}
+    const missing: string[] = []
+    let haveAny = false
+    for (const slot of metric.slots) {
+      const opt = slot.options.find((o) => byField.has(o))
+      if (opt) {
+        sources[slot.name] = byField.get(opt)!
+        fields[slot.name] = opt
+        haveAny = true
+      } else missing.push(slot.name)
+    }
+    return { metric, sources, fields, missing, haveAny }
+  })
+}
 
-      {conversationEntries.length > 0 && (
-        <div className="space-y-6">
-          <div className={`h-px ${dark ? 'bg-zinc-800' : 'bg-zinc-200'}`} />
-          <p className={`text-[11px] font-semibold uppercase tracking-wide ${subtler}`}>
-            Follow-up Thread
-          </p>
-          {conversationEntries.map((entry, i) => (
-            <ConversationTurn
-              key={i}
-              question={entry.question}
-              analysis={entry.analysis}
-              dark={dark}
-              turnIndex={i}
-            />
-          ))}
-        </div>
-      )}
+export function slotLabel(metric: DerivedMetric, slotName: string): string {
+  const slot = metric.slots.find((s) => s.name === slotName)
+  if (!slot) return slotName
+  const labels = slot.options.slice(0, 2).map((o) => FIELD_BY_KEY[o]?.label.toLowerCase() || o)
+  return labels.join(' or ')
+}
 
-      <div className={`rounded-2xl border ${card}`}>
-        <div className="p-4 pb-3">
-          <p
-            className={`text-[11px] font-semibold uppercase tracking-wide mb-1 ${subtler} flex items-center gap-2`}
-          >
-            <MessageSquare size={11} /> Dig deeper
-          </p>
-          <p className={`text-xs mb-3 ${subtler}`}>
-            Ask to reframe, break out by segment, or add context the AI may have missed.
-            {analysis.detectedDataType === 'time_series' &&
-              ' Try: "Break this out by channel" or "Is there a treatment vs control split?"'}
-            {analysis.detectedDataType === 'experimental' &&
-              ' Try: "Run a significance test on the main lift" or "Break out by segment."'}
-            {analysis.detectedDataType === 'cross_sectional' &&
-              ' Try: "Which segment is most over-indexed?" or "Show the top vs bottom performers."'}
-          </p>
+export function measureOptions(): CanonicalField[] {
+  return CANONICAL_FIELDS.filter((c) => c.kind === 'measure')
+}
 
-          {analysis.suggestedFollowUps.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {analysis.suggestedFollowUps.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => onFollowUp(q)}
-                  disabled={isLoading}
-                  className={`text-xs px-3 py-1.5 rounded-xl border transition-colors text-left ${
-                    dark
-                      ? 'border-zinc-700 text-zinc-300 hover:border-[#5DCAA5] hover:text-[#5DCAA5]'
-                      : 'border-zinc-200 text-zinc-600 hover:border-[#5DCAA5] hover:text-[#5DCAA5]'
-                  } disabled:opacity-40`}
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          )}
+export function allOptions(): CanonicalField[] {
+  return CANONICAL_FIELDS
+}
 
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={followUpInput}
-              onChange={(e) => setFollowUpInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleFollowUp()}
-              disabled={isLoading}
-              placeholder={
-                analysis.detectedDataType === 'time_series'
-                  ? 'e.g. "Break this out by channel" or "Is there a T vs C split I missed?"'
-                  : analysis.detectedDataType === 'experimental'
-                    ? 'e.g. "Run significance test on the lift" or "Break out by offer type"'
-                    : 'e.g. "Break this out by segment" or "Focus on the top 3 metrics"'
-              }
-              className={`flex-1 text-sm px-4 py-2.5 rounded-xl border outline-none transition-colors disabled:opacity-40 ${
-                dark
-                  ? 'bg-zinc-800 border-zinc-700 text-white placeholder-zinc-500 focus:border-[#5DCAA5]'
-                  : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400 focus:border-[#5DCAA5]'
-              }`}
-            />
-            <button
-              onClick={handleFollowUp}
-              disabled={!followUpInput.trim() || isLoading}
-              className="px-4 py-2.5 rounded-xl bg-[#080C14] text-white text-sm font-medium hover:bg-[#0F1420] transition-colors disabled:opacity-40 flex items-center gap-2 shrink-0"
-            >
-              {isLoading && <RefreshCw size={12} className="animate-spin" />}
-              {isLoading ? 'Thinking…' : 'Ask'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+// Unmatched numeric columns are the ones worth a closer look by the AI layer.
+export function needsAiLook(m: ColumnMatch, col: ColumnInput): boolean {
+  return (m.status === 'custom' && col.role === 'metric') || m.status === 'question'
+}
+
+// Names used for calculated metrics. Short codes where ampli's benchmark code
+// already treats the name as a rate (ROAS, CTR, CPC and so on), so a derived
+// metric is stored as a level and not as a growth figure.
+export const METRIC_DISPLAY_NAME: Record<string, string> = {
+  roas: 'ROAS',
+  roi: 'ROI',
+  ctr: 'CTR',
+  cpc: 'CPC',
+  cpm: 'CPM',
+  cpa: 'CPA',
+  cpl: 'CPL',
+  cac: 'CAC',
+  aov: 'AOV',
+  arpu: 'ARPU',
+  conversion_rate: 'Conversion rate',
+  cart_abandonment_rate: 'Cart abandonment rate',
+  churn_rate: 'Churn rate',
+  gross_margin: 'Gross margin',
+  frequency: 'Frequency',
+  win_rate: 'Win rate',
+  refund_rate: 'Refund rate',
 }
