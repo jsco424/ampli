@@ -412,6 +412,8 @@ export default function AnalysisView({
   recommendationsError = null,
 }: AnalysisViewProps) {
   const { tokens: brandTokens } = useBrand()
+  // Regenerate asks twice, since it replaces the current set.
+  const [confirmRegen, setConfirmRegen] = useState(false)
   // A stray null/undefined entry in project.charts — however it got
   // there, a data integrity issue this filter doesn't diagnose, just
   // protects against — crashes the whole page the instant .map() below
@@ -731,31 +733,61 @@ export default function AnalysisView({
             <p className={`text-xs ${subtle}`}>AI is building your recommendations...</p>
           </div>
         ) : recommendations.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {recommendations.map((rec, i) => (
-              <div key={i} className={`p-4 rounded-2xl border ${card}`}>
-                <p className={`text-[11px] font-medium mb-1 ${subtle}`}>
-                  {rec.number ? `${rec.number} · ` : ''}
-                  {rec.title}
-                </p>
-                {rec.stat && (
-                  <p className="text-xl font-black leading-none text-[#5DCAA5] mb-2">
-                    {rec.stat}
-                    {rec.stat_label && (
-                      <span className={`text-xs font-medium ml-1.5 ${subtle}`}>
-                        {rec.stat_label}
-                      </span>
-                    )}
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {recommendations.map((rec, i) => (
+                <div key={i} className={`p-4 rounded-2xl border ${card}`}>
+                  <p className={`text-[11px] font-medium mb-1 ${subtle}`}>
+                    {rec.number ? `${rec.number} · ` : ''}
+                    {rec.title}
                   </p>
-                )}
-                <p
-                  className={`text-xs leading-relaxed ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
-                >
-                  {rec.description}
-                </p>
-              </div>
-            ))}
-          </div>
+                  {rec.stat && (
+                    <p className="text-xl font-black leading-none text-[#5DCAA5] mb-2">
+                      {rec.stat}
+                      {rec.stat_label && (
+                        <span className={`text-xs font-medium ml-1.5 ${subtle}`}>
+                          {rec.stat_label}
+                        </span>
+                      )}
+                    </p>
+                  )}
+                  <p
+                    className={`text-xs leading-relaxed ${dark ? 'text-zinc-300' : 'text-zinc-600'}`}
+                  >
+                    {rec.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => {
+                  if (!confirmRegen) {
+                    setConfirmRegen(true)
+                    return
+                  }
+                  setConfirmRegen(false)
+                  onBuildRecommendations()
+                }}
+                onBlur={() => setConfirmRegen(false)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                  confirmRegen
+                    ? 'border-amber-500/50 text-amber-500'
+                    : dark
+                      ? 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'
+                      : 'border-zinc-300 text-zinc-600 hover:bg-zinc-100'
+                }`}
+              >
+                <RefreshCw size={12} />
+                {confirmRegen ? 'Replace the current set? Click again' : 'Regenerate'}
+              </button>
+              {recommendationsError && (
+                <span className="text-xs text-red-400">
+                  Last attempt failed: {recommendationsError}
+                </span>
+              )}
+            </div>
+          </>
         ) : (
           <div className={`p-6 rounded-2xl border text-center ${card}`}>
             {recommendationsError && (

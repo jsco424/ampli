@@ -268,6 +268,23 @@ export default function ProjectViewPage() {
         if (!res.ok) throw new Error(data.error || `Recommendations failed: ${res.status}`)
         return data
       })
+      .then(async () => {
+        // A regenerated set replaces the old one, so any hand edits made to
+        // the old recommendation slides in Story Mode no longer apply to it.
+        const edits = project.story_edits
+        if (edits && typeof edits === 'object' && edits.fields) {
+          const fields = Object.fromEntries(
+            Object.entries(edits.fields).filter(([slideId]) => !slideId.startsWith('recs-'))
+          )
+          const hidden = Array.isArray(edits.hidden)
+            ? edits.hidden.filter((id: string) => !id.startsWith('recs-'))
+            : edits.hidden
+          await supabase
+            .from('projects')
+            .update({ story_edits: { ...edits, fields, hidden } })
+            .eq('id', project.id)
+        }
+      })
       .then(() => supabase.from('projects').select('*').eq('id', project.id).single())
       .then(({ data }) => {
         if (data) setProject(data)
