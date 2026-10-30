@@ -136,16 +136,23 @@ Key Findings:
 ${findingsSummary}`
     }
 
-    const recoPrompt = `You are a strategic analyst. Based on the data analysis, return ONLY a valid JSON array of exactly 3 recommendations:
+    const recoPrompt = `You are a strategic analyst. Based on the data analysis, return ONLY a valid JSON array of exactly 3 next steps the reader can act on:
 [
   {
     "number": "01",
-    "title": "Action headline, 3 to 5 words, 40 characters or fewer",
-    "description": "ONE sentence, 20 words or fewer (under 120 characters), saying what to do and why",
+    "title": "Action headline that starts with a verb, 3 to 5 words, 40 characters or fewer",
+    "description": "ONE sentence, 20 words or fewer (under 120 characters), saying what to do and what it should achieve",
     "stat": "57%",
     "stat_label": "short label"
   }
 ]
+These are next steps, not findings. Hard rules:
+- Every title starts with an action verb (Shift, Test, Expand, Fix, Repeat, Audit, Prioritize, Build, Pause, Scale, Retarget and so on). A title that names a result or a trend ("Revenue Doubles", "Checkout Efficiency Improves") is wrong.
+- Every description says what to DO and what it should achieve. Do not restate what the data shows. The finding belongs in "stat" and "stat_label", which appear on the card as the evidence the step is based on.
+- Each step is specific enough that someone could start on it Monday: name the channel, segment, product, metric or test where the data supports it.
+- This applies in every tone. Even in an informative or neutral tone the three items are still concrete next steps, written without hype or urgency.
+- Where the audience is a company other than the data owner, write the steps for that company ("Test..." or "Prioritize...") and not as a report on the data.
+Good examples of the shape (not content to copy): title "Shift budget to paid search", description "Move a first slice of spend from display, where return is lowest, and measure the change over four weeks."; title "Test free shipping thresholds", description "Run a two week test at a lower threshold to see whether order value holds as conversion rises."
 Length — hard rule: these appear in three small slide cards side by side, so text that runs long is cut off. Titles are 40 characters or fewer. Each description is a single sentence of 20 words or fewer. "stat_label" is 4 words or fewer. Never write a second sentence.
 The "stat" must be grounded in the data summary — never invent a precise figure that isn't traceable to it.
 Writing style — hard rule: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen. Use a period, comma, or connecting word instead. Word-internal hyphens (e.g. "high-revenue") are fine. Write like a sharp human analyst.
