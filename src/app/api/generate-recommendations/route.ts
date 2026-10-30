@@ -140,12 +140,13 @@ ${findingsSummary}`
 [
   {
     "number": "01",
-    "title": "Action headline (4-6 words)",
-    "description": "2-3 sentences explaining why this matters and what to do",
+    "title": "Action headline, 3 to 5 words, 40 characters or fewer",
+    "description": "ONE sentence, 20 words or fewer (under 120 characters), saying what to do and why",
     "stat": "57%",
     "stat_label": "short label"
   }
 ]
+Length — hard rule: these appear in three small slide cards side by side, so text that runs long is cut off. Titles are 40 characters or fewer. Each description is a single sentence of 20 words or fewer. "stat_label" is 4 words or fewer. Never write a second sentence.
 The "stat" must be grounded in the data summary — never invent a precise figure that isn't traceable to it.
 Writing style — hard rule: NEVER join two clauses with an em-dash, en-dash, or a spaced hyphen. Use a period, comma, or connecting word instead. Word-internal hyphens (e.g. "high-revenue") are fine. Write like a sharp human analyst.
 Return ONLY the JSON array, no markdown.`

@@ -268,6 +268,7 @@ function Card({
         boxShadow: '0 2px 10px rgba(0,0,0,0.14)',
         display: 'flex',
         flexDirection: 'column',
+        overflow: 'hidden',
       }}
     >
       {children}
@@ -427,7 +428,7 @@ function RecsSlide({ slide, T }: { slide: StorySlide; T: KitTokens }) {
             tone === 'deep' ? T.highlight : tone === 'brand' ? T.textOnBrand : T.mutedOnSurface
           const text = f[`rec${i}.text`] || ''
           return (
-            <Card key={i} T={T} tone={tone} height={300}>
+            <Card key={i} T={T} tone={tone} height={318}>
               <div
                 style={{
                   width: 36,
@@ -444,11 +445,26 @@ function RecsSlide({ slide, T }: { slide: StorySlide; T: KitTokens }) {
               >
                 {i + 1}
               </div>
-              <div style={{ marginTop: 16, fontSize: 18, lineHeight: 1.25, fontWeight: 700 }}>
+              <div
+                style={{
+                  marginTop: 16,
+                  fontSize: (f[`rec${i}.title`] || '').length > 40 ? 16 : 18,
+                  lineHeight: 1.25,
+                  fontWeight: 700,
+                  maxHeight: 60,
+                  overflow: 'hidden',
+                }}
+              >
                 {f[`rec${i}.title`]}
               </div>
               <div
-                style={{ marginTop: 10, fontSize: text.length > 150 ? 12 : 13, lineHeight: 1.55 }}
+                style={{
+                  marginTop: 10,
+                  fontSize: text.length > 100 ? 12.5 : 13,
+                  lineHeight: 1.55,
+                  maxHeight: 80,
+                  overflow: 'hidden',
+                }}
               >
                 {text}
               </div>

@@ -169,6 +169,66 @@ const KIND_TAG: Record<ChartKind, string> = {
   scatter: 'RELATIONSHIP',
 }
 
+// ── length rules ────────────────────────────────────────────────────────────
+// Slide cards are small, so long text is shortened by rule. The editor still
+// lets a person write more, but the default always fits.
+
+const TRAILING_STOP = new Set([
+  'a',
+  'an',
+  'the',
+  'of',
+  'to',
+  'and',
+  'or',
+  'in',
+  'on',
+  'for',
+  'with',
+  'from',
+  'into',
+  'over',
+  'at',
+  'by',
+  'as',
+  'that',
+  'while',
+  'but',
+])
+
+// A short headline: cut at a word boundary, never end on a connecting word.
+export function shortenTitle(text: string, max = 40): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (t.length <= max) return t
+  const words = t.slice(0, max + 1).split(' ')
+  words.pop() // the last word may be cut
+  while (words.length > 1 && TRAILING_STOP.has(words[words.length - 1].toLowerCase())) words.pop()
+  return words.join(' ').replace(/[,:;]+$/, '')
+}
+
+// A short body: whole sentences while they fit, otherwise the first clause.
+export function shortenBody(text: string, max = 104): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (t.length <= max) return t
+  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
+  let out = ''
+  for (const s of sentences) {
+    const next = out ? `${out} ${s}` : s
+    if (next.length > max) break
+    out = next
+  }
+  if (out) return out
+  // The first sentence alone is too long: cut at the last comma or semicolon
+  // that leaves a readable clause, else at a word boundary.
+  const head = sentences[0].slice(0, max)
+  const clause = Math.max(head.lastIndexOf(', '), head.lastIndexOf('; '))
+  if (clause >= max * 0.5) return head.slice(0, clause) + '.'
+  const words = head.split(' ')
+  words.pop()
+  while (words.length > 1 && TRAILING_STOP.has(words[words.length - 1].toLowerCase())) words.pop()
+  return words.join(' ').replace(/[,:;]+$/, '') + '.'
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 const clean = (v: any): string => (typeof v === 'string' ? v.trim() : v == null ? '' : String(v))
@@ -483,9 +543,12 @@ export function buildStory(project: any, edits?: StoryEdits): StorySlide[] {
       { key: 'title', label: 'Title' },
     ]
     group.forEach((r, j) => {
-      const evidenceText = [clean(r.stat), clean(r.stat_label)].filter(Boolean).join(' ')
-      fields[`rec${j}.title`] = clean(r.title)
-      fields[`rec${j}.text`] = clean(r.description)
+      const evidenceText = shortenTitle(
+        [clean(r.stat), clean(r.stat_label)].filter(Boolean).join(' '),
+        44
+      )
+      fields[`rec${j}.title`] = shortenTitle(clean(r.title), 56)
+      fields[`rec${j}.text`] = shortenBody(clean(r.description), 104)
       fields[`rec${j}.evidence`] = evidenceText
       spec.push(
         { key: `rec${j}.title`, label: `Step ${j + 1} title` },
